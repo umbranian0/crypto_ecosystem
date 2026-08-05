@@ -1,0 +1,19 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+*.egg-info/
+
+# Data: raw/seed/incremental datasets belong in object storage (MinIO/S3), not
+# source control (docs/solution-design.md section 3.2). Keep the directory
+# structure and docs tracked; keep the actual data files out.
+jupyter_notebooks/data/**/*.csv
+jupyter_notebooks/data/**/*.json
+jupyter_notebooks/data/out/**
+services/ingestion-service/data/raw/**/*.csv
+services/ingestion-service/data/raw/**/*.json
+
+# Keep folder scaffolding (.gitkeep, README/PROVENANCE docs) even though the
+# globs above exclude the data files that live alongside them.
+!**/.gitkeep

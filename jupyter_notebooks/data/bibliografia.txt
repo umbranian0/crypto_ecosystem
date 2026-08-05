@@ -1,0 +1,6 @@
+https://www.kaggle.com/datasets/imadallal/sentiment-analysis-of-bitcoin-news-2021-2024?resource=download
+
+https://www.kaggle.com/code/albertobellardini/bitcoin-sentiment-analysis-from-yahoo-finance
+
+https://www.kaggle.com/code/codeblogger/bitcoin-sentiment-analysis/notebook
+

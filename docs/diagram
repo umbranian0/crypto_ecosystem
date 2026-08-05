@@ -1,0 +1,59 @@
+```mermaid
+flowchart TB
+    subgraph Clients
+        C1[Pilot client: file upload / SDK]
+        C2[Market data sources: exchange APIs]
+        C3[Sentiment / on-chain sources]
+    end
+
+    subgraph Ingestion["Ingestion layer (data-pipeline)"]
+        ING1[Upload API<br/>predictions + ground truth]
+        ING2[Market data connector<br/>OHLCV pull]
+        ING3[Sentiment/on-chain connector<br/>phase 2]
+    end
+
+    subgraph Storage["Storage layer"]
+        RAW[(Object storage: raw zone<br/>MinIO/S3, tenant-prefixed)]
+        PG[(PostgreSQL + TimescaleDB<br/>tenant_id on every table)]
+        PROC[(Object storage: processed zone<br/>Parquet, tenant-prefixed)]
+    end
+
+    subgraph Processing["Processing & orchestration"]
+        ORCH[Prefect orchestrator]
+        FEAT[Feature engineering jobs]
+        QUAL[Data quality checks<br/>coverage, gaps, causal-lag validation]
+    end
+
+    subgraph ValidationEngine["Validation & prediction engine (Subsystem 1)"]
+        SPLIT[Walk-forward splitter<br/>+ purge gap]
+        BASE[Naive0 / NaiveLast baselines]
+        METRICS[Metrics: MAE, RMSE, sMAPE, MASE, DA, F1, R²]
+        DM[Diebold-Mariano test<br/>+ Harvey correction]
+    end
+
+    subgraph Reporting["Reporting (Subsystem 4)"]
+        REPORTGEN[Report generator<br/>Jinja2 -> HTML/PDF]
+        REPORTSTORE[(Report store, versioned)]
+    end
+
+    subgraph Frontend["Frontend (Subsystem 3)"]
+        API[FastAPI backend]
+        DASH[Dashboard UI<br/>FastAPI + HTMX/Jinja2]
+        SDK[Python SDK<br/>Subsystem 6]
+    end
+
+    C1 --> ING1 --> RAW
+    C2 --> ING2 --> RAW
+    C3 --> ING3 --> RAW
+    RAW --> QUAL --> FEAT --> PROC
+    PROC --> ORCH
+    ORCH --> SPLIT --> BASE --> METRICS --> DM
+    DM --> PG
+    METRICS --> PG
+    PG --> REPORTGEN --> REPORTSTORE
+    REPORTSTORE --> API
+    PG --> API
+    API --> DASH
+    API --> SDK
+    SDK --> C1
+```
