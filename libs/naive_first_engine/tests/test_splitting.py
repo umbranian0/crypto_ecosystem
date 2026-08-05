@@ -111,6 +111,30 @@ def test_purge_gap_zero_leaves_train_and_test_adjacent():
         assert index.get_loc(split.test_start) == index.get_loc(split.train_end) + 1
 
 
+def test_purge_gap_zero_leaves_train_and_test_adjacent_time_based():
+    # Regression test: the time-based branch (train_window/test_window/step
+    # all pd.Timedelta) previously included the last train timestamp in the
+    # test set too when purge_gap=pd.Timedelta(0), since test_start_time ==
+    # actual_train_end and the mask used `>=` with no `>` guard. Mirrors
+    # test_purge_gap_zero_leaves_train_and_test_adjacent above, but for the
+    # time-based branch specifically.
+    index = pd.date_range("2024-01-01", periods=200, freq="h")
+    splits = generate_splits(
+        index,
+        train_window=pd.Timedelta(hours=48),
+        test_window=pd.Timedelta(hours=12),
+        step=pd.Timedelta(hours=12),
+        purge_gap=pd.Timedelta(0),
+    )
+
+    assert len(splits) > 1
+    for split in splits:
+        assert split.purge_start is None
+        assert split.purge_end is None
+        assert split.test_start > split.train_end
+        assert index.get_loc(split.test_start) == index.get_loc(split.train_end) + 1
+
+
 def test_thesis_config_purge_gap_matches_1h_6h_24h_horizons():
     # da-tese-ao-produto.md section 1.2: 24h purge gap between train and
     # test, across all three horizons (1h, 6h, 24h). The purge gap itself is

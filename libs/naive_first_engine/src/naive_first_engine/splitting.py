@@ -116,7 +116,11 @@ def _generate_splits_by_time(
                 break
             test_start_time = index[test_start_pos]
         test_end_time = test_start_time + test_window
-        test_mask = (index >= test_start_time) & (index < test_end_time)
+        # `index > actual_train_end` (not just `>= test_start_time`) is required
+        # even though test_start_time = actual_train_end + purge_gap: when
+        # purge_gap is exactly Timedelta(0), test_start_time == actual_train_end,
+        # and `>=` alone would put the last train row in the test set too.
+        test_mask = (index > actual_train_end) & (index >= test_start_time) & (index < test_end_time)
         # index is sorted ascending, so once the test window runs past the end
         # of the data it will stay empty on every later, further-forward step.
         if not test_mask.any():
