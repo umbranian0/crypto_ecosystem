@@ -1,6 +1,8 @@
-# Ticket index — Sprint 01 (libs/naive_first_engine)
+# Ticket index — libs/naive_first_engine
 
-Source: docs/sprints/sprint-01.md, docs/product/backlog-naive-first-engine.md.
+Source: docs/sprints/sprint-01.md, docs/sprints/sprint-02.md, docs/product/backlog-naive-first-engine.md.
+
+## Sprint 01
 
 | Ticket | Story | Depends on | Status |
 |---|---|---|---|
@@ -33,4 +35,16 @@ Source: docs/sprints/sprint-01.md, docs/product/backlog-naive-first-engine.md.
 - **Round 8**: NFE-014 (depends on NFE-005, NFE-006, NFE-013).
 - **Round 9**: NFE-015 (depends on NFE-014, hard gate, run last).
 
-Deferred (not in this sprint): NFE-016, NFE-017, NFE-018 (Should/Could priority), NFE-019/020 (Won't).
+Deferred to Sprint 02: NFE-016, NFE-017, NFE-018 (Should/Could priority). Not scheduled: NFE-019/020 (Won't).
+
+## Sprint 02
+
+| Ticket | Story | Depends on | Status |
+|---|---|---|---|
+| [NFE-016](NFE-016.md) | Regression suite (6h/24h thesis numbers, Harvey correction) | NFE-015 | done |
+| [NFE-017](NFE-017.md) | Standalone publishability check | NFE-001 | done |
+| [NFE-018](NFE-018.md) | Public API doc-sync check | NFE-014 | done |
+
+## Execution / parallelization plan (Sprint 02)
+
+- **Round 0 (parallel)**: NFE-016, NFE-017, NFE-018 all run in parallel — disjoint files (new test files for NFE-016; `scripts/check_standalone.*` for NFE-017; `scripts/check_doc_sync.py` + README for NFE-018), no shared data dependency, per sprint-02.md.
