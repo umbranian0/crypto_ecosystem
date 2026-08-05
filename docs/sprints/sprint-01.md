@@ -35,3 +35,31 @@ Definition of done for this sprint:
 - `libs/naive_first_engine/README.md` file layout matches the actual files shipped (no doc drift, per NFE-001).
 - No code in this sprint touches `services/validation-service` or any other out-of-scope module listed in the backlog's scope section — the library remains dataset-agnostic, I/O-free, and standalone-importable.
 - This gates trigger #3 in implementation-plan.md section 6 (`services/validation-service` scaffolding) — that trigger is not fired by this sprint; it is a future sprint's concern once NFE-015 passes.
+
+---
+
+## Sprint completion report (2026-08-05)
+
+**Status: DONE — all 15 Must stories shipped. Trigger #3 (`services/validation-service`) is now cleared to fire.**
+
+The Tech Lead agent hit an account-level API session limit mid-way through its final verification pass on NFE-015 (the last ticket) and terminated before writing this report. All 14 prior tickets had already been individually verified and marked done by the Tech Lead itself. The final verification of NFE-015 and this closing report were completed directly (not by a subagent) to avoid re-hitting the same session limit:
+- Ran the full test suite directly: `libs/naive_first_engine` → **80 passed**, 0 failed.
+- Read `tests/test_regression_1h.py` in full, including its disclosure block (Review acceptance criteria for NFE-015).
+- Cross-checked all four models' 1h numbers (Naive0, OLS, RF, ARIMA — MAE/RMSE/DA/F1) against the published table in `docs/da-tese-ao-produto.md` section 1.3 by hand: all match within the documented tolerances.
+- Read `metrics.py::oos_r2` directly and re-derived the formula (`1 - SSE(pred)/SSE(naive)`) to confirm it's naive-relative, not sklearn's mean-relative default — this was independently already verified by the Tech Lead per NFE-010's ticket file, re-confirmed here.
+- Updated `docs/tickets/README.md` to mark NFE-015 done (it was individually complete in `docs/tickets/NFE-015.md`, just not yet reflected in the index when the Tech Lead's session ended).
+
+**What got built** (`libs/naive_first_engine/src/naive_first_engine/`):
+- `splitting.py` — rolling-origin walk-forward splitter with an always-enforced, non-bypassable purge gap (NFE-002, NFE-003).
+- `baselines.py` — `Baseline` Strategy protocol, `Naive0`, `NaiveLast` (NFE-004, NFE-005, NFE-006).
+- `metrics.py` — `mae`, `rmse`, `smape`, `mase`, `directional_accuracy`, `f1_directional`, `oos_r2` (naive-relative) (NFE-007–010).
+- `dm_test.py` — Diebold-Mariano test with a mandatory, non-bypassable Harvey et al. (1997) long-run variance correction that degenerates exactly (not approximately) to the uncorrected statistic at horizon=1 (NFE-011, NFE-012).
+- `report_schema.py` — typed, computation-free output contract (`SplitBoundaries`, `MetricSet`, `DMResult`, `BaselineResult`, `SplitResult`) (NFE-013).
+- `protocol.py` — `run_validation_protocol`, the Template Method entry point enforcing split → baseline → metrics → DM-test with no shortcut path to a `DMResult` (NFE-014).
+- `tests/` — 80 tests total, including `test_regression_1h.py`, the hard completion gate (NFE-015).
+
+**Deviation worth flagging**: while building NFE-014, the dev agent found and fixed a real bug in `f1_directional` (`ZeroDivisionError` whenever a baseline predicts no "up" moves at all — which Naive0 does on every call by construction). This retroactively touched a file from the already-closed NFE-009 ticket. Documented in NFE-014's ticket file; flagged to the user for awareness rather than silently absorbed.
+
+**Known, disclosed gap (not a defect)**: NFE-015's regression suite does not reconstruct RF's (0/13) or ARIMA's (0/53) Diebold-Mariano better/worse split counts — no per-split error fixture exists for those two models in this repo, and the backlog's own acceptance criteria explicitly allow stopping once one full B/W pair (OLS's, reproduced exactly) is done. This is stated at the top of `test_regression_1h.py`, not buried.
+
+**Not started this sprint** (correctly out of scope): NFE-016/017/018 (Should/Could, deferred), NFE-019/020 (Won't, not stories), and anything in `services/validation-service` or any other module — `naive_first_engine` remains standalone, dataset-agnostic, and dependency-free as required.
