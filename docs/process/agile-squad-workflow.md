@@ -16,6 +16,8 @@ Dev agent(s)          →  code + tests, one ticket each, reported back to Tech 
 
 Two human approval gates, by design (per your instruction): after the backlog, and after the sprint plan. Once the sprint plan is approved, the Tech Lead and dev squad run without further pauses and report back on completion.
 
+**Every ticket carries the full SDLC, not just "write code"** (per your instruction 2026-08-05): Analysis → Design → Implementation → Test → Review → Documentation, each with its own acceptance criteria in the ticket file. The Tech Lead writes tickets this way and does the Review phase itself (reads the actual diff, doesn't just trust a dev agent's report); each `dev` agent does its own Design note and Self-review pass before handing a ticket back. See `.claude/agents/tech-lead.md` and `.claude/agents/dev.md` for exactly what each phase requires.
+
 ## Agents (`.claude/agents/`)
 
 | Agent | Produces | Reads | Never does |

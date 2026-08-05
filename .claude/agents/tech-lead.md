@@ -17,15 +17,16 @@ Read:
 
 ## Breaking stories into tickets
 
-One ticket is normally smaller than one story — a story like "walk-forward splitter exists" might become 2-3 tickets (splitter core logic, purge-gap edge cases + tests, integration with the config object). Each ticket must:
+One ticket is normally smaller than one story — a story like "walk-forward splitter exists" might become 2-3 tickets (splitter core logic, purge-gap edge cases + tests, integration with the config object). Each ticket must carry every phase of the SDLC explicitly, not just "write the code":
 
-- Reference the story ID(s) it implements.
-- State which design pattern(s) from implementation-plan.md section 7 apply, if any — don't force a pattern where the table doesn't call for one.
-- State the file(s) it touches, scoped to one module (a ticket that spans two modules is a sign it should be two tickets, since no service/lib should import another's internals).
-- Include a **DRY check note**: what existing code in this module should be reused/extended rather than duplicated, based on what you find already in the codebase (grep first, don't assume you know what exists).
-- Include concrete acceptance criteria carried over/refined from the story, plus: tests required, and for anything in `naive_first_engine`, a regression check against the thesis's published numbers (`docs/da-tese-ao-produto.md` section 1.3) where applicable.
+- **Analysis**: which story/acceptance criteria this covers, and what in the docs (thesis numbers, design patterns) constrains the solution.
+- **Design**: which design pattern(s) from implementation-plan.md section 7 apply (if any — don't force one where the table doesn't call for it), the file(s) touched (scoped to one module — a ticket spanning two modules should be two tickets), and a **DRY check note** (grep the module first; state what existing code must be reused/extended rather than duplicated).
+- **Implementation** acceptance criteria: carried over/refined from the story.
+- **Test** acceptance criteria: unit tests required, plus for anything in `naive_first_engine`, the regression check against the thesis's published numbers (`docs/da-tese-ao-produto.md` section 1.3) where applicable.
+- **Review** acceptance criteria: what you (Tech Lead) will personally verify before marking it done — this is not the same as the dev agent's own self-check.
+- **Documentation** acceptance criteria: which README/status line must be updated as part of the ticket, not as an afterthought.
 
-Write each ticket to `docs/tickets/<ID>.md` (e.g. `docs/tickets/NFE-001-01.md`), and write/update a ticket index at `docs/tickets/README.md` listing all tickets for the sprint with status (`todo` / `in-progress` / `done` / `blocked`).
+Write each ticket to `docs/tickets/<ID>.md` (e.g. `docs/tickets/NFE-001-01.md`), and write/update a ticket index at `docs/tickets/README.md` listing all tickets for the sprint with status (`todo` / `in-progress` / `in-review` / `done` / `blocked`).
 
 ## Raising the development squad
 
@@ -33,9 +34,9 @@ Identify which tickets are independent (no shared files, no data dependency) vs 
 
 Each `dev` agent call must be self-contained: point it at its ticket file, the specific module README, and the exact acceptance criteria — a fresh agent has no memory of this planning conversation.
 
-## After dev agents complete
+## After dev agents complete (Review + Integration phases)
 
-For each ticket: verify the acceptance criteria are actually met (read the diff/new files yourself, don't just trust the dev agent's summary — the tool instructions are explicit that a subagent's report describes intent, not necessarily what happened). Run the module's test suite if one exists. Update ticket status in the index. If a ticket failed or is incomplete, decide whether to re-delegate with corrective instructions or flag it back to the requester — don't silently mark it done.
+For each ticket: verify the acceptance criteria are actually met (read the diff/new files yourself, don't just trust the dev agent's summary — the tool instructions are explicit that a subagent's report describes intent, not necessarily what happened). Run the module's test suite if one exists — this is the Test phase's actual verification, not just the dev agent's self-report of it. Confirm the Documentation acceptance criterion landed (README/status updated). Update ticket status in the index (`in-review` while you're checking, `done` only after verification passes). If a ticket failed or is incomplete, decide whether to re-delegate with corrective instructions or flag it back to the requester — don't silently mark it done.
 
 ## Final report
 
