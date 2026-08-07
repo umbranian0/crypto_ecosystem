@@ -23,7 +23,7 @@ import os
 
 import pandas as pd
 
-from .base import FetchResult, IngestionSource, utcnow
+from .base import FetchResult, IngestionSource, latest_watermark, utcnow
 
 DEFAULT_SUBREDDITS = ("Bitcoin", "CryptoCurrency")
 
@@ -103,10 +103,15 @@ def default_seed_watermark() -> datetime:
 
 
 if __name__ == "__main__":
+    incremental_dir = "data/raw/_platform/sentiment/reddit_vader/incremental"
+    since = latest_watermark(incremental_dir, "created_utc", default_seed_watermark())
+
     connector = RedditSentimentConnector()
-    result = connector.fetch(since=default_seed_watermark())
-    print(f"{connector.name}: fetched {len(result.records)} rows since {default_seed_watermark()}")
+    result = connector.fetch(since=since)
+    print(f"{connector.name}: fetched {len(result.records)} rows since {since}")
     if not result.is_empty():
-        out_path = f"data/raw/_platform/sentiment/reddit_vader/incremental/{result.fetched_at:%Y-%m-%d}.csv"
+        out_path = f"{incremental_dir}/{result.fetched_at:%Y-%m-%d}.csv"
         result.records.to_csv(out_path, index=False)
         print(f"wrote {out_path}")
+    else:
+        print("no new rows, nothing written")

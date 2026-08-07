@@ -18,6 +18,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pandas as pd
 
@@ -50,3 +51,26 @@ class IngestionSource(ABC):
 
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def latest_watermark(incremental_dir: str | Path, timestamp_column: str, seed_watermark: datetime) -> datetime:
+    """Watermark for the next `fetch(since=...)` call: the max timestamp already
+    written to `incremental_dir`'s CSVs, or `seed_watermark` if no incremental
+    file exists yet.
+
+    Without this, a connector's `__main__` block re-fetching from a hardcoded
+    seed watermark on every run would re-download and re-write an almost-total
+    duplicate of the previous run's output each time — discovered exactly this
+    way (data/raw/_platform/price/.../incremental/2026-08-05.csv vs.
+    2026-08-07.csv were near-duplicates) when the connectors were run twice.
+    Only incremental/ is scanned, never the (potentially very large) seed/
+    file, since the seed's own watermark is already known statically.
+    """
+    incremental_dir = Path(incremental_dir)
+    latest: datetime | None = None
+    for csv_path in incremental_dir.glob("*.csv"):
+        column = pd.read_csv(csv_path, usecols=[timestamp_column])[timestamp_column]
+        file_max = pd.to_datetime(column, utc=True).max()
+        if file_max is not pd.NaT and (latest is None or file_max > latest):
+            latest = file_max.to_pydatetime()
+    return latest if latest is not None else seed_watermark
