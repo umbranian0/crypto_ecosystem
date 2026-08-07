@@ -52,12 +52,11 @@ VALID_CONFIG = {
 
 def _make_run(client: TestClient, tenant_id: str, dataset_id: str = "dataset-1") -> str:
     payload = {
-        "tenant_id": tenant_id,
         "dataset_id": dataset_id,
         "dataset_reference": _inline_dataset(),
         **VALID_CONFIG,
     }
-    response = client.post("/runs", json=payload)
+    response = client.post("/runs", json=payload, headers={"X-Tenant-Id": tenant_id})
     assert response.status_code == 201, response.text
     return response.json()["id"]
 
@@ -84,7 +83,7 @@ def test_splits_roundtrip_matches_independently_computed_protocol_output(tmp_pat
     expected_results = run_validation_protocol(_series(), config)
     assert len(expected_results) >= 2  # sanity: multi-split dataset per AC
 
-    response = client.get(f"/runs/{run_id}/splits", params={"tenant_id": "tenant-1"})
+    response = client.get(f"/runs/{run_id}/splits", headers={"X-Tenant-Id": "tenant-1"})
     assert response.status_code == 200, response.text
     body = response.json()
 
@@ -132,7 +131,7 @@ def test_splits_returned_in_ascending_split_index_order(tmp_path, monkeypatch):
 
     run_id = _make_run(client, "tenant-1")
 
-    response = client.get(f"/runs/{run_id}/splits", params={"tenant_id": "tenant-1"})
+    response = client.get(f"/runs/{run_id}/splits", headers={"X-Tenant-Id": "tenant-1"})
     assert response.status_code == 200, response.text
     body = response.json()
 
@@ -157,7 +156,7 @@ def test_splits_cross_tenant_returns_404_with_no_leaked_data(tmp_path, monkeypat
 
     run_id = _make_run(client, "tenant-a", dataset_id="dataset-secret")
 
-    response = client.get(f"/runs/{run_id}/splits", params={"tenant_id": "tenant-b"})
+    response = client.get(f"/runs/{run_id}/splits", headers={"X-Tenant-Id": "tenant-b"})
 
     assert response.status_code == 404
     body_text = response.text
@@ -181,7 +180,7 @@ def test_splits_nonexistent_run_returns_404(tmp_path, monkeypatch):
 
     client = TestClient(app)
 
-    response = client.get("/runs/does-not-exist/splits", params={"tenant_id": "tenant-1"})
+    response = client.get("/runs/does-not-exist/splits", headers={"X-Tenant-Id": "tenant-1"})
 
     assert response.status_code == 404
     assert response.status_code != 500

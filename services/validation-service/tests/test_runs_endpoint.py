@@ -57,13 +57,12 @@ def test_valid_run_persists_run_and_expected_split_count(tmp_path, monkeypatch):
     client = TestClient(app)
 
     payload = {
-        "tenant_id": "tenant-1",
         "dataset_id": "dataset-1",
         "dataset_reference": _inline_dataset(),
         **VALID_CONFIG,
     }
 
-    response = client.post("/runs", json=payload)
+    response = client.post("/runs", json=payload, headers={"X-Tenant-Id": "tenant-1"})
 
     assert response.status_code == 201, response.text
     body = response.json()
@@ -101,13 +100,12 @@ def test_invalid_config_returns_422_and_persists_nothing(tmp_path, monkeypatch):
     client = TestClient(app)
 
     payload = {
-        "tenant_id": "tenant-1",
         "dataset_id": "dataset-1",
         "dataset_reference": _inline_dataset(),
         **{**VALID_CONFIG, "horizon": 0},  # invalid: horizon must be >= 1
     }
 
-    response = client.post("/runs", json=payload)
+    response = client.post("/runs", json=payload, headers={"X-Tenant-Id": "tenant-1"})
 
     assert response.status_code == 422
 
@@ -126,14 +124,13 @@ def test_invalid_config_never_invokes_run_validation_protocol(tmp_path, monkeypa
     client = TestClient(app)
 
     payload = {
-        "tenant_id": "tenant-1",
         "dataset_id": "dataset-1",
         "dataset_reference": _inline_dataset(),
         **{**VALID_CONFIG, "purge_gap_hours": -1},  # invalid: purge gap must be >= 0
     }
 
     with patch("app.routers.runs.run_validation_protocol") as mock_protocol:
-        response = client.post("/runs", json=payload)
+        response = client.post("/runs", json=payload, headers={"X-Tenant-Id": "tenant-1"})
 
     assert response.status_code == 422
     mock_protocol.assert_not_called()
@@ -147,17 +144,16 @@ def test_get_run_returns_matching_fields_for_created_run(tmp_path, monkeypatch):
     client = TestClient(app)
 
     payload = {
-        "tenant_id": "tenant-1",
         "dataset_id": "dataset-1",
         "dataset_reference": _inline_dataset(),
         **VALID_CONFIG,
     }
 
-    create_response = client.post("/runs", json=payload)
+    create_response = client.post("/runs", json=payload, headers={"X-Tenant-Id": "tenant-1"})
     assert create_response.status_code == 201, create_response.text
     run_id = create_response.json()["id"]
 
-    get_response = client.get(f"/runs/{run_id}", params={"tenant_id": "tenant-1"})
+    get_response = client.get(f"/runs/{run_id}", headers={"X-Tenant-Id": "tenant-1"})
 
     assert get_response.status_code == 200, get_response.text
     body = get_response.json()
@@ -189,17 +185,16 @@ def test_get_run_cross_tenant_returns_404_with_no_leaked_data(tmp_path, monkeypa
     client = TestClient(app)
 
     payload = {
-        "tenant_id": "tenant-a",
         "dataset_id": "dataset-secret",
         "dataset_reference": _inline_dataset(),
         **VALID_CONFIG,
     }
 
-    create_response = client.post("/runs", json=payload)
+    create_response = client.post("/runs", json=payload, headers={"X-Tenant-Id": "tenant-a"})
     assert create_response.status_code == 201, create_response.text
     run_id = create_response.json()["id"]
 
-    get_response = client.get(f"/runs/{run_id}", params={"tenant_id": "tenant-b"})
+    get_response = client.get(f"/runs/{run_id}", headers={"X-Tenant-Id": "tenant-b"})
 
     assert get_response.status_code == 404
     body_text = get_response.text
@@ -221,7 +216,80 @@ def test_get_run_nonexistent_id_returns_404(tmp_path, monkeypatch):
 
     client = TestClient(app)
 
-    response = client.get("/runs/does-not-exist", params={"tenant_id": "tenant-1"})
+    response = client.get("/runs/does-not-exist", headers={"X-Tenant-Id": "tenant-1"})
 
     assert response.status_code == 404
     assert response.status_code != 500
+
+
+class _RepositoryFakeThatFailsIfCalled:
+    """Stands in for `ValidationRunRepository`: any method call is a test
+    failure, proving `Depends(get_tenant_context)` rejects the request
+    (VS-010 AC3) before route-handler business logic ever reaches the
+    repository -- not merely that the HTTP response happens to be 401.
+    """
+
+    def create_run(self, *args, **kwargs):
+        raise AssertionError("repository.create_run must not be reached when tenant context resolution fails")
+
+    def get_run(self, *args, **kwargs):
+        raise AssertionError("repository.get_run must not be reached when tenant context resolution fails")
+
+    def update_run_status(self, *args, **kwargs):
+        raise AssertionError("repository.update_run_status must not be reached when tenant context resolution fails")
+
+
+def _client_with_failing_repository(tmp_path, monkeypatch):
+    db_path = str(tmp_path / "test.db")
+    monkeypatch.setenv("VALIDATION_SERVICE_DB_PATH", db_path)
+    from app.dependencies.repositories import get_validation_run_repository
+    from app.main import app
+
+    app.dependency_overrides[get_validation_run_repository] = lambda: _RepositoryFakeThatFailsIfCalled()
+
+    return TestClient(app), (lambda: app.dependency_overrides.pop(get_validation_run_repository, None))
+
+
+def test_post_runs_missing_tenant_header_rejected_before_repository_code(tmp_path, monkeypatch):
+    client, cleanup = _client_with_failing_repository(tmp_path, monkeypatch)
+
+    payload = {
+        "dataset_id": "dataset-1",
+        "dataset_reference": _inline_dataset(),
+        **VALID_CONFIG,
+    }
+
+    try:
+        response = client.post("/runs", json=payload)  # no X-Tenant-Id header
+    finally:
+        cleanup()
+
+    assert response.status_code == 401
+
+
+def test_post_runs_empty_tenant_header_rejected_before_repository_code(tmp_path, monkeypatch):
+    client, cleanup = _client_with_failing_repository(tmp_path, monkeypatch)
+
+    payload = {
+        "dataset_id": "dataset-1",
+        "dataset_reference": _inline_dataset(),
+        **VALID_CONFIG,
+    }
+
+    try:
+        response = client.post("/runs", json=payload, headers={"X-Tenant-Id": "   "})
+    finally:
+        cleanup()
+
+    assert response.status_code == 401
+
+
+def test_get_run_missing_tenant_header_rejected_before_repository_code(tmp_path, monkeypatch):
+    client, cleanup = _client_with_failing_repository(tmp_path, monkeypatch)
+
+    try:
+        response = client.get("/runs/some-run-id")  # no X-Tenant-Id header
+    finally:
+        cleanup()
+
+    assert response.status_code == 401

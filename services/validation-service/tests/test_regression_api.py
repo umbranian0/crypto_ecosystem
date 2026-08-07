@@ -176,7 +176,6 @@ def test_naive0_mae_round_trips_via_http(tmp_path, monkeypatch):
     series = _with_preamble(y_true, seed=9001)
 
     payload = {
-        "tenant_id": "tenant-1",
         "dataset_id": "dataset-naive0-regression",
         "dataset_reference": _to_inline_dataset(series),
         "horizon": 1,
@@ -186,11 +185,11 @@ def test_naive0_mae_round_trips_via_http(tmp_path, monkeypatch):
         "step": _N,
     }
 
-    response = client.post("/runs", json=payload)
+    response = client.post("/runs", json=payload, headers={"X-Tenant-Id": "tenant-1"})
     assert response.status_code == 201, response.text
     run_id = response.json()["id"]
 
-    splits_response = client.get(f"/runs/{run_id}/splits", params={"tenant_id": "tenant-1"})
+    splits_response = client.get(f"/runs/{run_id}/splits", headers={"X-Tenant-Id": "tenant-1"})
     assert splits_response.status_code == 200, splits_response.text
     body = splits_response.json()
 
@@ -253,7 +252,6 @@ def test_dm_verdict_pattern_round_trips_via_http(tmp_path, monkeypatch):
     series = _dm_scenario_series(pattern)
 
     payload = {
-        "tenant_id": "tenant-1",
         "dataset_id": "dataset-dm-regression",
         "dataset_reference": _to_inline_dataset(series),
         "horizon": 1,
@@ -263,11 +261,11 @@ def test_dm_verdict_pattern_round_trips_via_http(tmp_path, monkeypatch):
         "step": _DM_TRAIN_WINDOW + _PURGE_GAP + _DM_TEST_WINDOW,
     }
 
-    response = client.post("/runs", json=payload)
+    response = client.post("/runs", json=payload, headers={"X-Tenant-Id": "tenant-1"})
     assert response.status_code == 201, response.text
     run_id = response.json()["id"]
 
-    splits_response = client.get(f"/runs/{run_id}/splits", params={"tenant_id": "tenant-1"})
+    splits_response = client.get(f"/runs/{run_id}/splits", headers={"X-Tenant-Id": "tenant-1"})
     assert splits_response.status_code == 200, splits_response.text
     body = splits_response.json()
 

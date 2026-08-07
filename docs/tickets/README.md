@@ -1,6 +1,6 @@
 # Ticket index
 
-Two modules are tracked here, kept as clearly separated sections: `libs/naive_first_engine` (NFE-*, Sprint 01+02, done) and `services/validation-service` (VS-*, Sprint 03, in progress).
+Three modules are tracked here, kept as clearly separated sections: `libs/naive_first_engine` (NFE-*, Sprint 01+02, done), `services/validation-service` (VS-*, Sprint 03 done, Sprint 04 VS-010 in progress), and `libs/common` (LC-*, Sprint 04, in progress).
 
 # libs/naive_first_engine (NFE-*)
 
@@ -89,3 +89,32 @@ VS-010 (tenant context resolution) is explicitly **blocked** on `libs/common` sh
 Deferred: VS-010 (blocked, flagged for PM/Tech Lead to sequence a `libs/common` backlog). Not scheduled this sprint: VS-013/014/015/016/017 (Should/Could). Not proposed: VS-018/019/020 (Won't).
 
 **Sprint 03 outcome**: all 11 in-scope Must stories done. `uv run pytest` (`.venv\Scripts\python.exe -m pytest -q`) passes: 48 passed, 0 failed, in `services/validation-service`. Every ticket's Review acceptance criteria were personally verified by the Tech Lead (reading the actual diff, not just trusting a green checkmark), with particular scrutiny on VS-004/VS-007/VS-008's tenant-isolation tests, VS-006's exact-as-exposed call to `run_validation_protocol`, and VS-012's structural (not merely tested) guarantee that `run.completed` cannot fire on a failed run.
+
+## Sprint 04
+
+| Ticket | Story | Depends on | Status |
+|---|---|---|---|
+| [VS-010](VS-010.md) | Tenant context resolution | `libs/common` LC-001–004 | done |
+
+See docs/sprints/sprint-04.md. VS-010 was blocked at the end of Sprint 03 pending `libs/common`'s minimal tenant-context module; this sprint unblocks and completes it, sequenced last (after LC-001–004 land).
+
+# libs/common (LC-*)
+
+Source: docs/sprints/sprint-04.md, docs/product/backlog-libs-common.md.
+
+## Sprint 04
+
+| Ticket | Story | Depends on | Status |
+|---|---|---|---|
+| [LC-001](LC-001.md) | Package scaffolding | none | done |
+| [LC-002](LC-002.md) | `TenantContext` typed value object | LC-001 | done |
+| [LC-003](LC-003.md) | FastAPI `Depends()`-based tenant context resolver (interim: explicit-field extraction) | LC-002 | done |
+| [LC-004](LC-004.md) | Fail-closed test suite for tenant context resolution | LC-003 | done |
+
+## Execution / parallelization plan (Sprint 04)
+
+Strictly sequential, no parallelization: LC-001 -> LC-002 -> LC-003 -> LC-004 -> VS-010 (tracked above under validation-service). Each story depends on the previous existing (package skeleton -> typed shape -> resolver returning that shape -> tests proving the resolver -> the one real consumer wiring it in), per sprint-04.md's own stated execution order — this is a small sprint with no independent branches to run in parallel, unlike Sprint 01-03.
+
+Deferred: LC-005 (README doc-sync), LC-006 (shared schemas), LC-007 (DB session helpers), LC-008 (formatting logic), LC-009 (JWT/API-key resolution) — all Should/Won't this backlog, per sprint-04.md's explicit deferral list.
+
+**Sprint 04 outcome**: all 4 in-scope `libs/common` Must stories (LC-001–004) plus VS-010 done, matching sprint-04.md's Definition of Done. `libs/common`: `.venv\Scripts\python.exe -m pytest -q` passes 14/14 (LC-002/003 unit tests + LC-004's standalone fail-closed app-level suite). `services/validation-service`: `.venv\Scripts\python.exe -m pytest -q` passes 51/51 (48 pre-existing Sprint 03 tests, now exercising `Depends(get_tenant_context)` instead of the interim field, plus 3 new VS-010 fail-closed-before-repository tests). Both READMEs updated (`libs/common` status "scaffolded"; `services/validation-service` Contract section documents the `X-Tenant-Id` header replacing the retired `tenant_id` body/query field). LC-001 was scaffolded directly by the Tech Lead (no design decision to delegate, same precedent as NFE-001/VS-001); LC-002/003/004/VS-010 were each delegated to a dev subagent and personally verified by the Tech Lead by reading the actual diff (not just trusting the agent's self-report) before being marked done — VS-010 in particular was checked for: `Depends(get_tenant_context)` imported unmodified from `naive_first_common` with no local reimplementation, the interim `tenant_id` field/params fully removed (not left dead), tenant-isolation logic unchanged apart from the source of `tenant_id`, and the new fail-closed test's non-tautological proof (a repository fake that fails the test if reached) run directly by the Tech Lead. No deviations from sprint-04.md's binding notes: 401 (not 400) used throughout LC-003/LC-004/VS-010; LC-001 never touched `services/validation-service/pyproject.toml`; VS-010 was the ticket that added `naive_first_common` to that file. No code outside `libs/common`/`services/validation-service` was touched.

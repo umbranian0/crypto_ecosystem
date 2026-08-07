@@ -1,6 +1,6 @@
 # naive_first_common
 
-**Status: planned (trigger #2 — create the moment a second module needs to share a data shape, expected alongside `services/validation-service`).**
+**Status: scaffolded (LC-001, Sprint 04). Package skeleton exists (`uv`-managed, Pydantic-only runtime dependency); tenant-context module implementation in progress this sprint — see docs/sprints/sprint-04.md and docs/tickets/README.md.**
 
 Shared library for cross-cutting concerns used by more than one service. See [../../docs/implementation-plan.md](../../docs/implementation-plan.md) sections 2, 7, 9.
 

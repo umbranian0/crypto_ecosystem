@@ -27,8 +27,8 @@ request and a background job.
 `dataset_id`: not part of a `datasets` registry (no such table exists in this
 sprint's schema -- see solution-design.md section 4's `datasets` table, which
 `validation-service` does not own or query). Passed through explicitly on the
-request alongside `tenant_id`, mirroring VS-006's own interim-explicit-field
-precedent for `tenant_id` (backlog decision 1, pending VS-010).
+request body; `tenant_id` is no longer a body field (VS-010) -- it is resolved
+via `Depends(get_tenant_context)` from `naive_first_common` instead.
 
 VS-012: `DatasetSource.load`, `run_validation_protocol`, and the split-mapping/
 `add_splits` persistence that depends on their output are wrapped in a single
@@ -47,8 +47,9 @@ to reach it is for the `try` block to finish without raising -- there is no
 `finally`, no fallthrough, nothing that could route a caught exception back
 into it.
 
-`GET /runs/{id}` (VS-007): same interim `tenant_id`-as-query-param pattern as
-`POST /runs`' body field (pending VS-010). Tenant isolation is load-bearing
+`GET /runs/{id}` (VS-007): tenant is resolved the same way as `POST /runs`
+(VS-010) -- via `Depends(get_tenant_context)`, not a query parameter. Tenant
+isolation is load-bearing
 (solution-design.md section 1 principle 3): `ValidationRunRepository.get_run`
 (VS-004) already returns `None` for both "run doesn't exist" and "run belongs
 to a different tenant" -- this handler translates `None` into a single `404`
@@ -62,9 +63,10 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from naive_first_common import TenantContext, get_tenant_context
 from naive_first_engine.protocol import (
     NAIVE0_KEY,
     NAIVE_LAST_KEY,
@@ -91,7 +93,6 @@ class RunRequest(BaseModel):
     `DatasetSource`/any repository/the protocol is ever touched (AC2).
     """
 
-    tenant_id: str
     dataset_id: str
     dataset_reference: dict
     horizon: int = Field(ge=1)
@@ -128,6 +129,7 @@ def create_run(
     run_repository: ValidationRunRepositoryDep,
     split_repository: SplitResultRepositoryDep,
     event_publisher: EventPublisherDep,
+    tenant: TenantContext = Depends(get_tenant_context),
 ) -> RunResponse:
     config = ValidationConfig(
         train_window=request.train_window,
@@ -141,7 +143,7 @@ def create_run(
     # attach a "failed" status to, even if DatasetSource.load is the very
     # first thing that raises.
     run = run_repository.create_run(
-        tenant_id=request.tenant_id,
+        tenant_id=tenant.tenant_id,
         dataset_id=request.dataset_id,
         horizon=request.horizon,
         purge_gap_hours=request.purge_gap_hours,
@@ -165,7 +167,7 @@ def create_run(
                 SplitResultRecord(
                     id=uuid4().hex,
                     run_id=run.id,
-                    tenant_id=request.tenant_id,
+                    tenant_id=tenant.tenant_id,
                     split_index=split.split_index,
                     train_start=split.boundaries.train_start,
                     train_end=split.boundaries.train_end,
@@ -193,10 +195,10 @@ def create_run(
                 )
             )
 
-        split_repository.add_splits(request.tenant_id, run.id, split_records)
+        split_repository.add_splits(tenant.tenant_id, run.id, split_records)
     except Exception as exc:
         run_repository.update_run_status(
-            request.tenant_id, run.id, status="failed", failure_reason=str(exc)
+            tenant.tenant_id, run.id, status="failed", failure_reason=str(exc)
         )
         # Returning here ends the request. `event_publisher.publish` below
         # is unreachable from this branch by construction -- it sits after
@@ -206,14 +208,14 @@ def create_run(
 
     completed_at = datetime.utcnow()
     run_repository.update_run_status(
-        request.tenant_id, run.id, status="completed", completed_at=completed_at
+        tenant.tenant_id, run.id, status="completed", completed_at=completed_at
     )
 
     event_publisher.publish(
         "run.completed",
         {
             "run_id": run.id,
-            "tenant_id": request.tenant_id,
+            "tenant_id": tenant.tenant_id,
             "status": "completed",
             "completed_at": completed_at.isoformat(),
         },
@@ -225,13 +227,13 @@ def create_run(
 @router.get("/runs/{run_id}", response_model=RunDetailResponse)
 def get_run(
     run_id: str,
-    tenant_id: str,
     run_repository: ValidationRunRepositoryDep,
+    tenant: TenantContext = Depends(get_tenant_context),
 ) -> RunDetailResponse:
     # `get_run` already returns None for both "doesn't exist" and "wrong
     # tenant" (VS-004) -- both collapse into this single 404, no branch
     # distinguishes them (VS-007 Design section, AC2).
-    run = run_repository.get_run(tenant_id, run_id)
+    run = run_repository.get_run(tenant.tenant_id, run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="run not found")
 

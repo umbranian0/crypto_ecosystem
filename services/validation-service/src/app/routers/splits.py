@@ -23,8 +23,10 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+
+from naive_first_common import TenantContext, get_tenant_context
 
 from app.dependencies.repositories import (
     SplitResultRepositoryDep,
@@ -70,17 +72,17 @@ class SplitResultResponse(BaseModel):
 @router.get("/runs/{run_id}/splits", response_model=list[SplitResultResponse])
 def get_splits(
     run_id: str,
-    tenant_id: str,
     run_repository: ValidationRunRepositoryDep,
     split_repository: SplitResultRepositoryDep,
+    tenant: TenantContext = Depends(get_tenant_context),
 ) -> list[SplitResultResponse]:
     # Run-ownership check first, same 404-collapses-both-cases stance as
     # `GET /runs/{id}` (VS-007) -- see module docstring.
-    run = run_repository.get_run(tenant_id, run_id)
+    run = run_repository.get_run(tenant.tenant_id, run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="run not found")
 
-    splits = split_repository.get_splits(tenant_id, run_id)
+    splits = split_repository.get_splits(tenant.tenant_id, run_id)
 
     return [
         SplitResultResponse(

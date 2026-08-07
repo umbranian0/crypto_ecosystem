@@ -47,14 +47,13 @@ def test_dataset_source_failure_persists_failed_status_and_does_not_publish(tmp_
     # key -> DatasetSourceError("reference must contain either an 'inline'
     # or a 'path' key"), raised before any Series is built.
     payload = {
-        "tenant_id": "tenant-1",
         "dataset_id": "dataset-1",
         "dataset_reference": {"not_inline_or_path": True},
         **VALID_CONFIG,
     }
 
     try:
-        response = client.post("/runs", json=payload)
+        response = client.post("/runs", json=payload, headers={"X-Tenant-Id": "tenant-1"})
     finally:
         cleanup()
 
@@ -65,7 +64,7 @@ def test_dataset_source_failure_persists_failed_status_and_does_not_publish(tmp_
     assert body["status"] == "failed"
     run_id = body["id"]
 
-    detail = client.get("/runs/" + run_id, params={"tenant_id": "tenant-1"})
+    detail = client.get("/runs/" + run_id, headers={"X-Tenant-Id": "tenant-1"})
     assert detail.status_code == 200, detail.text
     detail_body = detail.json()
     assert detail_body["status"] == "failed"
@@ -96,14 +95,13 @@ def test_dataset_source_failure_second_variant_non_numeric_value_also_fails_clea
     dataset["inline"]["values"][3] = "not-a-number"
 
     payload = {
-        "tenant_id": "tenant-1",
         "dataset_id": "dataset-1",
         "dataset_reference": dataset,
         **VALID_CONFIG,
     }
 
     try:
-        response = client.post("/runs", json=payload)
+        response = client.post("/runs", json=payload, headers={"X-Tenant-Id": "tenant-1"})
     finally:
         cleanup()
 
@@ -111,7 +109,7 @@ def test_dataset_source_failure_second_variant_non_numeric_value_also_fails_clea
     body = response.json()
     assert body["status"] == "failed"
 
-    detail = client.get("/runs/" + body["id"], params={"tenant_id": "tenant-1"})
+    detail = client.get("/runs/" + body["id"], headers={"X-Tenant-Id": "tenant-1"})
     assert detail.status_code == 200, detail.text
     assert detail.json()["status"] == "failed"
     assert detail.json()["failure_reason"]

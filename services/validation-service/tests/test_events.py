@@ -40,14 +40,13 @@ def test_successful_run_publishes_run_completed_exactly_once(tmp_path, monkeypat
     client = TestClient(app)
 
     payload = {
-        "tenant_id": "tenant-1",
         "dataset_id": "dataset-1",
         "dataset_reference": _inline_dataset(),
         **VALID_CONFIG,
     }
 
     try:
-        response = client.post("/runs", json=payload)
+        response = client.post("/runs", json=payload, headers={"X-Tenant-Id": "tenant-1"})
     finally:
         app.dependency_overrides.pop(get_event_publisher, None)
 
