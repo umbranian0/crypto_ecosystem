@@ -1,4 +1,8 @@
-# Ticket index — libs/naive_first_engine
+# Ticket index
+
+Two modules are tracked here, kept as clearly separated sections: `libs/naive_first_engine` (NFE-*, Sprint 01+02, done) and `services/validation-service` (VS-*, Sprint 03, in progress).
+
+# libs/naive_first_engine (NFE-*)
 
 Source: docs/sprints/sprint-01.md, docs/sprints/sprint-02.md, docs/product/backlog-naive-first-engine.md.
 
@@ -48,3 +52,40 @@ Deferred to Sprint 02: NFE-016, NFE-017, NFE-018 (Should/Could priority). Not sc
 ## Execution / parallelization plan (Sprint 02)
 
 - **Round 0 (parallel)**: NFE-016, NFE-017, NFE-018 all run in parallel — disjoint files (new test files for NFE-016; `scripts/check_standalone.*` for NFE-017; `scripts/check_doc_sync.py` + README for NFE-018), no shared data dependency, per sprint-02.md.
+
+# services/validation-service (VS-*)
+
+Source: docs/sprints/sprint-03.md, docs/product/backlog-validation-service.md.
+
+## Sprint 03
+
+| Ticket | Story | Depends on | Status |
+|---|---|---|---|
+| [VS-001](VS-001.md) | Service scaffolding | none | done |
+| [VS-002](VS-002.md) | `validation` schema definition (`runs`, `split_results`) | VS-001 | done |
+| [VS-003](VS-003.md) | Repository interfaces | VS-002 | done |
+| [VS-004](VS-004.md) | Interim SQLite-backed repository implementation | VS-003 | done |
+| [VS-005](VS-005.md) | `DatasetSource` abstraction + interim implementation | VS-001 | done |
+| [VS-006](VS-006.md) | `POST /runs` endpoint | VS-004, VS-005 | done |
+| [VS-007](VS-007.md) | `GET /runs/{id}` endpoint | VS-006 | done |
+| [VS-008](VS-008.md) | `GET /runs/{id}/splits` endpoint | VS-006 | done |
+| [VS-009](VS-009.md) | `run.completed` event publishing interface + interim implementation | VS-006 | done |
+| [VS-011](VS-011.md) | Integration regression test: `POST /runs` round trip | VS-006, VS-008 | done |
+| [VS-012](VS-012.md) | Run failure/status handling | VS-006, VS-009 | done |
+
+VS-010 (tenant context resolution) is explicitly **blocked** on `libs/common` shipping a minimal tenant-context module (which does not exist yet — only a README) — not started this sprint, per the backlog's own decision 1. VS-013/014/015/016/017 (Should/Could) deferred to a later sprint, matching the Sprint 01→02 pattern.
+
+## Execution / parallelization plan (Sprint 03)
+
+- **Round 0 (Tech Lead, direct)**: VS-001 — pure scaffolding, done directly rather than delegated, same precedent as NFE-001.
+- **Round 1 (parallel)**: VS-002 (schema branch, depends on VS-001) and VS-005 (`DatasetSource` branch, depends on VS-001 only) — independent files (`src/app/models.py` + `migrations/` vs `src/app/dataset_source.py`), no shared data.
+- **Round 2**: VS-003 (repository interfaces, depends on VS-002).
+- **Round 3**: VS-004 (SQLite repository implementation, depends on VS-003).
+- **Round 4**: VS-006 (`POST /runs`, depends on VS-004 + VS-005, both done by now) — creates `src/app/routers/runs.py`.
+- **Round 5**: VS-007 (`GET /runs/{id}`, depends on VS-006, edits the same `runs.py` file VS-006 created — sequential, not parallel with VS-006 or VS-009).
+- **Round 6 (parallel)**: VS-008 (`GET /runs/{id}/splits`, depends on VS-006 only, deliberately placed in its own new file `src/app/routers/splits.py` to avoid overlap) and VS-009 (`run.completed` publisher, depends on VS-006, edits `runs.py`'s `POST` handler — safe in parallel with VS-008 since VS-008 never touches `runs.py`, and safe after VS-007 since VS-007's edit to `runs.py` is already merged).
+- **Round 7 (parallel)**: VS-011 (integration regression test, depends on VS-006 + VS-008, adds only a new test file — no production-code overlap) and VS-012 (failure handling, depends on VS-006 + VS-009, edits `runs.py`'s exception handling — safe in parallel with VS-011 since VS-011 touches no production file).
+
+Deferred: VS-010 (blocked, flagged for PM/Tech Lead to sequence a `libs/common` backlog). Not scheduled this sprint: VS-013/014/015/016/017 (Should/Could). Not proposed: VS-018/019/020 (Won't).
+
+**Sprint 03 outcome**: all 11 in-scope Must stories done. `uv run pytest` (`.venv\Scripts\python.exe -m pytest -q`) passes: 48 passed, 0 failed, in `services/validation-service`. Every ticket's Review acceptance criteria were personally verified by the Tech Lead (reading the actual diff, not just trusting a green checkmark), with particular scrutiny on VS-004/VS-007/VS-008's tenant-isolation tests, VS-006's exact-as-exposed call to `run_validation_protocol`, and VS-012's structural (not merely tested) guarantee that `run.completed` cannot fire on a failed run.

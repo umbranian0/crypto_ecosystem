@@ -1,0 +1,35 @@
+[project]
+name = "validation-service"
+version = "0.1.0"
+description = "Wraps naive_first_engine as a REST service: runs the leakage-aware validation protocol against a dataset via POST /runs, persists per-split results, emits run.completed."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "pydantic>=2.6",
+    "sqlalchemy>=2.0",
+    "alembic>=1.13",
+    "naive_first_engine",
+]
+# naive_first_common intentionally NOT listed yet -- per backlog decision 1 /
+# VS-010, libs/common has no code yet. Add it only when VS-010 is scheduled.
+
+[tool.uv.sources]
+naive_first_engine = { path = "../../libs/naive_first_engine", editable = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/app"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[dependency-groups]
+dev = [
+    "pytest>=7.4",
+    "httpx>=0.27",
+]
