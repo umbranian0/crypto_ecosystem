@@ -6,6 +6,10 @@ venv/
 .env
 *.egg-info/
 
+# Interim SQLite backends (validation-service's VALIDATION_SERVICE_DB_PATH,
+# gateway-api's GATEWAY_API_DB_PATH, etc.) are runtime state, not source.
+*.db
+
 # Data: raw/seed/incremental datasets belong in object storage (MinIO/S3), not
 # source control (docs/solution-design.md section 3.2). Keep the directory
 # structure and docs tracked; keep the actual data files out.

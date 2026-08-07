@@ -1,0 +1,34 @@
+[project]
+name = "gateway-api"
+version = "0.1.0"
+description = "The only internet-facing service: identity schema (tenants, users, api_keys), API-key auth, verified tenant-context forwarding, request routing to internal services over HTTP. Does not implement any business logic itself."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "pydantic>=2.6",
+    "sqlalchemy>=2.0",
+    "alembic>=1.13",
+    "httpx>=0.27",
+    "naive_first_common",
+]
+
+[tool.uv.sources]
+naive_first_common = { path = "../../libs/common", editable = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/app"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[dependency-groups]
+dev = [
+    "pytest>=7.4",
+    "httpx>=0.27",
+]

@@ -1,6 +1,6 @@
 # Ticket index
 
-Three modules are tracked here, kept as clearly separated sections: `libs/naive_first_engine` (NFE-*, Sprint 01+02, done), `services/validation-service` (VS-*, Sprint 03 done, Sprint 04 VS-010 in progress), and `libs/common` (LC-*, Sprint 04, in progress).
+Four modules are tracked here, kept as clearly separated sections: `libs/naive_first_engine` (NFE-*, Sprint 01+02, done), `services/validation-service` (VS-*, Sprint 03+04, done), `libs/common` (LC-*, Sprint 04, done for its in-scope Musts), and `services/gateway-api` (GW-*, Sprint 05, in progress).
 
 # libs/naive_first_engine (NFE-*)
 
@@ -116,5 +116,31 @@ Source: docs/sprints/sprint-04.md, docs/product/backlog-libs-common.md.
 Strictly sequential, no parallelization: LC-001 -> LC-002 -> LC-003 -> LC-004 -> VS-010 (tracked above under validation-service). Each story depends on the previous existing (package skeleton -> typed shape -> resolver returning that shape -> tests proving the resolver -> the one real consumer wiring it in), per sprint-04.md's own stated execution order — this is a small sprint with no independent branches to run in parallel, unlike Sprint 01-03.
 
 Deferred: LC-005 (README doc-sync), LC-006 (shared schemas), LC-007 (DB session helpers), LC-008 (formatting logic), LC-009 (JWT/API-key resolution) — all Should/Won't this backlog, per sprint-04.md's explicit deferral list.
+
+# services/gateway-api (GW-*)
+
+Source: docs/sprints/sprint-05.md, docs/product/backlog-gateway-api.md.
+
+## Sprint 05
+
+| Ticket | Story | Depends on | Status |
+|---|---|---|---|
+| [GW-001](GW-001.md) | Service scaffolding | none | done |
+| [GW-002](GW-002.md) | `identity` schema definition (`tenants`, `users`, `api_keys`) | GW-001 | done |
+| [GW-003](GW-003.md) | Identity repository interfaces | GW-002 | done |
+| [GW-004](GW-004.md) | SQLite-backed repository implementation (interim) | GW-003 | done |
+| [GW-005](GW-005.md) | Tenant + API-key provisioning (operator-facing) | GW-004 | done |
+| [GW-006](GW-006.md) | API-key authentication | GW-005 | done |
+| [GW-007](GW-007.md) | Verified `TenantContext` resolution + downstream forwarding | GW-006 | done |
+| [GW-008](GW-008.md) | Request routing to validation-service's real endpoints | GW-007 | done |
+| [GW-009](GW-009.md) | Downstream failure handling (timeouts, connection errors) | GW-008 | done |
+
+## Execution / parallelization plan (Sprint 05)
+
+Strictly sequential, no parallelization opportunity — sprint-05.md's own dependency chain confirms each story's sole predecessor is the story immediately before it, unlike Sprint 01/03's independent branches. GW-001 scaffolded directly by the Tech Lead (no design decision to delegate, same precedent as NFE-001/VS-001/LC-001); GW-002 through GW-009 delegated one at a time to a dev subagent, each verified against the actual diff before the next is started. GW-006 (auth) and GW-007 (tenant forwarding) receive additional personal verification per the sprint's extra-sensitive-ticket instruction (SHA-256 hashing / never-plaintext / never-logged for GW-006; zero `libs/common`/`validation-service` changes and verified-tenant-only forwarding for GW-007).
+
+Deferred: GW-010 through GW-014 (Should/Could). Not started: GW-015 (Won't, this backlog — explicitly `libs/common`'s LC-009 concern).
+
+**Sprint 05 outcome**: all 9 in-scope Must stories done. `.venv\Scripts\python.exe -m pytest -q` in `services/gateway-api` passes 55/55 (0 failures), including GW-004's revoked-key-still-resolves test, GW-006's full valid/missing/malformed/unknown/revoked auth coverage, GW-007's spoofed-inbound-header proof, GW-008's cross-tenant `404` tests, and GW-009's timeout/connection-refused/status:"failed"-pass-through tests. Zero regressions confirmed by re-running both other suites after the sprint: `services/validation-service` 51/51, `libs/common` 14/14 (both unchanged from Sprint 04's baseline). GW-001 was scaffolded directly by the Tech Lead (no design decision to delegate, same precedent as NFE-001/VS-001/LC-001); GW-002 through GW-009 were each delegated to a dev subagent and personally verified by the Tech Lead by reading the actual diff (not just trusting the agent's self-report) before being marked done. GW-006 (auth) and GW-007 (tenant forwarding) received the sprint's mandated extra scrutiny: GW-006 confirmed to hash exclusively with `hashlib.sha256`, compare only hash-to-hash (never plaintext), and never log/print the presented raw key anywhere; GW-007 confirmed via a direct `git status` scope check to touch zero files under `libs/common/` or `services/validation-service/`, and confirmed structurally (not just behaviorally) that `build_downstream_headers` cannot read the inbound request's own `X-Tenant-Id` header. No deviations from sprint-05.md's binding note: SHA-256 used throughout, never bcrypt/argon2/scrypt.
 
 **Sprint 04 outcome**: all 4 in-scope `libs/common` Must stories (LC-001–004) plus VS-010 done, matching sprint-04.md's Definition of Done. `libs/common`: `.venv\Scripts\python.exe -m pytest -q` passes 14/14 (LC-002/003 unit tests + LC-004's standalone fail-closed app-level suite). `services/validation-service`: `.venv\Scripts\python.exe -m pytest -q` passes 51/51 (48 pre-existing Sprint 03 tests, now exercising `Depends(get_tenant_context)` instead of the interim field, plus 3 new VS-010 fail-closed-before-repository tests). Both READMEs updated (`libs/common` status "scaffolded"; `services/validation-service` Contract section documents the `X-Tenant-Id` header replacing the retired `tenant_id` body/query field). LC-001 was scaffolded directly by the Tech Lead (no design decision to delegate, same precedent as NFE-001/VS-001); LC-002/003/004/VS-010 were each delegated to a dev subagent and personally verified by the Tech Lead by reading the actual diff (not just trusting the agent's self-report) before being marked done — VS-010 in particular was checked for: `Depends(get_tenant_context)` imported unmodified from `naive_first_common` with no local reimplementation, the interim `tenant_id` field/params fully removed (not left dead), tenant-isolation logic unchanged apart from the source of `tenant_id`, and the new fail-closed test's non-tautological proof (a repository fake that fails the test if reached) run directly by the Tech Lead. No deviations from sprint-04.md's binding notes: 401 (not 400) used throughout LC-003/LC-004/VS-010; LC-001 never touched `services/validation-service/pyproject.toml`; VS-010 was the ticket that added `naive_first_common` to that file. No code outside `libs/common`/`services/validation-service` was touched.
