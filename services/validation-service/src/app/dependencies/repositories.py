@@ -16,37 +16,112 @@ DB path: `VALIDATION_SERVICE_DB_PATH` env var, defaulting to `./validation.db`
 (a local file so run/split state survives a process restart -- VS-004 AC1).
 Swapping to Postgres (VS-013) means changing only this module's provider
 bodies, not any call site (backlog decision 2).
+
+ARCH-002: `_get_engine` is the memoized-by-URL `Engine` provider -- one
+`Engine` per distinct db_path/URL for the life of the process, instead of a
+fresh `create_engine` on every `Depends()` resolution. Keyed by the URL
+string (`functools.lru_cache`), never zero-arg, so tests that
+`monkeypatch.setenv` the DB path per test still get an isolated engine per
+path. This is the shared engine/session-factory seam VS-013's Postgres
+work extends, not replaces.
+
+VS-013: when `DATABASE_URL` is set to a `postgresql://`/`postgresql+psycopg://`
+URL, the two repository providers below return `PostgresValidationRunRepository`/
+`PostgresSplitResultRepository` (postgres_repository.py) instead of the
+SQLite classes; otherwise they fall back to the existing
+`VALIDATION_SERVICE_DB_PATH`-driven SQLite behavior unchanged. `_get_engine`
+is reused as-is (same memoized-by-URL cache) for both backends -- the
+Postgres URL is just another key into it.
 """
 
 from __future__ import annotations
 
+import functools
 import os
 from typing import Annotated
 
 from fastapi import Depends
+from sqlalchemy import Engine
+
+import redis as redis_lib
 
 from app.dataset_source import DatasetSource, InlineOrLocalFileDatasetSource
-from app.events import EventPublisher, InProcessLogEventPublisher
+from app.events import EventPublisher, InProcessLogEventPublisher, RedisStreamsEventPublisher
+from app.models import Base
 from app.repositories.interfaces import SplitResultRepository, ValidationRunRepository
+from app.repositories.postgres_repository import (
+    PostgresSplitResultRepository,
+    PostgresValidationRunRepository,
+)
 from app.repositories.sqlite_repository import (
     SQLiteSplitResultRepository,
     SQLiteValidationRunRepository,
 )
+from naive_first_common.db import build_engine
 
 _DB_PATH_ENV_VAR = "VALIDATION_SERVICE_DB_PATH"
 _DEFAULT_DB_PATH = "./validation.db"
+_DATABASE_URL_ENV_VAR = "DATABASE_URL"
+
+# VS-013 AC1/hard requirement: table creation (via build_engine's
+# create_all, same as migrations/env.py's own `SET search_path`) must land
+# in `validation`, never `public`. Encoded on the URL itself (libpq
+# `options` connection parameter), not via a post-connect statement,
+# because build_engine (ARCH-001) only takes a URL -- it opens its own
+# connection and runs create_all before this module ever sees the Engine
+# it returns, so anything set *after* build_engine runs would be too late
+# for that first connection.
+_POSTGRES_SCHEMA = "validation"
+_SEARCH_PATH_OPTION = f"options=-csearch_path%3D{_POSTGRES_SCHEMA}"
 
 
 def _db_path() -> str:
     return os.environ.get(_DB_PATH_ENV_VAR, _DEFAULT_DB_PATH)
 
 
+def _database_url() -> str | None:
+    return os.environ.get(_DATABASE_URL_ENV_VAR)
+
+
+def _is_postgres_url(url: str) -> bool:
+    return url.startswith("postgresql://") or url.startswith("postgresql+psycopg://")
+
+
+def _postgres_engine_url(url: str) -> str:
+    # psycopg v3, synchronous (binding decision #3) -- normalize the plain
+    # "postgresql://" scheme INF-003 wires through Compose to the
+    # SQLAlchemy-explicit "postgresql+psycopg://" driver.
+    if url.startswith("postgresql://"):
+        url = "postgresql+psycopg://" + url[len("postgresql://") :]
+    separator = "&" if "?" in url else "?"
+    return f"{url}{separator}{_SEARCH_PATH_OPTION}"
+
+
+@functools.lru_cache(maxsize=None)
+def _get_engine(url: str) -> Engine:
+    # Keyed on `url`, not zero-arg (ARCH-002 grooming decision #2): a
+    # zero-arg cache would return the same engine after
+    # monkeypatch.setenv(VALIDATION_SERVICE_DB_PATH, ...) swaps the path
+    # mid-suite, silently pointing tests at the wrong file.
+    return build_engine(url, Base)
+
+
 def get_validation_run_repository() -> ValidationRunRepository:
-    return SQLiteValidationRunRepository(_db_path())
+    database_url = _database_url()
+    if database_url and _is_postgres_url(database_url):
+        engine_url = _postgres_engine_url(database_url)
+        return PostgresValidationRunRepository(engine_url, engine=_get_engine(engine_url))
+    db_path = _db_path()
+    return SQLiteValidationRunRepository(db_path, engine=_get_engine(f"sqlite:///{db_path}"))
 
 
 def get_split_result_repository() -> SplitResultRepository:
-    return SQLiteSplitResultRepository(_db_path())
+    database_url = _database_url()
+    if database_url and _is_postgres_url(database_url):
+        engine_url = _postgres_engine_url(database_url)
+        return PostgresSplitResultRepository(engine_url, engine=_get_engine(engine_url))
+    db_path = _db_path()
+    return SQLiteSplitResultRepository(db_path, engine=_get_engine(f"sqlite:///{db_path}"))
 
 
 def get_dataset_source() -> DatasetSource:
@@ -62,10 +137,23 @@ def get_dataset_source() -> DatasetSource:
 # their own instance per-test.
 _event_publisher = InProcessLogEventPublisher()
 
+# REDIS_URL env var (VS-014 binding decision #10, mirrors DATABASE_URL's
+# convention): memoized by URL for the same reason `_get_engine` is (a
+# monkeypatch.setenv mid-suite must not silently reuse a stale client).
+_REDIS_URL_ENV_VAR = "REDIS_URL"
+
+
+@functools.lru_cache(maxsize=None)
+def _get_redis_publisher(url: str) -> RedisStreamsEventPublisher:
+    return RedisStreamsEventPublisher(redis_lib.from_url(url))
+
 
 def get_event_publisher() -> EventPublisher:
-    # Interim implementation (VS-009); a durable, Redis Streams-backed
-    # publisher (VS-014) replaces this provider body only, same DI seam.
+    # VS-014: swap to the durable Redis Streams publisher when REDIS_URL is
+    # set; otherwise fall back to VS-009's in-process singleton unmodified.
+    redis_url = os.environ.get(_REDIS_URL_ENV_VAR)
+    if redis_url:
+        return _get_redis_publisher(redis_url)
     return _event_publisher
 
 

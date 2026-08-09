@@ -15,6 +15,18 @@ clause itself (`.where(Model.tenant_id == tenant_id)`), never "fetch, then
 check tenant_id in Python" -- the Design section's explicit ban on that
 pattern, since it is exactly the kind of check a future edit could silently
 drop.
+
+Engine construction (file-based, not `:memory:`, so a run created before a
+process restart is still there after -- AC1) uses the shared
+`naive_first_common.db.build_engine` helper (ARCH-001); this is the seam
+VS-013 must extend for Postgres.
+
+ARCH-002: callers going through `app.dependencies.repositories`'s providers
+pass an already-memoized `engine` (one per db_path/URL, process-wide) so a
+request no longer pays for a fresh `create_engine` call. The `engine=None`
+fallback below builds one directly and stays in place only so this module's
+own tests (`tests/test_sqlite_repository.py`), which construct these classes
+straight from a `db_path`, keep working unmodified.
 """
 
 from __future__ import annotations
@@ -22,22 +34,12 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import uuid4
 
-from sqlalchemy import Engine, create_engine, select, update
+from naive_first_common.db import build_engine
+from sqlalchemy import Engine, select, update
 from sqlalchemy.orm import Session
 
 from app.models import Base, Run, SplitResult
 from app.repositories.interfaces import RunRecord, SplitResultRecord
-
-
-def _build_engine(db_path: str) -> Engine:
-    """File-based (not `:memory:`) so a run created before a process restart
-    is still there after (AC1); `test_models.py`'s `:memory:` fixture is
-    fixture-only and not reused here since AC1 specifically requires
-    persistence across restarts.
-    """
-    engine = create_engine(f"sqlite:///{db_path}")
-    Base.metadata.create_all(engine)
-    return engine
 
 
 def _run_to_record(run: Run) -> RunRecord:
@@ -90,8 +92,8 @@ def _split_result_to_record(split: SplitResult) -> SplitResultRecord:
 class SQLiteValidationRunRepository:
     """SQLite implementation of `ValidationRunRepository` (VS-003)."""
 
-    def __init__(self, db_path: str) -> None:
-        self._engine = _build_engine(db_path)
+    def __init__(self, db_path: str, engine: Engine | None = None) -> None:
+        self._engine = engine if engine is not None else build_engine(f"sqlite:///{db_path}", Base)
 
     def create_run(
         self,
@@ -152,8 +154,8 @@ class SQLiteValidationRunRepository:
 class SQLiteSplitResultRepository:
     """SQLite implementation of `SplitResultRepository` (VS-003)."""
 
-    def __init__(self, db_path: str) -> None:
-        self._engine = _build_engine(db_path)
+    def __init__(self, db_path: str, engine: Engine | None = None) -> None:
+        self._engine = engine if engine is not None else build_engine(f"sqlite:///{db_path}", Base)
 
     def add_splits(self, tenant_id: str, run_id: str, splits: list[SplitResultRecord]) -> None:
         rows = [

@@ -1,5 +1,11 @@
 """`POST /runs` (VS-006): the service's literal trigger condition.
 
+`RunRequest`/`RunResponse`/`RunDetailResponse` are imported from
+`naive_first_common.contracts` (ARCH-003) -- this router is the canonical
+source these shapes were copied from, and now imports the shared definition
+like `gateway-api`'s router does, so there is exactly one definition instead
+of two hand-synced copies.
+
 Single responsibility: adapt an HTTP request into exactly one call to
 `naive_first_engine.protocol.run_validation_protocol` (imported and invoked
 as-is -- no wrapping/subclassing/reordering, per this ticket's Review
@@ -64,9 +70,9 @@ from datetime import datetime
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
 
 from naive_first_common import TenantContext, get_tenant_context
+from naive_first_common.contracts import RunDetailResponse, RunRequest, RunResponse
 from naive_first_engine.protocol import (
     NAIVE0_KEY,
     NAIVE_LAST_KEY,
@@ -83,43 +89,6 @@ from app.dependencies.repositories import (
 from app.repositories.interfaces import SplitResultRecord
 
 router = APIRouter()
-
-
-class RunRequest(BaseModel):
-    """Request shape per VS-006's Design section. Field constraints mirror
-    the config `naive_first_engine.splitting.generate_splits` implicitly
-    relies on (it does not raise on bad input, it silently produces zero
-    splits) -- enforcing them here makes FastAPI return 422 before
-    `DatasetSource`/any repository/the protocol is ever touched (AC2).
-    """
-
-    dataset_id: str
-    dataset_reference: dict
-    horizon: int = Field(ge=1)
-    purge_gap_hours: int = Field(ge=0)
-    train_window: int = Field(gt=0)
-    test_window: int = Field(gt=0)
-    step: int = Field(gt=0)
-
-
-class RunResponse(BaseModel):
-    id: str
-    status: str
-
-
-class RunDetailResponse(BaseModel):
-    """Full `runs` row shape (VS-007 AC1)."""
-
-    id: str
-    tenant_id: str
-    dataset_id: str
-    horizon: int
-    purge_gap_hours: float
-    split_config: dict
-    status: str
-    created_at: datetime
-    completed_at: datetime | None
-    failure_reason: str | None
 
 
 @router.post("/runs", response_model=RunResponse, status_code=201)

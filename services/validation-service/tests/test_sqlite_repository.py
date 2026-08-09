@@ -24,14 +24,6 @@ SPLIT_CONFIG = {"train_window": 100, "test_window": 20, "step": 10}
 
 
 @pytest.fixture()
-def db_path(tmp_path) -> str:
-    # A real file path (not :memory:) so this exercises the same
-    # file-based-persistence code path AC1 requires in production, while
-    # each test still gets an isolated, disposable file under tmp_path.
-    return str(tmp_path / "validation.db")
-
-
-@pytest.fixture()
 def run_repo(db_path) -> SQLiteValidationRunRepository:
     return SQLiteValidationRunRepository(db_path)
 

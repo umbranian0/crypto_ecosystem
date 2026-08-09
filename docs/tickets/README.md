@@ -1,6 +1,6 @@
 # Ticket index
 
-Four modules are tracked here, kept as clearly separated sections: `libs/naive_first_engine` (NFE-*, Sprint 01+02, done), `services/validation-service` (VS-*, Sprint 03+04, done), `libs/common` (LC-*, Sprint 04, done for its in-scope Musts), and `services/gateway-api` (GW-*, Sprint 05, in progress).
+Six sections are tracked here, kept as clearly separated: `libs/naive_first_engine` (NFE-*, Sprint 01+02, done), `services/validation-service` (VS-*, Sprint 03+04+06), `libs/common` (LC-*, Sprint 04; ARCH-*, Sprint 06), `services/gateway-api` (GW-*, Sprint 05+06), and `infra` (INF-*, Sprint 06). Sprint 06 (docs/sprints/sprint-06.md) spans ARCH-*/INF-*/two VS-*/one GW-* tickets in one debt sprint — see the "Sprint 06" subsections under each relevant module below.
 
 # libs/naive_first_engine (NFE-*)
 
@@ -98,6 +98,15 @@ Deferred: VS-010 (blocked, flagged for PM/Tech Lead to sequence a `libs/common` 
 
 See docs/sprints/sprint-04.md. VS-010 was blocked at the end of Sprint 03 pending `libs/common`'s minimal tenant-context module; this sprint unblocks and completes it, sequenced last (after LC-001–004 land).
 
+## Sprint 06
+
+| Ticket | Story | Depends on | Status |
+|---|---|---|---|
+| [VS-013](VS-013.md) | Postgres-backed repository implementation | ARCH-001/002/004, INF-001/005 | done |
+| [VS-014](VS-014.md) | Redis Streams-backed `run.completed` publisher | INF-002 | done |
+
+See docs/sprints/sprint-06.md Phase 4. Both unblock Should stories that sat blocked since Sprint 03/04 pending real infra (this sprint's four-backlog debt sprint).
+
 # libs/common (LC-*)
 
 Source: docs/sprints/sprint-04.md, docs/product/backlog-libs-common.md.
@@ -116,6 +125,17 @@ Source: docs/sprints/sprint-04.md, docs/product/backlog-libs-common.md.
 Strictly sequential, no parallelization: LC-001 -> LC-002 -> LC-003 -> LC-004 -> VS-010 (tracked above under validation-service). Each story depends on the previous existing (package skeleton -> typed shape -> resolver returning that shape -> tests proving the resolver -> the one real consumer wiring it in), per sprint-04.md's own stated execution order — this is a small sprint with no independent branches to run in parallel, unlike Sprint 01-03.
 
 Deferred: LC-005 (README doc-sync), LC-006 (shared schemas), LC-007 (DB session helpers), LC-008 (formatting logic), LC-009 (JWT/API-key resolution) — all Should/Won't this backlog, per sprint-04.md's explicit deferral list.
+
+## Sprint 06 — ARCH-* (docs/product/backlog-technical-upgrades.md)
+
+| Ticket | Story | Depends on | Status |
+|---|---|---|---|
+| [ARCH-001](ARCH-001.md) | Extract duplicated SQLite engine-building scaffolding into libs/common | none | done |
+| [ARCH-002](ARCH-002.md) | Fix per-request DB engine instantiation (memoize once per process, keyed by URL) | ARCH-001 | done |
+| [ARCH-004](ARCH-004.md) | Extract duplicated SQLite test-fixture into shared test-utility | none (bundled with ARCH-001) | done |
+| [ARCH-003](ARCH-003.md) | Move gateway-api proxy wire-contract into shared libs/common package | none | done |
+
+See docs/sprints/sprint-06.md Phase 1, Track A. A prior grooming session produced 10 binding decisions (see sprint-06.md task framing / each ticket's Design section) that these four tickets carry as given facts. ARCH-002 is the sprint's single highest cross-service regression risk (per-request engine construction fix touching both services' DI wiring). Deferred: ARCH-005 (Should, tracking story), ARCH-006 (Won't).
 
 # services/gateway-api (GW-*)
 
@@ -141,6 +161,36 @@ Strictly sequential, no parallelization opportunity — sprint-05.md's own depen
 
 Deferred: GW-010 through GW-014 (Should/Could). Not started: GW-015 (Won't, this backlog — explicitly `libs/common`'s LC-009 concern).
 
+## Sprint 06
+
+| Ticket | Story | Depends on | Status |
+|---|---|---|---|
+| [GW-012](GW-012.md) | Postgres-backed identity repository + row-level security | ARCH-001/002/004, INF-001/005 | done |
+
+See docs/sprints/sprint-06.md Phase 4. Sprint 06's second extra-sensitive ticket (alongside ARCH-002) — RLS `SET LOCAL` tenant-scoping hook must fire on every pooled-connection checkout, not just once at startup. **Follow-up flagged, not silently accepted**: see INF-014 below — the Postgres role both services actually connect as is a superuser (`BYPASSRLS`), so RLS policies are correctly written and proven-in-test but currently unenforced against real deployed credentials.
+
+# infra (INF-*)
+
+Source: docs/sprints/sprint-06.md, docs/product/backlog-infra.md.
+
+## Sprint 06
+
+| Ticket | Story | Phase | Depends on | Status |
+|---|---|---|---|---|
+| [INF-001](INF-001.md) | PostgreSQL + TimescaleDB service in Docker Compose (one DB, two schemas: validation + identity) | 1 (Track B) | none | done |
+| [INF-002](INF-002.md) | Redis service in Docker Compose | 1 (Track B) | none | done |
+| [INF-003](INF-003.md) | validation-service wired into Docker Compose | 2 | INF-001, INF-002 | done |
+| [INF-004](INF-004.md) | gateway-api wired into Docker Compose | 2 | INF-001, INF-003 | done |
+| [INF-005](INF-005.md) | Verify both services' Alembic migrations run against Compose Postgres | 2 | INF-001, INF-003, INF-004 | done, with one finding reported (unresolved cross-service `alembic_version` collision — resolved by VS-013/GW-012's `version_table_schema` work, see those tickets) |
+| [INF-006](INF-006.md) | Persistent volumes for Postgres and Redis | 3 | INF-001, INF-002 | done |
+| [INF-007](INF-007.md) | infra/README.md and .env.example reflect actual, built state | 3 | INF-001–006 | done |
+
+Deferred: INF-008 (MinIO, Should), INF-009 (healthchecks/startup ordering, Should), INF-010 (TimescaleDB hypertables, Could). Not started: INF-011/012/013 (Won't, this backlog).
+
+**New follow-up surfaced during this sprint, not yet scheduled**: **INF-014 (proposed) — provision a non-superuser Postgres app role for `validation-service`/`gateway-api` to actually connect as.** VS-013 and GW-012 both independently discovered that the `naive_first` role INF-001 provisions is a Postgres superuser (`BYPASSRLS` implicitly true for superusers) — every RLS policy either ticket wrote is correctly authored and proven to work in tests (against a purpose-built, ephemeral `NOSUPERUSER NOBYPASSRLS` test role), but is **currently unenforced in the actual running system**, because the app itself connects as a role RLS does not apply to. This is a real gap, flagged rather than silently patched by either dev agent, and needs its own ticket in a future sprint — not something this sprint's Definition of Done should be read as having closed.
+
 **Sprint 05 outcome**: all 9 in-scope Must stories done. `.venv\Scripts\python.exe -m pytest -q` in `services/gateway-api` passes 55/55 (0 failures), including GW-004's revoked-key-still-resolves test, GW-006's full valid/missing/malformed/unknown/revoked auth coverage, GW-007's spoofed-inbound-header proof, GW-008's cross-tenant `404` tests, and GW-009's timeout/connection-refused/status:"failed"-pass-through tests. Zero regressions confirmed by re-running both other suites after the sprint: `services/validation-service` 51/51, `libs/common` 14/14 (both unchanged from Sprint 04's baseline). GW-001 was scaffolded directly by the Tech Lead (no design decision to delegate, same precedent as NFE-001/VS-001/LC-001); GW-002 through GW-009 were each delegated to a dev subagent and personally verified by the Tech Lead by reading the actual diff (not just trusting the agent's self-report) before being marked done. GW-006 (auth) and GW-007 (tenant forwarding) received the sprint's mandated extra scrutiny: GW-006 confirmed to hash exclusively with `hashlib.sha256`, compare only hash-to-hash (never plaintext), and never log/print the presented raw key anywhere; GW-007 confirmed via a direct `git status` scope check to touch zero files under `libs/common/` or `services/validation-service/`, and confirmed structurally (not just behaviorally) that `build_downstream_headers` cannot read the inbound request's own `X-Tenant-Id` header. No deviations from sprint-05.md's binding note: SHA-256 used throughout, never bcrypt/argon2/scrypt.
 
 **Sprint 04 outcome**: all 4 in-scope `libs/common` Must stories (LC-001–004) plus VS-010 done, matching sprint-04.md's Definition of Done. `libs/common`: `.venv\Scripts\python.exe -m pytest -q` passes 14/14 (LC-002/003 unit tests + LC-004's standalone fail-closed app-level suite). `services/validation-service`: `.venv\Scripts\python.exe -m pytest -q` passes 51/51 (48 pre-existing Sprint 03 tests, now exercising `Depends(get_tenant_context)` instead of the interim field, plus 3 new VS-010 fail-closed-before-repository tests). Both READMEs updated (`libs/common` status "scaffolded"; `services/validation-service` Contract section documents the `X-Tenant-Id` header replacing the retired `tenant_id` body/query field). LC-001 was scaffolded directly by the Tech Lead (no design decision to delegate, same precedent as NFE-001/VS-001); LC-002/003/004/VS-010 were each delegated to a dev subagent and personally verified by the Tech Lead by reading the actual diff (not just trusting the agent's self-report) before being marked done — VS-010 in particular was checked for: `Depends(get_tenant_context)` imported unmodified from `naive_first_common` with no local reimplementation, the interim `tenant_id` field/params fully removed (not left dead), tenant-isolation logic unchanged apart from the source of `tenant_id`, and the new fail-closed test's non-tautological proof (a repository fake that fails the test if reached) run directly by the Tech Lead. No deviations from sprint-04.md's binding notes: 401 (not 400) used throughout LC-003/LC-004/VS-010; LC-001 never touched `services/validation-service/pyproject.toml`; VS-010 was the ticket that added `naive_first_common` to that file. No code outside `libs/common`/`services/validation-service` was touched.
+
+**Sprint 06 outcome**: all 14 in-scope stories (ARCH-001/002/003/004, INF-001–007, VS-013, VS-014, GW-012) done, matching sprint-06.md's Definition of Done. All 4 modules' full suites pass with zero regressions, verified directly by the Tech Lead: `libs/naive_first_engine` 94/94 (untouched, sanity baseline), `libs/common` 20/20, `services/validation-service` 63/63, `services/gateway-api` 66/66. A real Postgres+TimescaleDB and Redis are running in `infra/docker-compose.yml` alongside real, containerized `validation-service`/`gateway-api`; a full-stack smoke test (provision tenant -> `POST /runs` through `gateway-api` -> proxied to `validation-service` -> real `naive_first_engine` execution -> persisted results -> proxied back) was executed for real, not simulated, during INF-004. All 10 grooming-session binding decisions were implemented as specified, not merely referenced (see the full confirmation checklist in the Tech Lead's sprint report to "main"). One real, load-bearing finding from INF-005 (both services' migrations collide on a shared `public.alembic_version` if neither schema-qualifies its version table) was caught, escalated into a hard requirement on VS-013/GW-012 (rather than left as the original ticket's "should"), and confirmed fixed by rerunning both services' full suites together. One new gap was surfaced and deliberately NOT silently patched: the Postgres role both services actually connect as (`naive_first`, provisioned by INF-001) is a superuser, which Postgres unconditionally exempts from RLS — VS-013's and GW-012's RLS policies are correctly authored and proven against a purpose-built non-superuser test role, but are not yet enforced against the real running credentials. Tracked as a new follow-up (INF-014, proposed, not yet scheduled) rather than counted as "done" in this sprint's RLS acceptance criteria. Round 2's ARCH-002 (memoization keyed by URL, not zero-arg) and GW-012 (SET LOCAL firing per-transaction, not once at startup, proven via a `pool_size=1`/`pg_backend_pid()` pooled-connection-reuse test) received the sprint's mandated extra scrutiny, both personally verified by the Tech Lead reading the actual code and diff, not just trusting a green checkmark.

@@ -28,14 +28,6 @@ from app.repositories.sqlite_repository import (
 
 
 @pytest.fixture()
-def db_path(tmp_path) -> str:
-    # A real file path (not :memory:) so this exercises the same
-    # file-based-persistence code path production uses, while each test
-    # still gets an isolated, disposable file under tmp_path.
-    return str(tmp_path / "gateway.db")
-
-
-@pytest.fixture()
 def tenant_repo(db_path) -> SQLiteTenantRepository:
     return SQLiteTenantRepository(db_path)
 

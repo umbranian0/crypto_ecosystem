@@ -3,6 +3,7 @@ from logging.config import fileConfig
 
 from sqlalchemy import engine_from_config
 from sqlalchemy import pool
+from sqlalchemy import text
 
 from alembic import context
 
@@ -30,6 +31,22 @@ target_metadata = Base.metadata
 if os.environ.get("DATABASE_URL"):
     config.set_main_option("sqlalchemy.url", os.environ["DATABASE_URL"])
 
+# VS-013 (hard requirement per INF-005's reproduced public.alembic_version
+# collision -- see Design section of docs/tickets/VS-013.md): both
+# `runs`/`split_results` and `alembic_version` itself must land in the
+# `validation` schema, never `public`, inside the shared Postgres
+# database/two-schema (validation + identity) design INF-001 provisions.
+# Postgres-only: `SET search_path`/`version_table_schema` have no SQLite
+# equivalent -- test_models.py's test_alembic_upgrade_head_creates_matching_schema
+# runs `alembic upgrade head` against a real sqlite:/// DATABASE_URL, so this
+# must stay conditional on the dialect, not applied unconditionally.
+_SCHEMA = "validation"
+
+
+def _is_postgres_url(url: str) -> bool:
+    return url.startswith("postgresql://") or url.startswith("postgresql+psycopg://")
+
+
 # other values from the config, defined by the needs of env.py,
 # can be acquired:
 # my_important_option = config.get_main_option("my_important_option")
@@ -54,6 +71,7 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        version_table_schema=_SCHEMA if _is_postgres_url(url) else None,
     )
 
     with context.begin_transaction():
@@ -74,8 +92,30 @@ def run_migrations_online() -> None:
     )
 
     with connectable.connect() as connection:
+        is_postgres = connection.dialect.name == "postgresql"
+        if is_postgres:
+            # Table creation (`runs`/`split_results`) must land in
+            # `validation`, not `public` -- set the connection's search_path
+            # before context.configure so every unqualified DDL statement
+            # resolves there. Combined with version_table_schema below (for
+            # `alembic_version` itself), this is the two-part fix INF-005
+            # required (see module-level comment above). Postgres-only:
+            # SQLite has no `SET search_path` equivalent, and
+            # test_models.py's test_alembic_upgrade_head_creates_matching_schema
+            # runs this same function against a real sqlite:/// URL.
+            connection.execute(text(f"SET search_path TO {_SCHEMA}"))
+            # SQLAlchemy 2.0 "commit-as-you-go": the SET above auto-begins a
+            # transaction on this connection; without committing it here,
+            # context.begin_transaction() below nests inside it via a
+            # SAVEPOINT, so its own commit-on-exit never commits the *outer*
+            # transaction, and the whole migration silently rolls back when
+            # the connection closes. Commit it before alembic starts its own
+            # transaction.
+            connection.commit()
         context.configure(
-            connection=connection, target_metadata=target_metadata
+            connection=connection,
+            target_metadata=target_metadata,
+            version_table_schema=_SCHEMA if is_postgres else None,
         )
 
         with context.begin_transaction():

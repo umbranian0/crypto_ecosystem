@@ -17,16 +17,19 @@ Design section).
 Ordering: `SplitResultRepository.get_splits` already returns splits ordered
 by `split_index` (VS-003's binding decision, interfaces.py) -- this handler
 does not re-sort.
+
+`SplitResultResponse` is imported from `naive_first_common.contracts`
+(ARCH-003) -- this router is the canonical source that shape was copied
+from, and now imports the shared definition like `gateway-api`'s router
+does, so there is exactly one definition instead of two hand-synced copies.
 """
 
 from __future__ import annotations
 
-from datetime import datetime
-
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
 
 from naive_first_common import TenantContext, get_tenant_context
+from naive_first_common.contracts import SplitResultResponse
 
 from app.dependencies.repositories import (
     SplitResultRepositoryDep,
@@ -34,39 +37,6 @@ from app.dependencies.repositories import (
 )
 
 router = APIRouter()
-
-
-class SplitResultResponse(BaseModel):
-    """One `split_results` row, full field set (VS-008 AC1)."""
-
-    split_index: int
-
-    train_start: datetime
-    train_end: datetime
-    purge_start: datetime | None
-    purge_end: datetime | None
-    test_start: datetime
-    test_end: datetime
-
-    model_mae: float
-    model_rmse: float
-    model_smape: float
-    model_mase: float
-    model_da: float
-    model_f1: float
-    model_oos_r2: float
-
-    naive0_mae: float
-    naive0_rmse: float
-    naive0_smape: float
-    naive0_mase: float
-    naive0_da: float
-    naive0_f1: float
-    naive0_oos_r2: float
-
-    dm_statistic: float
-    dm_pvalue: float
-    dm_verdict: str
 
 
 @router.get("/runs/{run_id}/splits", response_model=list[SplitResultResponse])

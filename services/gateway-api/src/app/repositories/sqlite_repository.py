@@ -16,6 +16,18 @@ the SQL `WHERE` clause itself (`.where(Model.tenant_id == tenant_id)`), never
 "fetch, then check tenant_id in Python". `get_by_hash`/`get_user_by_email`
 are GW-003's two documented exceptions and correctly have no `tenant_id`
 filter -- they resolve identity, they don't yet know the tenant.
+
+Engine construction (file-based, not `:memory:`, so state created before a
+process restart is still there after -- backlog AC) uses the shared
+`naive_first_common.db.build_engine` helper (ARCH-001); this is the seam
+GW-012 must extend for Postgres.
+
+ARCH-002: callers going through `app.dependencies.repositories`'s providers
+pass an already-memoized `engine` (one per db_path/URL, process-wide) so a
+request no longer pays for a fresh `create_engine` call. The `engine=None`
+fallback below builds one directly and stays in place only so this module's
+own tests (`tests/test_sqlite_repository.py`), which construct these classes
+straight from a `db_path`, keep working unmodified.
 """
 
 from __future__ import annotations
@@ -23,20 +35,12 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import uuid4
 
-from sqlalchemy import Engine, create_engine, select, update
+from naive_first_common.db import build_engine
+from sqlalchemy import Engine, select, update
 from sqlalchemy.orm import Session
 
 from app.models import ApiKey, Base, Tenant, User
 from app.repositories.interfaces import ApiKeyRecord, TenantRecord, UserRecord
-
-
-def _build_engine(db_path: str) -> Engine:
-    """File-based (not `:memory:`) so state created before a process
-    restart is still there after (backlog AC).
-    """
-    engine = create_engine(f"sqlite:///{db_path}")
-    Base.metadata.create_all(engine)
-    return engine
 
 
 def _tenant_to_record(tenant: Tenant) -> TenantRecord:
@@ -66,8 +70,8 @@ def _api_key_to_record(api_key: ApiKey) -> ApiKeyRecord:
 class SQLiteTenantRepository:
     """SQLite implementation of `TenantRepository` (GW-003)."""
 
-    def __init__(self, db_path: str) -> None:
-        self._engine = _build_engine(db_path)
+    def __init__(self, db_path: str, engine: Engine | None = None) -> None:
+        self._engine = engine if engine is not None else build_engine(f"sqlite:///{db_path}", Base)
 
     def create_tenant(self, name: str) -> TenantRecord:
         tenant = Tenant(id=uuid4().hex, name=name, created_at=datetime.utcnow())
@@ -88,8 +92,8 @@ class SQLiteTenantRepository:
 class SQLiteUserRepository:
     """SQLite implementation of `UserRepository` (GW-003)."""
 
-    def __init__(self, db_path: str) -> None:
-        self._engine = _build_engine(db_path)
+    def __init__(self, db_path: str, engine: Engine | None = None) -> None:
+        self._engine = engine if engine is not None else build_engine(f"sqlite:///{db_path}", Base)
 
     def create_user(self, tenant_id: str, email: str, role: str) -> UserRecord:
         user = User(
@@ -118,8 +122,8 @@ class SQLiteUserRepository:
 class SQLiteApiKeyRepository:
     """SQLite implementation of `ApiKeyRepository` (GW-003)."""
 
-    def __init__(self, db_path: str) -> None:
-        self._engine = _build_engine(db_path)
+    def __init__(self, db_path: str, engine: Engine | None = None) -> None:
+        self._engine = engine if engine is not None else build_engine(f"sqlite:///{db_path}", Base)
 
     def create_key(self, tenant_id: str, key_hash: str) -> ApiKeyRecord:
         api_key = ApiKey(

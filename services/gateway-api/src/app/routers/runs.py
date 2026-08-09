@@ -7,12 +7,13 @@ unmodified in shape. No split/run/tenant-isolation business logic is
 reimplemented here -- that all lives in `validation-service` (VS-006/007/008)
 and is forwarded, not duplicated (ticket Design section).
 
-Request/response Pydantic models below are field-for-field copies of
-`validation-service`'s own `RunRequest`/`RunResponse`/`RunDetailResponse`
-(`services/validation-service/src/app/routers/runs.py`) and
-`SplitResultResponse` (`services/validation-service/src/app/routers/
-splits.py`), read directly from those files, not guessed -- this is the
-public contract clients build against (README.md's "Contract" note).
+Request/response Pydantic models (`RunRequest`/`RunResponse`/
+`RunDetailResponse`/`SplitResultResponse`) are imported from
+`naive_first_common.contracts` (ARCH-003) -- the shared wire-contract module
+both this router and `validation-service`'s `routers/runs.py`/`routers/
+splits.py` import from, so there is exactly one definition instead of a
+hand-synced copy. This is the public contract clients build against
+(README.md's "Contract" note).
 
 Handler flow (fixed, ticket Design section, must match exactly): resolve
 `tenant: TenantContext = Depends(get_authenticated_tenant)` (GW-006) ->
@@ -39,87 +40,21 @@ response that flows through unmodified, exactly as GW-008 already forwards a
 
 from __future__ import annotations
 
-from datetime import datetime
-
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
+from naive_first_common.contracts import (
+    RunDetailResponse,
+    RunRequest,
+    RunResponse,
+    SplitResultResponse,
+)
 from naive_first_common.tenant_context import TenantContext
-from pydantic import BaseModel, Field
 
 from app.dependencies.auth import get_authenticated_tenant
 from app.dependencies.http_client import ValidationServiceClientDep
 from app.dependencies.routing import build_downstream_headers
 
 router = APIRouter()
-
-
-class RunRequest(BaseModel):
-    """Field-for-field copy of validation-service's `RunRequest`
-    (`services/validation-service/src/app/routers/runs.py`).
-    """
-
-    dataset_id: str
-    dataset_reference: dict
-    horizon: int = Field(ge=1)
-    purge_gap_hours: int = Field(ge=0)
-    train_window: int = Field(gt=0)
-    test_window: int = Field(gt=0)
-    step: int = Field(gt=0)
-
-
-class RunResponse(BaseModel):
-    id: str
-    status: str
-
-
-class RunDetailResponse(BaseModel):
-    """Field-for-field copy of validation-service's `RunDetailResponse`."""
-
-    id: str
-    tenant_id: str
-    dataset_id: str
-    horizon: int
-    purge_gap_hours: float
-    split_config: dict
-    status: str
-    created_at: datetime
-    completed_at: datetime | None
-    failure_reason: str | None
-
-
-class SplitResultResponse(BaseModel):
-    """Field-for-field copy of validation-service's `SplitResultResponse`
-    (`services/validation-service/src/app/routers/splits.py`).
-    """
-
-    split_index: int
-
-    train_start: datetime
-    train_end: datetime
-    purge_start: datetime | None
-    purge_end: datetime | None
-    test_start: datetime
-    test_end: datetime
-
-    model_mae: float
-    model_rmse: float
-    model_smape: float
-    model_mase: float
-    model_da: float
-    model_f1: float
-    model_oos_r2: float
-
-    naive0_mae: float
-    naive0_rmse: float
-    naive0_smape: float
-    naive0_mase: float
-    naive0_da: float
-    naive0_f1: float
-    naive0_oos_r2: float
-
-    dm_statistic: float
-    dm_pvalue: float
-    dm_verdict: str
 
 
 def _raise_for_error(response: httpx.Response) -> None:

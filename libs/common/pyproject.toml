@@ -1,11 +1,12 @@
 [project]
 name = "naive_first_common"
 version = "0.1.0"
-description = "Shared cross-cutting concerns for Naive-First platform services: tenant context, and (later) cross-service schemas/DB session helpers/formatting logic. Plain typed Python, Pydantic-only runtime dependency, no framework lock-in."
+description = "Shared cross-cutting concerns for Naive-First platform services: tenant context, DB session/engine helpers, and (later) cross-service schemas/formatting logic."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "pydantic>=2.6",
+    "sqlalchemy>=2.0",
 ]
 
 [build-system]

@@ -1,0 +1,88 @@
+services:
+  postgres:
+    image: timescale/timescaledb:latest-pg16
+    container_name: naive-first-postgres
+    restart: unless-stopped
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-naive_first}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-naive_first_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-naive_first}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./postgres-init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-naive_first} -d ${POSTGRES_DB:-naive_first}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis
+    container_name: naive-first-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "PING"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  validation-service:
+    build:
+      context: ../services/validation-service
+      additional_contexts:
+        libs: ../libs
+    container_name: naive-first-validation-service
+    restart: unless-stopped
+    ports:
+      - "${VALIDATION_SERVICE_PORT:-8001}:8000"
+    environment:
+      # DATABASE_URL points at the `validation` schema's parent database via
+      # the internal Compose network hostname. Not yet used by the app
+      # (Postgres-backed repositories land in VS-013) -- wired through now so
+      # it's ready when that ships.
+      DATABASE_URL: ${VALIDATION_SERVICE_DATABASE_URL:-postgresql://${POSTGRES_USER:-naive_first}:${POSTGRES_PASSWORD:-naive_first_dev_password}@postgres:5432/${POSTGRES_DB:-naive_first}}
+      REDIS_URL: ${VALIDATION_SERVICE_REDIS_URL:-redis://redis:6379/0}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      # redis dependency deferred: VS-014 (Redis Streams publisher) has not
+      # landed yet, so validation-service doesn't talk to Redis at runtime.
+
+  gateway-api:
+    build:
+      context: ../services/gateway-api
+      additional_contexts:
+        libs: ../libs
+    container_name: naive-first-gateway-api
+    restart: unless-stopped
+    ports:
+      - "${GATEWAY_API_PORT:-8000}:8000"
+    environment:
+      # Internal Compose network hostname -- gateway-api's own README
+      # documents a `localhost` default for non-Compose dev; this override
+      # points it at validation-service's Compose service name instead.
+      VALIDATION_SERVICE_URL: ${GATEWAY_API_VALIDATION_SERVICE_URL:-http://validation-service:8000}
+      # DATABASE_URL points at the `identity` schema's parent database via
+      # the internal Compose network hostname, same "wired through but not
+      # yet consumed" situation INF-003 documented for validation-service:
+      # gateway-api is still on its interim SQLite backend (GW-004);
+      # Postgres-backed repositories (targeting the `identity` schema) land
+      # in GW-012.
+      DATABASE_URL: ${GATEWAY_API_DATABASE_URL:-postgresql://${POSTGRES_USER:-naive_first}:${POSTGRES_PASSWORD:-naive_first_dev_password}@postgres:5432/${POSTGRES_DB:-naive_first}}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      # validation-service is not a depends_on: gateway-api's own downstream
+      # HTTP calls (GW-009) already handle validation-service being
+      # unreachable (502/504), so this doesn't need a hard startup ordering.
+
+volumes:
+  postgres-data:
+  redis-data:
