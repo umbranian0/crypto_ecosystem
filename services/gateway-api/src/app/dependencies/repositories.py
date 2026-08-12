@@ -97,30 +97,42 @@ def _get_engine(url: str) -> Engine:
     return build_engine(url, Base)
 
 
-def get_tenant_repository() -> TenantRepository:
+def _select_backend(postgres_cls, sqlite_cls):
+    # Shared by all three providers below (each only differs in which
+    # Postgres/SQLite class pair it swaps in) -- the Postgres-vs-SQLite
+    # branch previously existed three times in lockstep here.
     url = _database_url()
     if url and _is_postgres_url(url):
-        return PostgresTenantRepository(engine=_get_engine(_postgres_engine_url(url)))
+        return postgres_cls(engine=_get_engine(_postgres_engine_url(url)))
     db_path = _db_path()
-    return SQLiteTenantRepository(db_path, engine=_get_engine(f"sqlite:///{db_path}"))
+    return sqlite_cls(db_path, engine=_get_engine(f"sqlite:///{db_path}"))
+
+
+def get_tenant_repository() -> TenantRepository:
+    return _select_backend(PostgresTenantRepository, SQLiteTenantRepository)
 
 
 def get_user_repository() -> UserRepository:
-    url = _database_url()
-    if url and _is_postgres_url(url):
-        return PostgresUserRepository(engine=_get_engine(_postgres_engine_url(url)))
-    db_path = _db_path()
-    return SQLiteUserRepository(db_path, engine=_get_engine(f"sqlite:///{db_path}"))
+    return _select_backend(PostgresUserRepository, SQLiteUserRepository)
 
 
 def get_api_key_repository() -> ApiKeyRepository:
+    return _select_backend(PostgresApiKeyRepository, SQLiteApiKeyRepository)
+
+
+def get_health_check_engine() -> Engine:
+    # OPS-005-02: reuses the exact same URL-resolution helpers the three
+    # repository providers above already call (via `_select_backend`) -- no
+    # second derivation of the DB URL. `/health` only needs the Engine to
+    # run a cheap `SELECT 1`, not a repository instance.
     url = _database_url()
     if url and _is_postgres_url(url):
-        return PostgresApiKeyRepository(engine=_get_engine(_postgres_engine_url(url)))
+        return _get_engine(_postgres_engine_url(url))
     db_path = _db_path()
-    return SQLiteApiKeyRepository(db_path, engine=_get_engine(f"sqlite:///{db_path}"))
+    return _get_engine(f"sqlite:///{db_path}")
 
 
 TenantRepositoryDep = Annotated[TenantRepository, Depends(get_tenant_repository)]
 UserRepositoryDep = Annotated[UserRepository, Depends(get_user_repository)]
 ApiKeyRepositoryDep = Annotated[ApiKeyRepository, Depends(get_api_key_repository)]
+HealthCheckEngineDep = Annotated[Engine, Depends(get_health_check_engine)]

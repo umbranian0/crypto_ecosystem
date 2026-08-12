@@ -34,6 +34,12 @@ COPY scripts ./scripts
 
 RUN uv sync --frozen --no-dev
 
+# Run as a non-root user (operability finding, 2026-08-09 review): the
+# process has no need for root inside the container.
+RUN useradd --create-home --shell /bin/bash appuser \
+    && chown -R appuser:appuser /repo
+USER appuser
+
 ENV PATH="/repo/services/gateway-api/.venv/bin:${PATH}"
 
 EXPOSE 8000

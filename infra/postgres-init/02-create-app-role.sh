@@ -1,0 +1,28 @@
+#!/bin/sh
+# INF-014: create the non-superuser runtime role validation-service/gateway-api
+# actually connect as, so Postgres RLS (FORCE ROW LEVEL SECURITY, migrations
+# 0002_add_row_level_security.py / 0002_add_identity_rls.py) is enforced --
+# Postgres unconditionally exempts superusers/BYPASSRLS roles from RLS, and
+# `naive_first` (the migration-owner role) is both. `naive_first` itself is
+# untouched here; it stays the migration-time role.
+#
+# Written as a .sh (not a raw .sql) because docker-entrypoint-initdb.d does
+# not substitute env vars into .sql files, and the role's password must come
+# from POSTGRES_APP_PASSWORD, not be hardcoded.
+#
+# Only runs automatically against a FRESH data volume (docker-entrypoint-initdb.d
+# convention) -- see infra/README.md for how this was additionally applied by
+# hand against the already-running Sprint 06 container/volume.
+set -e
+
+psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
+    CREATE ROLE naive_first_app LOGIN PASSWORD '$POSTGRES_APP_PASSWORD'
+        NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
+
+    GRANT USAGE ON SCHEMA validation, identity TO naive_first_app;
+
+    GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA validation, identity TO naive_first_app;
+
+    ALTER DEFAULT PRIVILEGES IN SCHEMA validation, identity
+        GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO naive_first_app;
+EOSQL

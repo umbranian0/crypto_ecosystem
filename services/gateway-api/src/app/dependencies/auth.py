@@ -10,6 +10,15 @@ tenant_context.py`) -- but this is `gateway-api`'s own resolver, not a call
 into that module. `naive_first_common` knows nothing about `api_keys.key_hash`
 and must not be taught to know about it (backlog decision 3's boundary).
 
+Both headers are read via `fastapi.security.APIKeyHeader` (`Security()`,
+not bare `Header()`) purely so FastAPI registers them as OpenAPI
+`securitySchemes` -- this is what makes Swagger UI show a single top-level
+"Authorize" button where a key is entered once and then attached
+automatically to every subsequent "Try it out" call, instead of requiring
+the two header fields to be re-typed per endpoint. `APIKeyHeader` still just
+returns the raw header string (or `None`) with no parsing/validation of its
+own -- all format-checking stays in `_extract_raw_key` below, unchanged.
+
 Result type (design decision, GW-006 ticket Design section): reuses
 `naive_first_common.TenantContext` itself rather than defining a second,
 parallel value type -- `gateway-api` already depends on `naive_first_common`
@@ -33,12 +42,16 @@ from __future__ import annotations
 
 import hashlib
 
-from fastapi import Header, HTTPException
+from fastapi import HTTPException, Security
+from fastapi.security import APIKeyHeader
 from naive_first_common.tenant_context import TenantContext
 
 from app.dependencies.repositories import ApiKeyRepositoryDep
 
 _UNAUTHORIZED = HTTPException(status_code=401, detail="missing or invalid API key")
+
+_authorization_scheme = APIKeyHeader(name="Authorization", auto_error=False)
+_x_api_key_scheme = APIKeyHeader(name="X-Api-Key", auto_error=False)
 
 
 def _extract_raw_key(
@@ -65,8 +78,8 @@ def _extract_raw_key(
 
 def get_authenticated_tenant(
     api_key_repo: ApiKeyRepositoryDep,
-    authorization: str | None = Header(default=None),
-    x_api_key: str | None = Header(default=None, alias="X-Api-Key"),
+    authorization: str | None = Security(_authorization_scheme),
+    x_api_key: str | None = Security(_x_api_key_scheme),
 ) -> TenantContext:
     """FastAPI `Depends()` resolver for the current request's authenticated
     tenant. Missing/malformed header, unknown key, or a revoked key all raise

@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  naive-first-engine:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: libs/naive_first_engine
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - run: uv sync
+      - run: uv run pytest -q --cov=naive_first_engine --cov-report=term-missing
+
+  libs-common:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: libs/common
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - run: uv sync
+      - run: uv run pytest -q --cov=naive_first_common --cov-report=term-missing
+
+  validation-service:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/validation-service
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - run: uv sync
+      - run: uv run pytest -q --cov=app --cov-report=term-missing
+
+  gateway-api:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/gateway-api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - run: uv sync
+      - run: uv run pytest -q --cov=app --cov-report=term-missing
+
+  ingestion-service:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/ingestion-service
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt pytest pytest-cov
+      - run: pytest tests/ -q --cov=connectors --cov-report=term-missing

@@ -89,6 +89,43 @@ def _split_result_to_record(split: SplitResult) -> SplitResultRecord:
     )
 
 
+def _record_to_split_result(tenant_id: str, run_id: str, s: SplitResultRecord) -> SplitResult:
+    """Inverse of `_split_result_to_record` -- builds the SQLAlchemy row
+    `add_splits` persists. Shared with `postgres_repository.py` (same 21-field
+    shape), same reasoning as `_run_to_record`/`_split_result_to_record`
+    already being the single source for the read-path conversion.
+    """
+    return SplitResult(
+        id=s.id,
+        run_id=run_id,
+        tenant_id=tenant_id,
+        split_index=s.split_index,
+        train_start=s.train_start,
+        train_end=s.train_end,
+        purge_start=s.purge_start,
+        purge_end=s.purge_end,
+        test_start=s.test_start,
+        test_end=s.test_end,
+        model_mae=s.model_mae,
+        model_rmse=s.model_rmse,
+        model_smape=s.model_smape,
+        model_mase=s.model_mase,
+        model_da=s.model_da,
+        model_f1=s.model_f1,
+        model_oos_r2=s.model_oos_r2,
+        naive0_mae=s.naive0_mae,
+        naive0_rmse=s.naive0_rmse,
+        naive0_smape=s.naive0_smape,
+        naive0_mase=s.naive0_mase,
+        naive0_da=s.naive0_da,
+        naive0_f1=s.naive0_f1,
+        naive0_oos_r2=s.naive0_oos_r2,
+        dm_statistic=s.dm_statistic,
+        dm_pvalue=s.dm_pvalue,
+        dm_verdict=s.dm_verdict,
+    )
+
+
 class SQLiteValidationRunRepository:
     """SQLite implementation of `ValidationRunRepository` (VS-003)."""
 
@@ -158,38 +195,7 @@ class SQLiteSplitResultRepository:
         self._engine = engine if engine is not None else build_engine(f"sqlite:///{db_path}", Base)
 
     def add_splits(self, tenant_id: str, run_id: str, splits: list[SplitResultRecord]) -> None:
-        rows = [
-            SplitResult(
-                id=s.id,
-                run_id=run_id,
-                tenant_id=tenant_id,
-                split_index=s.split_index,
-                train_start=s.train_start,
-                train_end=s.train_end,
-                purge_start=s.purge_start,
-                purge_end=s.purge_end,
-                test_start=s.test_start,
-                test_end=s.test_end,
-                model_mae=s.model_mae,
-                model_rmse=s.model_rmse,
-                model_smape=s.model_smape,
-                model_mase=s.model_mase,
-                model_da=s.model_da,
-                model_f1=s.model_f1,
-                model_oos_r2=s.model_oos_r2,
-                naive0_mae=s.naive0_mae,
-                naive0_rmse=s.naive0_rmse,
-                naive0_smape=s.naive0_smape,
-                naive0_mase=s.naive0_mase,
-                naive0_da=s.naive0_da,
-                naive0_f1=s.naive0_f1,
-                naive0_oos_r2=s.naive0_oos_r2,
-                dm_statistic=s.dm_statistic,
-                dm_pvalue=s.dm_pvalue,
-                dm_verdict=s.dm_verdict,
-            )
-            for s in splits
-        ]
+        rows = [_record_to_split_result(tenant_id, run_id, s) for s in splits]
         with Session(self._engine) as session:
             session.add_all(rows)
             session.commit()

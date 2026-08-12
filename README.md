@@ -79,6 +79,10 @@ python -m connectors.reddit_sentiment        # needs REDDIT_CLIENT_ID / SECRET /
 
 See [`services/ingestion-service/data/raw/_platform/PROVENANCE.md`](services/ingestion-service/data/raw/_platform/PROVENANCE.md) for what historical data is already seeded and where each connector picks up from.
 
+## CI
+
+`.github/workflows/ci.yml` is the single authoritative pointer for "did the tests pass" — it runs each of the five Python modules' own documented test command (`naive_first_engine`, `libs/common`, `validation-service`, `gateway-api`, `ingestion-service`) as an independent job on every push/PR.
+
 ## License
 
 See [`LICENSE`](LICENSE).

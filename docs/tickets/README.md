@@ -1,6 +1,6 @@
 # Ticket index
 
-Six sections are tracked here, kept as clearly separated: `libs/naive_first_engine` (NFE-*, Sprint 01+02, done), `services/validation-service` (VS-*, Sprint 03+04+06), `libs/common` (LC-*, Sprint 04; ARCH-*, Sprint 06), `services/gateway-api` (GW-*, Sprint 05+06), and `infra` (INF-*, Sprint 06). Sprint 06 (docs/sprints/sprint-06.md) spans ARCH-*/INF-*/two VS-*/one GW-* tickets in one debt sprint — see the "Sprint 06" subsections under each relevant module below.
+Eight sections are tracked here, kept as clearly separated: `libs/naive_first_engine` (NFE-*, Sprint 01+02, done), `services/validation-service` (VS-*, Sprint 03+04+06+09+10), `libs/common` (LC-*, Sprint 04+10; ARCH-*, Sprint 06+10), `services/gateway-api` (GW-*, Sprint 05+06), `infra` (INF-*, Sprint 06+07), the cross-cutting Operability backlog (OPS-*, Sprint 08+09), and `services/ingestion-service` (INGEST-*, Sprint 10). Sprint 06 (docs/sprints/sprint-06.md) spans ARCH-*/INF-*/two VS-*/one GW-* tickets in one debt sprint — see the "Sprint 06" subsections under each relevant module below. Sprint 10 (docs/sprints/sprint-10.md) closes four longstanding pure-documentation debt items (LC-005, ARCH-007, ARCH-008, VS-016) plus one retroactive tracking ticket (INGEST-001) — see the "Sprint 10" subsections under each relevant module below.
 
 # libs/naive_first_engine (NFE-*)
 
@@ -107,6 +107,37 @@ See docs/sprints/sprint-04.md. VS-010 was blocked at the end of Sprint 03 pendin
 
 See docs/sprints/sprint-06.md Phase 4. Both unblock Should stories that sat blocked since Sprint 03/04 pending real infra (this sprint's four-backlog debt sprint).
 
+## Sprint 09
+
+| Ticket | Story | Depends on | Status |
+|---|---|---|---|
+| [VS-021](VS-021.md) | Fix `PostgresValidationRunRepository.create_run`'s post-commit `session.refresh()` losing RLS's per-transaction `app.tenant_id` scope (production-breaking regression surfaced live by INF-014) | INF-014 | done |
+
+See docs/sprints/sprint-09.md. Runs first, no dependency on anything else in Sprint 09 -- fixes a real HTTP 500 on `POST /runs` under real (non-superuser) RLS enforcement, unblocking OPS-004's own full-stack smoke test from failing on an unrelated cause. Fix mirrors `services/gateway-api`'s `PostgresTenantRepository.create_tenant`/`PostgresUserRepository.create_user` (GW-012) precedent: build the returned record from the pre-commit object instead of a post-commit `session.refresh()`. Personally verified by the Tech Lead against the real running, RLS-enforced stack (not just a unit test): `POST /runs` through `gateway-api` now returns `201` (was `500`), a direct superuser `psql` read confirms correct persistence/tenant-isolation, and both services' full suites re-run at `gateway-api` 68/68 and `validation-service` 65/65 (including the 6 previously-blocked live-Postgres tests in `test_postgres_repository.py`), matching the Sprint 08 baseline with zero regressions.
+
+## Sprint 10
+
+| Ticket | Story | Depends on | Status |
+|---|---|---|---|
+| [VS-016](VS-016.md) | OpenAPI contract / README sync check | VS-006/007/008 (done, Sprint 03) | done |
+
+See docs/sprints/sprint-10.md. Deferred since Sprint 03 (7 sprints), pulled in on
+zero-cost/zero-risk grounds. `services/validation-service/README.md`'s Contract section was
+restructured to point at `/openapi.json`/`/docs` as the source of truth for exact request/response
+shapes, replacing the old hand-listed field-by-field duplication -- the behavioral/design narrative
+(tenant isolation, failure handling, synchronous-execution caveat) was retained under a new
+`## Routes` section listing path+method only. A doc-sync check
+(`services/validation-service/scripts/check_doc_sync.py` + `tests/test_doc_sync.py`) was built,
+deliberately using a real `from app.main import app` introspection of the live `app.routes` (not
+NFE-018's AST-parsing, which solved a different avoid-import constraint that doesn't apply to an
+already-running FastAPI service) -- Tech-Lead-verified directly: the check passes against the
+current repo state, a drift-detection demonstration (inject an undocumented route reference,
+confirm failure, revert, confirm pass) was personally re-run, `git status` scoped to
+`services/validation-service/src/app/routers/` shows zero changes, and the full suite passes 69/69
+(65 Sprint 09 baseline + 4 new doc-sync tests), re-confirmed against the real Postgres/Redis
+containers after the `naive-first-postgres` container (found exited at the start of this sprint's
+verification pass) was restarted.
+
 # libs/common (LC-*)
 
 Source: docs/sprints/sprint-04.md, docs/product/backlog-libs-common.md.
@@ -126,6 +157,46 @@ Strictly sequential, no parallelization: LC-001 -> LC-002 -> LC-003 -> LC-004 ->
 
 Deferred: LC-005 (README doc-sync), LC-006 (shared schemas), LC-007 (DB session helpers), LC-008 (formatting logic), LC-009 (JWT/API-key resolution) — all Should/Won't this backlog, per sprint-04.md's explicit deferral list.
 
+## Sprint 10
+
+| Ticket | Story | Depends on | Status |
+|---|---|---|---|
+| [LC-005](LC-005.md) | README status update + public API doc-sync | LC-003 (done, Sprint 04) | done |
+
+See docs/sprints/sprint-10.md. Longest-standing deferred item in the platform (Sprint 04 -> 10, 6
+sprints), pulled in on zero-cost/zero-risk/zero-dependency grounds. `libs/common/README.md`'s status
+line reconciles the backlog's now-stale "tenant-context module only" wording against the real,
+already-shipped ARCH-001/002/003/004 additions (`build_engine`/`contracts`/`testing`), explicitly
+listing `TenantContext`/`get_tenant_context` and distinguishing shipped vs. not-yet-shipped scope.
+A doc-sync check (`libs/common/scripts/check_doc_sync.py` + `libs/common/tests/test_doc_sync.py`)
+was built mirroring `naive_first_engine`'s NFE-018 precedent in structure (not literal code).
+Tech-Lead-verified directly: the check passes against the current repo state, a drift-detection
+demonstration (inject an undocumented function, confirm failure, revert, confirm pass) was
+personally re-run, and the full `libs/common` suite passes 21/21 (20 pre-existing + 1 new).
+
+## Sprint 10 — ARCH-* (docs/product/backlog-technical-upgrades.md)
+
+| Ticket | Story | Depends on | Status |
+|---|---|---|---|
+| [ARCH-007](ARCH-007.md) | Protocol-agnostic service-identification convention | none | done |
+| [ARCH-008](ARCH-008.md) | Document the `Security()`/`APIKeyHeader` auth pattern as the required shape | none | done |
+
+See docs/sprints/sprint-10.md. Both Should-priority, deferred since Sprint 06, re-confirmed
+unchanged in Sprints 07/08/09 ("codebase shape hasn't grown"), pulled into Sprint 10 on
+zero-cost/zero-risk/zero-dependency grounds. Both are pure documentation against
+`services/gateway-api/README.md` (ARCH-007 also adds a short pointer bullet to
+`docs/implementation-plan.md` section 9) -- zero files under `services/gateway-api/src/` touched by
+either ticket, confirmed via `git status` scoped to that path both before and after each ticket
+(the path's pre-existing, unrelated-session modifications were left untouched throughout).
+**ARCH-007**: documents the REST tagging convention (`tags=["<service-name>"]`, citing the real
+`runs.router` -> `"validation-service"` instance) plus forward-looking gRPC/GraphQL naming rules, with
+no contradiction of implementation-plan.md section 4's "not using gRPC/GraphQL yet" stance (Tech
+Lead re-read both directly). **ARCH-008**: extends the Authentication (GW-006) section with a
+forward-looking requirement that any future header-based auth dependency use `Security()` + a
+`fastapi.security` class (never bare `Header()`), citing `auth.py`'s `_authorization_scheme`/
+`_x_api_key_scheme` as the reference implementation; `tests/test_auth.py`'s 11 cases re-run directly
+by the Tech Lead, unchanged.
+
 ## Sprint 06 — ARCH-* (docs/product/backlog-technical-upgrades.md)
 
 | Ticket | Story | Depends on | Status |
@@ -135,7 +206,7 @@ Deferred: LC-005 (README doc-sync), LC-006 (shared schemas), LC-007 (DB session 
 | [ARCH-004](ARCH-004.md) | Extract duplicated SQLite test-fixture into shared test-utility | none (bundled with ARCH-001) | done |
 | [ARCH-003](ARCH-003.md) | Move gateway-api proxy wire-contract into shared libs/common package | none | done |
 
-See docs/sprints/sprint-06.md Phase 1, Track A. A prior grooming session produced 10 binding decisions (see sprint-06.md task framing / each ticket's Design section) that these four tickets carry as given facts. ARCH-002 is the sprint's single highest cross-service regression risk (per-request engine construction fix touching both services' DI wiring). Deferred: ARCH-005 (Should, tracking story), ARCH-006 (Won't).
+See docs/sprints/sprint-06.md Phase 1, Track A. A prior grooming session produced 10 binding decisions (see sprint-06.md task framing / each ticket's Design section) that these four tickets carry as given facts. ARCH-002 is the sprint's single highest cross-service regression risk (per-request engine construction fix touching both services' DI wiring). Deferred: ARCH-005 (Should, tracking story), ARCH-006 (Won't), ARCH-007 (Should, tracking story — added 2026-08-09, protocol-agnostic service-identification convention; not yet scheduled to a sprint), ARCH-008 (Should, tracking story — added 2026-08-09, document the `Security()`/`APIKeyHeader` auth pattern; not yet scheduled to a sprint).
 
 # services/gateway-api (GW-*)
 
@@ -187,10 +258,230 @@ Source: docs/sprints/sprint-06.md, docs/product/backlog-infra.md.
 
 Deferred: INF-008 (MinIO, Should), INF-009 (healthchecks/startup ordering, Should), INF-010 (TimescaleDB hypertables, Could). Not started: INF-011/012/013 (Won't, this backlog).
 
-**New follow-up surfaced during this sprint, not yet scheduled**: **INF-014 (proposed) — provision a non-superuser Postgres app role for `validation-service`/`gateway-api` to actually connect as.** VS-013 and GW-012 both independently discovered that the `naive_first` role INF-001 provisions is a Postgres superuser (`BYPASSRLS` implicitly true for superusers) — every RLS policy either ticket wrote is correctly authored and proven to work in tests (against a purpose-built, ephemeral `NOSUPERUSER NOBYPASSRLS` test role), but is **currently unenforced in the actual running system**, because the app itself connects as a role RLS does not apply to. This is a real gap, flagged rather than silently patched by either dev agent, and needs its own ticket in a future sprint — not something this sprint's Definition of Done should be read as having closed.
+**Follow-up surfaced during Sprint 06, now a real ticket**: the informal flag below (a Postgres
+superuser role connecting the app, bypassing RLS unconditionally) is scheduled and executed as
+**INF-014** in Sprint 07 — see that section below, not left informal any longer.
+
+## Sprint 07
+
+| Ticket | Story | Depends on | Status |
+|---|---|---|---|
+| [INF-014](INF-014.md) | Non-superuser Postgres application role for validation-service/gateway-api | INF-001, VS-013, GW-012 | done (1 disclosed, out-of-scope finding — see below) |
+| [INF-016](INF-016.md) | Repeatable "apply new migrations" command (`infra/migrate.sh`/`.ps1`) | INF-005 | done |
+| [INF-015](INF-015.md) | First-boot bootstrap script (`infra/bootstrap.sh`/`.ps1`) | INF-001–005, INF-014, INF-016 | done |
+
+See docs/sprints/sprint-07.md for the full sequencing decision (INF-014 → INF-016 → INF-015, not
+their numeric order) and docs/product/backlog-infra.md's Post-Sprint-06 additions section for all
+three stories' full text. INF-017 (DB-backed operator/tenant configuration) is explicitly deferred,
+not scheduled this sprint or any future one until a concrete per-tenant/per-operator behavior
+difference is identified (see backlog-infra.md INF-017 for the full recorded decision).
+
+**Sprint 07 outcome**: all 3 in-scope stories done, executed in the sequencing decision's order
+(INF-014 → INF-016 → INF-015), each personally re-verified by the Tech Lead against the real,
+live `infra/docker-compose.yml` stack (Docker Desktop was found not running at the start of this
+sprint's execution and was started; the existing `naive-first-postgres` container/volume from
+Sprint 06 was brought back up, not recreated from empty, so the fresh-volume-only init script did
+not silently re-run and mask a real live-container gap). **INF-014**: `naive_first_app`
+(`NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE`, scoped to `SELECT`/`INSERT`/`UPDATE`/`DELETE`
+on `validation.*`/`identity.*` only) confirmed live on the running container; `naive_first`
+repurposed migration-only; both app containers reconnected without a crash-loop; both services'
+full suites pass (`gateway-api` 68/68, `validation-service` 65/65). DB-level RLS enforcement was
+proven directly, not merely asserted: connected as the real runtime role `naive_first_app` via
+`psql` and ran a raw, **unfiltered** query (no `WHERE tenant_id = ...` clause at all) under
+different `set_config('app.tenant_id', ...)` scopes — Tenant A's row was visible only under its own
+scope and invisible (0 rows) under Tenant B's scope or an unset scope, proving Postgres RLS itself
+is the isolation mechanism, independent of any application-level filter. Also independently
+confirmed at the application layer: `GET /runs/{id}` through the real running `gateway-api` returns
+`200` for the owning tenant and `404` for a different tenant's key on the same run id. **One real,
+disclosed, NOT silently patched finding**: `POST /runs` on `validation-service`'s Postgres-backed
+`create_run` now returns `500` under genuine RLS enforcement (previously masked by the superuser
+role's unconditional RLS bypass) — root cause is a `session.refresh()` call issued *after*
+`commit()`, in a new transaction that never re-establishes the per-transaction `app.tenant_id`
+scope, so RLS correctly (if surprisingly) hides the just-inserted row from the refresh's own
+`SELECT`. The row itself is correctly persisted and correctly tenant-isolated (confirmed via direct
+superuser read) — this is a response-construction bug, not a data-loss or isolation bug.
+`gateway-api`'s own `PostgresTenantRepository.create_tenant`/`PostgresUserRepository.create_user`
+(GW-012) already document and avoid this exact pitfall by building the returned record from the
+pre-commit object instead of calling `session.refresh()`; `validation-service`'s `create_run` did
+not follow that same precedent. **This is flagged as a new, real, production-breaking regression
+requiring its own follow-up ticket against `services/validation-service`** (out of INF-014's own
+scope, which forbids `services/*/src/` changes) — recommended fix: mirror `gateway-api`'s
+pre-commit-record pattern. Not actioned in this sprint; escalated to the requester, not deferred
+silently. **INF-016**: `infra/migrate.sh`/`infra/migrate.ps1` built, single source of the
+`alembic upgrade head` invocation (grep-confirmed no duplicate elsewhere in `infra/`), always uses
+the migration-time `naive_first` role; `migrate.ps1` personally re-run twice against the live stack
+by the Tech Lead (idempotent, no-op at head both times) in addition to the dev agent's own two
+runs; `migrate.sh`'s `alembic upgrade head` code path could not be exercised end-to-end on this
+Windows host (POSIX `.venv/bin/python` layout vs. this environment's Windows `.venv\Scripts\
+python.exe`) — accepted as a disclosed, non-blocking environment limitation, not a defect (the
+script's argument-validation and fail-loud paths were still exercised for real). **INF-015**:
+`infra/bootstrap.sh`/`infra/bootstrap.ps1` built as pure orchestration, delegating migrations
+entirely to INF-016's script; `bootstrap.ps1` personally re-run end-to-end by the Tech Lead (all
+five steps, real output, stack left healthy); a genuine step-3 failure (same POSIX/Windows `.venv`
+mismatch as `migrate.sh`) doubled as the required real failure-path proof for `bootstrap.sh`, and a
+separate isolated real test proved step 2's bounded health-wait also fails loudly and stops the
+script rather than continuing. The script never auto-runs `provision_tenant.py` — it prints the
+exact, copy-paste-correct containerized invocation, verified by actually running the printed
+command and confirming it provisions a real tenant against the just-started `gateway-api`
+container. Documentation acceptance criteria for all three tickets confirmed: `infra/README.md` now
+leads with `bootstrap.sh`/`bootstrap.ps1` as the recommended first-boot path (prior hand-run
+sequence kept underneath, not deleted) and documents the two-role split and the migrate script;
+`services/gateway-api/README.md`'s "Known infra caveat" paragraph now states the RLS-enforcement
+gap is resolved, pointing at INF-014. No file under `services/validation-service/src/` or
+`services/gateway-api/src/` was changed by any of the three tickets (confirmed via `git status`
+scoped to those paths after each ticket).
 
 **Sprint 05 outcome**: all 9 in-scope Must stories done. `.venv\Scripts\python.exe -m pytest -q` in `services/gateway-api` passes 55/55 (0 failures), including GW-004's revoked-key-still-resolves test, GW-006's full valid/missing/malformed/unknown/revoked auth coverage, GW-007's spoofed-inbound-header proof, GW-008's cross-tenant `404` tests, and GW-009's timeout/connection-refused/status:"failed"-pass-through tests. Zero regressions confirmed by re-running both other suites after the sprint: `services/validation-service` 51/51, `libs/common` 14/14 (both unchanged from Sprint 04's baseline). GW-001 was scaffolded directly by the Tech Lead (no design decision to delegate, same precedent as NFE-001/VS-001/LC-001); GW-002 through GW-009 were each delegated to a dev subagent and personally verified by the Tech Lead by reading the actual diff (not just trusting the agent's self-report) before being marked done. GW-006 (auth) and GW-007 (tenant forwarding) received the sprint's mandated extra scrutiny: GW-006 confirmed to hash exclusively with `hashlib.sha256`, compare only hash-to-hash (never plaintext), and never log/print the presented raw key anywhere; GW-007 confirmed via a direct `git status` scope check to touch zero files under `libs/common/` or `services/validation-service/`, and confirmed structurally (not just behaviorally) that `build_downstream_headers` cannot read the inbound request's own `X-Tenant-Id` header. No deviations from sprint-05.md's binding note: SHA-256 used throughout, never bcrypt/argon2/scrypt.
 
 **Sprint 04 outcome**: all 4 in-scope `libs/common` Must stories (LC-001–004) plus VS-010 done, matching sprint-04.md's Definition of Done. `libs/common`: `.venv\Scripts\python.exe -m pytest -q` passes 14/14 (LC-002/003 unit tests + LC-004's standalone fail-closed app-level suite). `services/validation-service`: `.venv\Scripts\python.exe -m pytest -q` passes 51/51 (48 pre-existing Sprint 03 tests, now exercising `Depends(get_tenant_context)` instead of the interim field, plus 3 new VS-010 fail-closed-before-repository tests). Both READMEs updated (`libs/common` status "scaffolded"; `services/validation-service` Contract section documents the `X-Tenant-Id` header replacing the retired `tenant_id` body/query field). LC-001 was scaffolded directly by the Tech Lead (no design decision to delegate, same precedent as NFE-001/VS-001); LC-002/003/004/VS-010 were each delegated to a dev subagent and personally verified by the Tech Lead by reading the actual diff (not just trusting the agent's self-report) before being marked done — VS-010 in particular was checked for: `Depends(get_tenant_context)` imported unmodified from `naive_first_common` with no local reimplementation, the interim `tenant_id` field/params fully removed (not left dead), tenant-isolation logic unchanged apart from the source of `tenant_id`, and the new fail-closed test's non-tautological proof (a repository fake that fails the test if reached) run directly by the Tech Lead. No deviations from sprint-04.md's binding notes: 401 (not 400) used throughout LC-003/LC-004/VS-010; LC-001 never touched `services/validation-service/pyproject.toml`; VS-010 was the ticket that added `naive_first_common` to that file. No code outside `libs/common`/`services/validation-service` was touched.
 
 **Sprint 06 outcome**: all 14 in-scope stories (ARCH-001/002/003/004, INF-001–007, VS-013, VS-014, GW-012) done, matching sprint-06.md's Definition of Done. All 4 modules' full suites pass with zero regressions, verified directly by the Tech Lead: `libs/naive_first_engine` 94/94 (untouched, sanity baseline), `libs/common` 20/20, `services/validation-service` 63/63, `services/gateway-api` 66/66. A real Postgres+TimescaleDB and Redis are running in `infra/docker-compose.yml` alongside real, containerized `validation-service`/`gateway-api`; a full-stack smoke test (provision tenant -> `POST /runs` through `gateway-api` -> proxied to `validation-service` -> real `naive_first_engine` execution -> persisted results -> proxied back) was executed for real, not simulated, during INF-004. All 10 grooming-session binding decisions were implemented as specified, not merely referenced (see the full confirmation checklist in the Tech Lead's sprint report to "main"). One real, load-bearing finding from INF-005 (both services' migrations collide on a shared `public.alembic_version` if neither schema-qualifies its version table) was caught, escalated into a hard requirement on VS-013/GW-012 (rather than left as the original ticket's "should"), and confirmed fixed by rerunning both services' full suites together. One new gap was surfaced and deliberately NOT silently patched: the Postgres role both services actually connect as (`naive_first`, provisioned by INF-001) is a superuser, which Postgres unconditionally exempts from RLS — VS-013's and GW-012's RLS policies are correctly authored and proven against a purpose-built non-superuser test role, but are not yet enforced against the real running credentials. Tracked as a new follow-up (INF-014, proposed, not yet scheduled) rather than counted as "done" in this sprint's RLS acceptance criteria. Round 2's ARCH-002 (memoization keyed by URL, not zero-arg) and GW-012 (SET LOCAL firing per-transaction, not once at startup, proven via a `pool_size=1`/`pg_backend_pid()` pooled-connection-reuse test) received the sprint's mandated extra scrutiny, both personally verified by the Tech Lead reading the actual code and diff, not just trusting a green checkmark.
+
+# Operability (OPS-*)
+
+Source: docs/product/backlog-operability.md. Cross-cutting backlog (spans all five shipped modules plus `infra`), covering CONTEXT.md's Operability definition — maintainability (dependency upgrades, doc-sync checks, test-coverage gaps) and runtime observability (logs, metrics, health checks, alerting) — not yet split into two backlogs, per that glossary entry's own instruction. Proposed 2026-08-10. ARCH-005/LC-009 (unverified tenant header) is deliberately *not* duplicated here — it stays solely under `libs/common (LC-*)` above as a security/authentication gap, not an Operability one; see backlog-operability.md's own stated scope decision.
+
+## Sprint 08
+
+| Ticket | Story | Module(s) | Depends on | Status |
+|---|---|---|---|---|
+| [OPS-001](OPS-001.md) | Automated CI pipeline running every module's test suite (incl. NFE-015/016 regression gate, NFE-018 doc-sync check) | root (`.github/workflows/`) + all 5 module READMEs | none | done |
+| [OPS-005-01](OPS-005-01.md) | Deepen validation-service's `/health` to check real DB connectivity | services/validation-service | none | done |
+| [OPS-005-02](OPS-005-02.md) | Deepen gateway-api's `/health` to check real DB connectivity | services/gateway-api | none | done |
+| [OPS-002](OPS-002.md) | Measure and report test coverage in CI (no hard gate) | root CI file + all 5 modules | OPS-001 | done |
+| [OPS-003](OPS-003.md) | Documented dependency-upgrade cadence/policy across five modules | root docs/ + all 5 module READMEs | none (soft: OPS-001) | done |
+
+See docs/sprints/sprint-08.md for the full sequencing decision (OPS-001 + OPS-005-01 + OPS-005-02 in parallel, then OPS-002, then OPS-003) and the explicit deferral reasoning for OPS-004 (Must, blocked in practice on Sprint 07's INF-014 completing — `infra/docker-compose.yml` already points runtime `DATABASE_URL` at the not-yet-fully-provisioned `naive_first_app` role), OPS-006 (Could, no current trigger), and OPS-007 (Won't, Product Owner decline already recorded). Also deferred, as a block, not part of this sprint: LC-005, GW-010/011/013/014, VS-016/017, INF-008/010, ARCH-005/007/008 (GW-012 already done, Sprint 06 — corrected out of the deferred list). INF-009 is flagged as likely already satisfied by `infra/docker-compose.yml`'s current in-flight state but is left for Sprint 07's own close-out to verify, not claimed here. OPS-005 was split into two tickets (OPS-005-01/02, one per service) at ticket-breakdown time since each touches exactly one service's own files — no change to the sprint's sequencing (both still run fully parallel to OPS-001 and to each other).
+
+## Execution / parallelization plan (Sprint 08)
+
+**Sprint 08 outcome**: all 4 in-scope stories (OPS-005-01, OPS-005-02, OPS-002, OPS-003) done,
+alongside OPS-001 (already done at the start of this session). Executed in the sequencing decision's
+order (OPS-001 + OPS-005-01 + OPS-005-02 in parallel -> OPS-002 -> OPS-003), each personally
+re-verified by the Tech Lead against the actual diff/files, not merely trusted from the dev agents'
+own outcome notes (which were themselves already present in the working tree from a prior session
+and independently re-checked here rather than assumed correct). **OPS-005-01/02**: confirmed
+`services/validation-service/src/app/main.py` and `services/gateway-api/src/app/main.py`'s
+`/health` handlers both take `HealthCheckEngineDep`, run `SELECT 1` via `engine.connect()`, return
+`200 {"status": "ok"}` unchanged on success or `503 {"status": "unhealthy", "detail": "database
+unreachable"}` (fixed generic string, no raw exception/connection-string/credential leakage) on
+failure; both `dependencies/repositories.py` providers reuse the existing URL-resolution helpers,
+no third derivation; both services' `tests/test_health.py` exist with non-tautological
+healthy/failure-path cases. **OPS-002**: `.github/workflows/ci.yml` confirmed to run all five
+modules' test suites with `--cov=<package> --cov-report=term-missing`, zero occurrences of
+`--cov-fail-under`/equivalent hard gate anywhere in the file (grep-confirmed); `pytest-cov>=7.1.0`
+confirmed present in all four `uv`-managed modules' `pyproject.toml` dev-dependency groups;
+`services/ingestion-service/requirements.txt` confirmed untouched (only its README's documented
+`pip install` step changed). **OPS-003**: `docs/dependency-upgrade-policy.md` confirmed to make an
+explicit decision on both open questions (manual once-per-sprint cadence, not automated; explicit
+"ingestion-service unpinned floors, stays as-is, named future gap"); confirmed referenced from all
+five modules' own READMEs via a "Dependency upgrades" line placed after each README's OPS-002
+"Coverage" line; confirmed documentation-only (no `src/`, `pyproject.toml`, `requirements.txt`, or
+`uv.lock` touched by this ticket specifically). OPS-003's own Review acceptance-criteria checkboxes
+(previously left unchecked by the dev agent, per its own Outcome note stating Tech Lead verification
+was pending) are now checked and its status moved from `todo` to `done`.
+
+**Full test suites re-run directly by the Tech Lead** (not merely trusted from OPS-002's own
+recorded run): `services/gateway-api` — `.venv\Scripts\python.exe -m pytest -q` → **68 passed**, 0
+failed, 393.16s; `services/validation-service` — `.venv\Scripts\python.exe -m pytest -q` → **65
+passed**, 0 failed, 1310.37s (0:21:50, against the real Postgres/Redis containers). Both counts match
+OPS-002's own recorded baseline exactly — zero regressions from this sprint's four tickets, confirmed
+independently rather than assumed from a green checkmark. `libs/naive_first_engine` and `libs/common`
+were not touched by any Sprint 08 ticket's code (only their READMEs, for OPS-002's Coverage line and
+OPS-003's Dependency-upgrades line) and were not re-run in full this sprint; OPS-002's own Outcome
+section already recorded their coverage-enabled runs (94/94 and 20/20 respectively) earlier in this
+session.
+
+**OPS-004 status, checked against INF-014's actual ticket file (not assumed from the index's prose)**:
+`docs/tickets/INF-014.md`'s own Status line and Outcome section confirm it is `done` — the live,
+already-running `naive-first-postgres` container was verified to have `naive_first_app`
+(`NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE`) as both services' runtime `DATABASE_URL` role,
+both app containers reconnected cleanly, and DB-level RLS enforcement was proven directly (an
+unfiltered raw query as `naive_first_app` returns only the calling tenant's rows). Per
+`docs/sprints/sprint-08.md`'s own stated revisit trigger ("as soon as Sprint 07's INF-014 is
+confirmed done... schedule OPS-004 immediately after, ideally as the first story of Sprint 09"),
+**OPS-004 is now unblocked** and should be scheduled as Sprint 09's first story — not actioned in
+this sprint (out of Sprint 08's own scope, which is OPS-001/002/003/005 only). One caveat carried
+forward, not newly discovered here: INF-014's own Outcome discloses a real, production-breaking
+finding — `POST /runs` on `validation-service`'s Postgres-backed `create_run` returns `500` under
+genuine RLS enforcement (a post-commit `session.refresh()` issuing a new transaction that never
+re-establishes `app.tenant_id`, unlike `gateway-api`'s own `create_tenant`/`create_user`, which
+build the returned record from the pre-commit object instead) — this is a separate, not-yet-ticketed
+bug against `services/validation-service`, independent of OPS-004's own Dockerfile/port-binding
+verification scope, and should be scheduled alongside or before OPS-004, since OPS-004's own
+full-stack smoke test (`POST /runs` through the real stack) would otherwise fail on this exact bug.
+
+
+- **Round 1 (parallel)**: OPS-001 (new `.github/workflows/ci.yml` + all 5 READMEs' CI pointer),
+  OPS-005-01 (`services/validation-service/src/app/main.py` + `dependencies/repositories.py`), and
+  OPS-005-02 (`services/gateway-api/src/app/main.py` + `dependencies/repositories.py`) — three
+  disjoint file sets, no dependency between any pair, per sprint-08.md's own sequencing decision.
+- **Round 2**: OPS-002 (depends on OPS-001's `.github/workflows/ci.yml` existing to extend).
+- **Round 3**: OPS-003 (no formal dependency, sequenced last so its "is Dependabot viable" question
+  is answered by OPS-001's now-existing CI rather than left open).
+
+## Sprint 09
+
+| Ticket | Story | Module(s) | Depends on | Status |
+|---|---|---|---|---|
+| [VS-021](VS-021.md) | Fix `PostgresValidationRunRepository.create_run`'s post-commit `session.refresh()` losing RLS scope | services/validation-service | INF-014 | done |
+| OPS-004 | Verify `docker compose build`/`up` still succeeds end-to-end, full-stack smoke test | infra | VS-021 (in practice, not formally) | done |
+
+See docs/sprints/sprint-09.md. Sequencing: VS-021 first (self-contained, no dependency on anything else in this sprint, and the concrete blocker for OPS-004's own smoke test passing for the right reason), then OPS-004 -- deliberately reversing Sprint 08's own "OPS-004 as first story" suggestion, since OPS-004's own third acceptance criterion (a real `POST /runs` through the full stack) would otherwise hit VS-021's then-still-open bug and produce a false-negative result unrelated to what OPS-004 actually tests (non-root Dockerfile/port-binding correctness).
+
+**Sprint 09 outcome**: both in-scope stories done, executed in sequence (VS-021 -> OPS-004), each
+personally verified by the Tech Lead against the real, live Docker Compose stack -- not merely
+trusted from the dev agent's own report. **VS-021**: `PostgresValidationRunRepository.create_run`
+no longer calls `session.refresh()` after `commit()`; the returned `RunRecord` is built from the
+already-fully-populated pre-commit object instead, mirroring `services/gateway-api`'s
+`PostgresTenantRepository.create_tenant`/`PostgresUserRepository.create_user` (GW-012) precedent
+exactly. Live RLS proof: `POST /runs` through `gateway-api` against the real, non-superuser-RLS-
+enforced stack now returns `201` (previously `500`, per INF-014's Outcome), the created row was
+independently confirmed via a direct superuser `psql` read, and `GET /runs/{id}` returns `200`.
+**OPS-004**: `docker compose -f infra/docker-compose.yml build validation-service gateway-api`
+succeeded; `docker compose -f infra/docker-compose.yml up -d` (full stack) succeeded, all four
+containers (`postgres`, `redis`, `validation-service`, `gateway-api`) up and healthy; both
+services' `/health` returned `200 {"status":"ok"}` from the host; the full-stack smoke test
+(provision a tenant, `POST /runs` through `gateway-api`) was re-run cleanly against a freshly
+provisioned tenant and returned `201` -- confirming the non-root Dockerfile/port-binding changes
+from the prior session did not break `provision_tenant.py` or container startup, this time
+exercising only what OPS-004 itself tests, with VS-021's RLS bug already fixed. Both services'
+full test suites re-run in full and matched the Sprint 08 baseline exactly with zero regressions:
+`gateway-api` 68/68, `validation-service` 65/65 (including the 6 live-Postgres tests in
+`test_postgres_repository.py`, which required working around a pre-existing, unrelated local-machine
+IPv6-loopback DNS-resolution quirk via the standard `PGCONNECT_TIMEOUT` libpq environment variable --
+no code or test-file change -- to get a real, complete pass count instead of leaving it unverified).
+
+# services/ingestion-service (INGEST-*)
+
+Source: docs/tickets/INGEST-001.md, docs/product/backlog-operability.md.
+
+## Sprint 10
+
+| Ticket | Story | Depends on | Status |
+|---|---|---|---|
+| [INGEST-001](INGEST-001.md) | Retroactive ticket/SDLC tracking for already-shipped connector code | none | done |
+
+**Not a new-feature story.** `services/ingestion-service`'s connectors (`connectors/base.py`,
+`connectors/binance_price.py`, `connectors/blockchain_onchain.py`, `connectors/reddit_sentiment.py`)
+and the raw-zone archive (`data/raw/_platform/PROVENANCE.md`) were built 2026-08-05 at explicit user
+request, ahead of implementation-plan.md's trigger #6 (FastAPI upload API / `ingestion` Postgres
+schema / data-quality gate, still unfired) -- deliberately pulling trigger #10 (market/sentiment
+connectors) forward independent of the service's own HTTP wrapper. A 19-test suite
+(`tests/test_base.py`, `tests/test_binance_price.py`, `tests/test_blockchain_onchain.py`,
+`tests/test_reddit_sentiment.py`) was added 2026-08-09. Both were disclosed in the service's own
+README from the start, but no `INGEST-*` ticket section existed in this index until now -- a real,
+disclosed process gap (code shipped outside the normal PM -> Tech Lead -> dev-squad flow), matching
+this repo's own precedent for `gateway-api` building ahead of trigger #5 (already ticketed under
+GW-*). INGEST-001 closes that gap retroactively: it adds no source code and authorizes no new
+engineering scope -- the FastAPI app, `ingestion` Postgres schema, upload API, and data-quality gate
+remain gated on trigger #6, unfired. **Verification performed for this ticket**:
+`.venv/Scripts/python.exe -m pytest tests/ -q` in `services/ingestion-service` re-run directly,
+confirming **19 passed**, 0 failed (matches the README's own claim, independently confirmed rather
+than copied). `services/ingestion-service/README.md` was re-read against the real `connectors/`/
+`tests/` state (connector class names `BinancePriceConnector`, `BlockchainInfoConnector`,
+`RedditSentimentConnector`, and the 19-test count) and found already accurate -- no drift, no edit
+needed. `git status` scoped to `services/ingestion-service/connectors/` and
+`services/ingestion-service/tests/` after this ticket shows no changes introduced by this ticket
+(pre-existing uncommitted modifications to `connectors/*.py` from a prior, unrelated session were
+present before this ticket started and were left untouched, not authored or altered here).

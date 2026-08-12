@@ -4,11 +4,19 @@ services:
     container_name: naive-first-postgres
     restart: unless-stopped
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      # Bound to localhost only (operability finding, 2026-08-09 review):
+      # only validation-service/gateway-api need to reach Postgres, both via
+      # the internal Compose network, not the host's public interface.
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-naive_first}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-naive_first_dev_password}
       POSTGRES_DB: ${POSTGRES_DB:-naive_first}
+      # Consumed by postgres-init/02-create-app-role.sh (INF-014, fresh-volume
+      # boots only) to create the non-superuser runtime role -- not read by
+      # the official image's own entrypoint the way POSTGRES_USER/PASSWORD are.
+      POSTGRES_APP_USER: ${POSTGRES_APP_USER:-naive_first_app}
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:-naive_first_app_dev_password}
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ./postgres-init:/docker-entrypoint-initdb.d
@@ -24,7 +32,9 @@ services:
     restart: unless-stopped
     command: redis-server --appendonly yes
     ports:
-      - "6379:6379"
+      # Bound to localhost only (operability finding, 2026-08-09 review) --
+      # same rationale as postgres above.
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis-data:/data
     healthcheck:
@@ -41,13 +51,21 @@ services:
     container_name: naive-first-validation-service
     restart: unless-stopped
     ports:
-      - "${VALIDATION_SERVICE_PORT:-8001}:8000"
+      # Bound to localhost only, not the host's public interface (ARCH-005 /
+      # 2026-08-09 review): CLAUDE.md/implementation-plan.md's "gateway-api
+      # is the only internet-facing service" boundary. This does not replace
+      # LC-009's cryptographic tenant-header verification -- ARCH-005 is
+      # still open -- but it is the cheap, already-actionable half of that
+      # ticket's own acceptance criteria (network-topology requirement).
+      - "127.0.0.1:${VALIDATION_SERVICE_PORT:-8001}:8000"
     environment:
       # DATABASE_URL points at the `validation` schema's parent database via
-      # the internal Compose network hostname. Not yet used by the app
-      # (Postgres-backed repositories land in VS-013) -- wired through now so
-      # it's ready when that ships.
-      DATABASE_URL: ${VALIDATION_SERVICE_DATABASE_URL:-postgresql://${POSTGRES_USER:-naive_first}:${POSTGRES_PASSWORD:-naive_first_dev_password}@postgres:5432/${POSTGRES_DB:-naive_first}}
+      # the internal Compose network hostname, using the non-superuser
+      # runtime role naive_first_app (INF-014) -- naive_first stays
+      # migration-only so Postgres RLS (FORCE ROW LEVEL SECURITY) is actually
+      # enforced against this connection (superusers/BYPASSRLS roles bypass
+      # RLS unconditionally).
+      DATABASE_URL: ${VALIDATION_SERVICE_DATABASE_URL:-postgresql://${POSTGRES_APP_USER:-naive_first_app}:${POSTGRES_APP_PASSWORD:-naive_first_app_dev_password}@postgres:5432/${POSTGRES_DB:-naive_first}}
       REDIS_URL: ${VALIDATION_SERVICE_REDIS_URL:-redis://redis:6379/0}
     depends_on:
       postgres:
@@ -70,12 +88,11 @@ services:
       # points it at validation-service's Compose service name instead.
       VALIDATION_SERVICE_URL: ${GATEWAY_API_VALIDATION_SERVICE_URL:-http://validation-service:8000}
       # DATABASE_URL points at the `identity` schema's parent database via
-      # the internal Compose network hostname, same "wired through but not
-      # yet consumed" situation INF-003 documented for validation-service:
-      # gateway-api is still on its interim SQLite backend (GW-004);
-      # Postgres-backed repositories (targeting the `identity` schema) land
-      # in GW-012.
-      DATABASE_URL: ${GATEWAY_API_DATABASE_URL:-postgresql://${POSTGRES_USER:-naive_first}:${POSTGRES_PASSWORD:-naive_first_dev_password}@postgres:5432/${POSTGRES_DB:-naive_first}}
+      # the internal Compose network hostname, using the non-superuser
+      # runtime role naive_first_app (INF-014) -- same rationale as
+      # validation-service above: naive_first stays migration-only so RLS is
+      # actually enforced against the running app's connection.
+      DATABASE_URL: ${GATEWAY_API_DATABASE_URL:-postgresql://${POSTGRES_APP_USER:-naive_first_app}:${POSTGRES_APP_PASSWORD:-naive_first_app_dev_password}@postgres:5432/${POSTGRES_DB:-naive_first}}
     depends_on:
       postgres:
         condition: service_healthy

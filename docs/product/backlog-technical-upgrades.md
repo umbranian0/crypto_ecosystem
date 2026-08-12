@@ -164,7 +164,7 @@ an unverified header).
 
 Acceptance criteria:
 - [ ] LC-009 (already referenced in the code's own docstring) ships before validation-service's port is ever reachable by anything other than gateway-api in any deployed environment
-- [ ] Once `infra/docker-compose.yml`/README exist (implementation-plan.md section 6, trigger #4), they document "only gateway-api may reach validation-service" as a hard network-topology requirement, not an implicit one inherited from "well, nothing else calls it yet"
+- [x] Once `infra/docker-compose.yml`/README exist (implementation-plan.md section 6, trigger #4), they document "only gateway-api may reach validation-service" as a hard network-topology requirement, not an implicit one inherited from "well, nothing else calls it yet" — **partially addressed 2026-08-09**: `infra/docker-compose.yml`'s `validation-service` port is now bound to `127.0.0.1` only (not the host's public interface), closing the cheap network-topology half of this AC. The cryptographic half (LC-009) is still open — this binding does not stop anything already on the same host/Docker network from reaching validation-service directly, it only stops external hosts.
 
 Rationale for priority: Should, not Must — the code already flags this as a known, scheduled interim state (not a silent gap), and `validation-service` is architecturally not internet-facing per implementation-plan.md section 2 ("gateway-api is the only internet-facing service"), so the actual exposure only materializes if network-level isolation is separately misconfigured. That's a real but secondary risk, not a founding-principle violation happening in the code path today.
 Depends on: none (tracking/documentation story; LC-009 itself is already implied future work, not new scope invented here)
@@ -185,12 +185,40 @@ generic plugin/microkernel frameworks"). Contrast with ARCH-001, where `_build_e
 both files is not just shape-similar but line-for-line identical, executable logic — that is
 the real duplication worth extracting.
 
+### ARCH-007 — Adopt a protocol-agnostic service-identification convention for every API surface [Should]
+
+**As a** dev-agent adding a new router or protocol surface to `gateway-api` **I want** a documented, protocol-agnostic convention for naming which backing service an endpoint belongs to **so that** the identification scheme doesn't have to be redesigned the first time a non-REST protocol (gRPC, GraphQL) is added alongside REST.
+
+Evidence: `services/gateway-api/src/app/main.py`'s `app.include_router(runs.router, tags=["validation-service"])` (added 2026-08-09) is currently the only place a downstream-service identifier is attached to an API surface, and it's REST/OpenAPI-tag-specific — there is no written convention for what the equivalent identifier should be if a gRPC service (package/service name in the `.proto`) or a GraphQL surface (schema stitching / type namespace per source service) is added later. Without a documented rule, each protocol would likely invent its own ad hoc naming shape instead of following one deliberate convention.
+
+Acceptance criteria:
+- [ ] A short "service identification" convention is documented (e.g. in `services/gateway-api/README.md` or `docs/implementation-plan.md` section 9): REST surfaces tag every router with the backing service's name (`tags=["<service-name>"]`); the same rule is written down for gRPC (service/package naming) and GraphQL (schema namespace) so the convention is protocol-agnostic even though gRPC/GraphQL don't exist yet
+- [ ] Existing `runs.router` tag (`"validation-service"`) is confirmed as the first instance of this convention, not a one-off
+- [ ] Any future router added to `gateway-api` follows the same tagging rule as part of its own acceptance criteria (noted for the Tech Lead to enforce at ticket-writing time, not re-derived per ticket)
+
+Rationale for priority: Should — no current code violates this (there's exactly one router today), but writing the convention down now, while it's cheap and REST-only, avoids three independently-built protocol surfaces converging on three different naming shapes the way `_build_engine` (ARCH-001) independently converged on duplicated logic.
+Depends on: none
+
+### ARCH-008 — Document the OpenAPI `Security()`/`APIKeyHeader` auth pattern as the standard for any future authenticated route [Should]
+
+**As a** dev-agent adding a new authenticated router to `gateway-api` **I want** the `Security()`/`fastapi.security.APIKeyHeader` pattern (not bare `Header()`) written down as the required shape for any header-based auth dependency **so that** Swagger's single top-level "Authorize" button keeps working for every future endpoint, instead of a future router silently reverting to plain `Header()` parameters that force per-endpoint header re-entry.
+
+Evidence: `services/gateway-api/src/app/dependencies/auth.py`'s `get_authenticated_tenant` was rewritten 2026-08-09 from `authorization: str | None = Header(default=None)` / `x_api_key: str | None = Header(default=None, alias="X-Api-Key")` to `Security(_authorization_scheme)` / `Security(_x_api_key_scheme)` (`APIKeyHeader` instances), purely so FastAPI registers `securitySchemes` in the OpenAPI doc and Swagger UI shows one "Authorize" dialog instead of two per-request header fields repeated on every endpoint. This change has no ticket and, unlike the `tags=` change (ARCH-007), had no backlog record at all until now.
+
+Acceptance criteria:
+- [ ] `services/gateway-api/README.md`'s auth section notes the `Security()`/`APIKeyHeader` pattern as the required shape for header-based auth dependencies, not just describing the resulting header names
+- [ ] Any future authenticated router/dependency in `gateway-api` uses `Security()` + a `fastapi.security` class, not bare `Header()`, so it participates in the same global "Authorize" UX
+- [ ] `_extract_raw_key`'s parsing/validation logic (unchanged by this rewrite, confirmed via `tests/test_auth.py`'s 11 passing cases) stays the single place format-checking happens, regardless of which FastAPI mechanism supplies the raw header string
+
+Rationale for priority: Should — purely a documentation/consistency gap (the code behavior is unchanged and fully covered by existing tests), but cheap to close now before a second authenticated router exists and either follows or breaks this pattern by guesswork.
+Depends on: none
+
 ## Summary
 
 | Priority | Count | IDs |
 |---|---|---|
 | Must | 3 | ARCH-001, ARCH-002, ARCH-003 |
-| Should | 2 | ARCH-004, ARCH-005 |
+| Should | 4 | ARCH-004, ARCH-005, ARCH-007, ARCH-008 |
 | Could | 0 | — |
 | Won't | 1 | ARCH-006 |
 

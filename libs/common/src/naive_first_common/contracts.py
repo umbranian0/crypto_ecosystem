@@ -1,12 +1,13 @@
 """Shared wire-contract Pydantic models for the run/split HTTP boundary
 (ARCH-003).
 
-Canonical source of truth: `services/validation-service`'s own
-`RunRequest`/`RunResponse`/`RunDetailResponse` (`routers/runs.py`) and
-`SplitResultResponse` (`routers/splits.py`) -- copied verbatim here per the
-ticket's binding decision (grooming, #5). `gateway-api` and
-`validation-service` both import from this module instead of hand-copying
-the field list; neither service defines its own copy anymore.
+This module is the sole, canonical definition of `RunRequest`/`RunResponse`/
+`RunDetailResponse`/`SplitResultResponse` -- both `gateway-api` and
+`validation-service` import these classes from here; neither service defines
+its own copy. (Originally created by copying validation-service's
+pre-ARCH-003 field lists verbatim, per the ticket's binding decision,
+grooming #5 -- but that was a one-time bootstrapping step, not a standing
+description of where the field lists live now.)
 """
 
 from __future__ import annotations

@@ -46,7 +46,11 @@ from sqlalchemy.orm import Session
 
 from app.models import Base, Run, SplitResult
 from app.repositories.interfaces import RunRecord, SplitResultRecord
-from app.repositories.sqlite_repository import _run_to_record, _split_result_to_record
+from app.repositories.sqlite_repository import (
+    _record_to_split_result,
+    _run_to_record,
+    _split_result_to_record,
+)
 from naive_first_common.db import build_engine
 
 
@@ -92,9 +96,20 @@ class PostgresValidationRunRepository:
         )
         with _tenant_scoped_session(self._engine, tenant_id) as session:
             session.add(run)
+            # Record built from the already-fully-populated object, not a
+            # post-commit session.refresh(): every column here is set
+            # client-side (no server-generated defaults -- id/created_at
+            # are both generated in Python above), and refreshing after
+            # commit() would issue a new SELECT in a *new* transaction this
+            # class's own _tenant_scoped_session has not (yet) re-scoped
+            # with set_config('app.tenant_id', ...) -- which RLS would then
+            # correctly, if surprisingly, block. See gateway-api's
+            # PostgresTenantRepository.create_tenant/PostgresUserRepository.create_user
+            # (GW-012) for the identical precedent, and VS-021/INF-014 for
+            # the root cause.
+            record = _run_to_record(run)
             session.commit()
-            session.refresh(run)
-            return _run_to_record(run)
+            return record
 
     def get_run(self, tenant_id: str, run_id: str) -> RunRecord | None:
         with _tenant_scoped_session(self._engine, tenant_id) as session:
@@ -128,38 +143,7 @@ class PostgresSplitResultRepository:
         self._engine = engine if engine is not None else build_engine(url, Base)
 
     def add_splits(self, tenant_id: str, run_id: str, splits: list[SplitResultRecord]) -> None:
-        rows = [
-            SplitResult(
-                id=s.id,
-                run_id=run_id,
-                tenant_id=tenant_id,
-                split_index=s.split_index,
-                train_start=s.train_start,
-                train_end=s.train_end,
-                purge_start=s.purge_start,
-                purge_end=s.purge_end,
-                test_start=s.test_start,
-                test_end=s.test_end,
-                model_mae=s.model_mae,
-                model_rmse=s.model_rmse,
-                model_smape=s.model_smape,
-                model_mase=s.model_mase,
-                model_da=s.model_da,
-                model_f1=s.model_f1,
-                model_oos_r2=s.model_oos_r2,
-                naive0_mae=s.naive0_mae,
-                naive0_rmse=s.naive0_rmse,
-                naive0_smape=s.naive0_smape,
-                naive0_mase=s.naive0_mase,
-                naive0_da=s.naive0_da,
-                naive0_f1=s.naive0_f1,
-                naive0_oos_r2=s.naive0_oos_r2,
-                dm_statistic=s.dm_statistic,
-                dm_pvalue=s.dm_pvalue,
-                dm_verdict=s.dm_verdict,
-            )
-            for s in splits
-        ]
+        rows = [_record_to_split_result(tenant_id, run_id, s) for s in splits]
         with _tenant_scoped_session(self._engine, tenant_id) as session:
             session.add_all(rows)
             session.commit()

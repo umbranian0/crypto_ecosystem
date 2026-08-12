@@ -67,7 +67,13 @@ def mase(
     """
     _check_aligned(y_true, y_pred)
     naive_in_sample_mae = (y_train - y_train.shift(seasonal_period)).abs().mean()
-    return float((y_true - y_pred).abs().mean() / naive_in_sample_mae)
+    forecast_mae = float((y_true - y_pred).abs().mean())
+    # A zero in-sample seasonal-naive MAE means y_train is exactly constant at
+    # seasonal_period lag over the training window -- MASE is undefined (not
+    # silently inf/nan from a raw division) in that degenerate case.
+    if naive_in_sample_mae == 0:
+        return 0.0 if forecast_mae == 0 else float("nan")
+    return forecast_mae / naive_in_sample_mae
 
 
 def directional_accuracy(y_true: pd.Series, y_pred: pd.Series) -> float:

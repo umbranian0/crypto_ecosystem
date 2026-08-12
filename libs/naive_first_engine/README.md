@@ -67,3 +67,11 @@ Implementation-plan.md section 8: "for libs, the public function signatures in t
 ### `protocol.py`
 - `ValidationConfig` (class)
 - `run_validation_protocol(series, config)`
+
+## CI
+
+CI: `.github/workflows/ci.yml` runs this module's test suite on every push/PR.
+
+**Coverage**: run tests with coverage locally via `uv run pytest -q --cov=naive_first_engine --cov-report=term-missing` (no coverage threshold is enforced — CI prints the report, it never fails the build on a percentage).
+
+**Dependency upgrades**: see [../../docs/dependency-upgrade-policy.md](../../docs/dependency-upgrade-policy.md) for this platform's cadence.

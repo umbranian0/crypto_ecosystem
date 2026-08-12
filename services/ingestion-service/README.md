@@ -14,3 +14,16 @@ Formerly `data-pipeline/`. See [../../docs/solution-design.md](../../docs/soluti
 - Connectors are currently run standalone (`python -m connectors.binance_price` etc. from this directory) — no scheduler wired up yet. Scheduling (cron or a Prefect flow) is a follow-up once `infra/` exists (trigger #4).
 
 **Contract**: FastAPI service, not yet built. Expected endpoints once built: `POST /datasets` (upload), `GET /datasets/{id}`, `GET /datasets/{id}/quality-report`.
+
+**Testing (added 2026-08-09, previously absent)**: `tests/` covers `connectors/base.py` (`latest_watermark`, `run_incremental`) and all three connectors' `fetch()` methods, using a fake `requests.Session`/fake `praw` client injected via each connector's existing constructor parameter rather than hitting real APIs. Setup (no `pyproject.toml` yet, plain `requirements.txt`):
+```
+python -m venv .venv
+.venv/Scripts/python.exe -m pip install -r requirements.txt pytest pytest-cov
+.venv/Scripts/python.exe -m pytest tests/ -q
+```
+
+**CI**: `.github/workflows/ci.yml` runs this module's test suite on every push/PR.
+
+**Coverage**: run tests with coverage locally via `.venv/Scripts/python.exe -m pytest tests/ -q --cov=connectors --cov-report=term-missing` (no coverage threshold is enforced — CI prints the report, it never fails the build on a percentage).
+
+**Dependency upgrades**: see [../../docs/dependency-upgrade-policy.md](../../docs/dependency-upgrade-policy.md) for this platform's cadence.

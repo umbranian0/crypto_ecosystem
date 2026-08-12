@@ -124,6 +124,19 @@ def get_split_result_repository() -> SplitResultRepository:
     return SQLiteSplitResultRepository(db_path, engine=_get_engine(f"sqlite:///{db_path}"))
 
 
+def get_health_check_engine() -> Engine:
+    # OPS-005-01: reuses the exact same URL-resolution helpers the two
+    # repository providers above already call -- no third derivation of the
+    # DB URL. `/health` only needs the Engine to run a cheap `SELECT 1`, not
+    # a repository instance.
+    database_url = _database_url()
+    if database_url and _is_postgres_url(database_url):
+        engine_url = _postgres_engine_url(database_url)
+        return _get_engine(engine_url)
+    db_path = _db_path()
+    return _get_engine(f"sqlite:///{db_path}")
+
+
 def get_dataset_source() -> DatasetSource:
     # Interim implementation (VS-005); a durable, remotely-backed source
     # (VS-015) replaces this provider body only, same DI seam.
@@ -161,3 +174,4 @@ ValidationRunRepositoryDep = Annotated[ValidationRunRepository, Depends(get_vali
 SplitResultRepositoryDep = Annotated[SplitResultRepository, Depends(get_split_result_repository)]
 DatasetSourceDep = Annotated[DatasetSource, Depends(get_dataset_source)]
 EventPublisherDep = Annotated[EventPublisher, Depends(get_event_publisher)]
+HealthCheckEngineDep = Annotated[Engine, Depends(get_health_check_engine)]

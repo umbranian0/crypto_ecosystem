@@ -74,3 +74,25 @@ def latest_watermark(incremental_dir: str | Path, timestamp_column: str, seed_wa
         if file_max is not pd.NaT and (latest is None or file_max > latest):
             latest = file_max.to_pydatetime()
     return latest if latest is not None else seed_watermark
+
+
+def run_incremental(
+    connector: IngestionSource,
+    incremental_dir: str | Path,
+    timestamp_column: str,
+    seed_watermark: datetime,
+) -> None:
+    """Shared `__main__`-block runner: resolve the watermark via
+    `latest_watermark`, fetch, print progress, and write an incremental CSV
+    if any new rows came back. Every connector's `__main__` block previously
+    reimplemented this same four-step sequence identically.
+    """
+    since = latest_watermark(incremental_dir, timestamp_column, seed_watermark)
+    result = connector.fetch(since=since)
+    print(f"{connector.name}: fetched {len(result.records)} rows since {since}")
+    if not result.is_empty():
+        out_path = f"{incremental_dir}/{result.fetched_at:%Y-%m-%d}.csv"
+        result.records.to_csv(out_path, index=False)
+        print(f"wrote {out_path}")
+    else:
+        print("no new rows, nothing written")

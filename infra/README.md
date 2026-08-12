@@ -37,6 +37,51 @@ non-Compose-dev values (a service run directly on the host reaching a dependency
 host-published port). The two are not interchangeable; see `.env.example` itself for both forms
 of each variable.
 
+
+## OPS-004 verification (2026-08-11/12)
+
+The non-root (USER appuser) and port-binding changes to services/validation-service/Dockerfile, services/gateway-api/Dockerfile, and this file were verified end-to-end against the real stack, not just reviewed as source-correct: docker compose -f infra/docker-compose.yml build validation-service gateway-api succeeded; docker compose -f infra/docker-compose.yml up -d (full stack) succeeded with all four containers up/healthy; both services' /health returned 200 {"status":"ok"} from the host; the full-stack smoke test below (provision a tenant, POST /runs through gateway-api) was re-run and returned 201. This re-run was sequenced after VS-021 (see docs/tickets/VS-021.md) fixed a separate, real POST /runs 500 under genuine Postgres RLS enforcement (INF-014) -- so this smoke test now exercises only what OPS-004 itself tests (non-root/port-binding correctness), not that unrelated bug. See docs/tickets/README.md's Operability Sprint 09 subsection and docs/sprints/sprint-09.md for full detail.
+
+## First-boot bootstrap (INF-015)
+
+**This is the recommended way to bring the stack up, first-time or any time after.**
+`infra/bootstrap.sh` (bash) / `infra/bootstrap.ps1` (PowerShell) run the whole sequence documented
+section-by-section below in one command, in order, each step failing loudly (non-zero exit, a
+message naming the failed step) rather than silently continuing:
+
+1. `docker compose -f infra/docker-compose.yml up -d postgres redis`.
+2. Wait for `postgres`'s own `pg_isready`-based healthcheck to report `healthy` (via `docker inspect
+   --format '{{.State.Health.Status}}' naive-first-postgres`, bounded retry loop — not a new ad hoc
+   `sleep`/port-probe), failing loudly if it never becomes healthy within the timeout.
+3. Run migrations by calling INF-016's `infra/migrate.sh both` / `infra/migrate.ps1 -Service both` —
+   this script does **not** re-derive the `alembic upgrade head` invocation itself, it delegates to
+   that script entirely (see "Applying a new migration (INF-016)" below). If a service's migration
+   fails, the bootstrap script stops here, non-zero exit, naming which service failed — it never
+   proceeds to start the app containers against a partially-migrated database.
+4. `docker compose -f infra/docker-compose.yml up -d --build validation-service gateway-api`.
+5. Print (never run) the exact `provision_tenant.py` invocation as the final "next step" — tenant
+   provisioning mints a real, one-time-visible API key, so this script deliberately stops short of
+   minting one unattended (the printed command is the containerized form used in the "Full-stack
+   smoke test (Definition of Done, INF-004)" section below, not `gateway-api/README.md`'s
+   host-`.venv` form — the container this bootstrap script's own step 4 just started is the one
+   whose Postgres-backed `identity` schema the provisioned tenant needs to land in).
+
+Run it from the repo root:
+
+```
+infra/bootstrap.sh
+# or, on Windows:
+infra/bootstrap.ps1
+```
+
+Idempotent-safe against an already-up stack — each step is either already-satisfied Compose
+`up -d` (no-ops for already-running containers), an already-passing healthcheck, an already-at-head
+migration (INF-016's own idempotency), or a `--build` restart of the two app containers.
+
+**What the script does, spelled out** (kept below for anyone bringing up one piece by hand, or
+diagnosing which step of the script failed) — the per-service sections that follow are that same
+sequence, unabridged:
+
 ## Postgres (INF-001)
 
 `postgres` service, image `timescale/timescaledb:latest-pg16`, fixed host port `5432:5432`, named
@@ -252,6 +297,52 @@ collision, `alembic_version` was dropped (via `psql`, bookkeeping table only —
 touched) between the two runs, which is a manual workaround for verification purposes only, not a
 fix. The actual fix (per-schema version tables) is expected to land naturally once VS-013/GW-012's
 schema-targeting `env.py` change ships.
+
+## Applying a new migration (INF-016)
+
+`infra/migrate.sh <service>` (bash) / `infra/migrate.ps1 -Service <service>` (PowerShell) are the
+single source of the `alembic upgrade head` invocation shown above — a developer adding a new
+migration to `validation-service` or `gateway-api` should run one of these instead of re-deriving
+INF-005's one-off command by hand (as had already happened at least three times across INF-005,
+VS-013, and GW-012 before this script existed). `<service>` is `validation-service`,
+`gateway-api`, or `both` (default `both` if omitted).
+
+Both scripts, for each service given: `cd services/<service>`, build the migration-time
+`DATABASE_URL` from `POSTGRES_USER`/`POSTGRES_PASSWORD`/`POSTGRES_PORT`/`POSTGRES_DB` (env vars,
+falling back to `.env.example`'s documented defaults, host `localhost` since this runs from the
+host against the Compose-published Postgres port), and run `python -m alembic upgrade head` using
+that service's own `.venv` interpreter (`.venv/bin/python` on POSIX, `.venv\Scripts\python.exe` on
+Windows) — never a bare `python`/`alembic` that might resolve to some other environment.
+
+**Always connects as `naive_first` (migration-time role, INF-014), never `naive_first_app`**
+(runtime-only, no `CREATE`/ownership privileges — would fail at the first `CREATE TABLE`). The
+`DATABASE_URL` scheme used is `postgresql+psycopg://`, not the bare `postgresql://` shown in
+INF-005's original one-off command above: both services' `pyproject.toml` declare `psycopg` v3 as
+their Postgres driver, not `psycopg2`, and SQLAlchemy's default dialect for a bare `postgresql://`
+scheme resolves to `psycopg2`, which isn't installed in either `.venv`. Each service's own app code
+(`dependencies/repositories.py`) already rewrites an incoming `postgresql://` `DATABASE_URL` to
+`postgresql+psycopg://` before use; `alembic`'s `env.py` does not do that rewrite, so this script
+supplies the explicit scheme directly.
+
+Fails loudly, non-zero exit: a clear message (not a raw Python traceback) if a service's `.venv`
+doesn't exist yet (create it first, e.g. `cd services/<service>; uv sync`), and Alembic's own
+exit code/stderr propagate through unchanged on a real migration failure.
+
+Idempotent by construction — delegates straight to `alembic upgrade head`, which itself already
+no-ops once a service is at head, so running this against an already-migrated database (as with the
+Compose Postgres instance right now) is safe and expected to do nothing.
+
+Example, run from the repo root:
+
+```
+infra/migrate.sh both
+# or, on Windows:
+infra/migrate.ps1 -Service both
+```
+
+**Out of scope, by design**: no `alembic revision --autogenerate` helper and no CI/deploy-time
+auto-migration hook — this script performs the same manual-but-easy action a developer already
+decided to take; it does not decide *when* to run.
 
 ## Persistence verified across restarts (INF-006)
 

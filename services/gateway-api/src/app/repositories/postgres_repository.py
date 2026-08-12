@@ -66,30 +66,11 @@ from sqlalchemy.orm import Session
 
 from app.models import ApiKey, Tenant, User
 from app.repositories.interfaces import ApiKeyRecord, TenantRecord, UserRecord
-
-
-def _tenant_to_record(tenant: Tenant) -> TenantRecord:
-    return TenantRecord(id=tenant.id, name=tenant.name, created_at=tenant.created_at)
-
-
-def _user_to_record(user: User) -> UserRecord:
-    return UserRecord(
-        id=user.id,
-        tenant_id=user.tenant_id,
-        email=user.email,
-        role=user.role,
-        created_at=user.created_at,
-    )
-
-
-def _api_key_to_record(api_key: ApiKey) -> ApiKeyRecord:
-    return ApiKeyRecord(
-        id=api_key.id,
-        tenant_id=api_key.tenant_id,
-        key_hash=api_key.key_hash,
-        created_at=api_key.created_at,
-        revoked_at=api_key.revoked_at,
-    )
+from app.repositories.sqlite_repository import (
+    _api_key_to_record,
+    _tenant_to_record,
+    _user_to_record,
+)
 
 
 def _set_tenant_scope(session: Session, tenant_id: str) -> None:

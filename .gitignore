@@ -22,3 +22,4 @@ services/ingestion-service/data/raw/**/*.json
 # Keep folder scaffolding (.gitkeep, README/PROVENANCE docs) even though the
 # globs above exclude the data files that live alongside them.
 !**/.gitkeep
+.coverage

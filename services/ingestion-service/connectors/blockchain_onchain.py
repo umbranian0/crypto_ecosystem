@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 import pandas as pd
 import requests
 
-from .base import FetchResult, IngestionSource, latest_watermark, utcnow
+from .base import FetchResult, IngestionSource, run_incremental, utcnow
 
 BLOCKCHAIN_INFO_CHARTS_URL = "https://api.blockchain.info/charts/{chart_name}"
 
@@ -73,15 +73,9 @@ SEED_WATERMARKS = {
 
 if __name__ == "__main__":
     for chart_name, seed_watermark in SEED_WATERMARKS.items():
-        incremental_dir = f"data/raw/_platform/onchain/blockchain_info_{chart_name}/incremental"
-        since = latest_watermark(incremental_dir, "date", seed_watermark)
-
-        connector = BlockchainInfoConnector(chart_name)
-        result = connector.fetch(since=since)
-        print(f"{connector.name}: fetched {len(result.records)} rows since {since}")
-        if not result.is_empty():
-            out_path = f"{incremental_dir}/{result.fetched_at:%Y-%m-%d}.csv"
-            result.records.to_csv(out_path, index=False)
-            print(f"wrote {out_path}")
-        else:
-            print("no new rows, nothing written")
+        run_incremental(
+            BlockchainInfoConnector(chart_name),
+            incremental_dir=f"data/raw/_platform/onchain/blockchain_info_{chart_name}/incremental",
+            timestamp_column="date",
+            seed_watermark=seed_watermark,
+        )

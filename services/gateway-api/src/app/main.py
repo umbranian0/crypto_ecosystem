@@ -10,7 +10,10 @@ follows. Mirrors validation-service's app.main precedent.
 from __future__ import annotations
 
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
+from sqlalchemy import text
 
+from app.dependencies.repositories import HealthCheckEngineDep
 from app.routers import runs
 
 app = FastAPI(
@@ -19,9 +22,20 @@ app = FastAPI(
     version="0.1.0",
 )
 
-app.include_router(runs.router)
+app.include_router(runs.router, tags=["validation-service"])
 
 
-@app.get("/health")
-def health() -> dict[str, str]:
+@app.get("/health", response_model=None)
+def health(engine: HealthCheckEngineDep) -> dict[str, str] | JSONResponse:
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+    except Exception:
+        # OPS-005-02: no raw exception text/connection string/credential in
+        # the response body -- a fixed, generic detail string only, kept
+        # consistent with validation-service's own OPS-005-01 body shape.
+        return JSONResponse(
+            status_code=503,
+            content={"status": "unhealthy", "detail": "database unreachable"},
+        )
     return {"status": "ok"}
