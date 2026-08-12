@@ -221,3 +221,6 @@ Not proposed. Solution-design.md section 1 principle 1: "there is no code path t
 
 ### VS-020 — Won't: let another service read the `validation` schema directly [Won't]
 Not proposed. Implementation-plan.md section 2: "no service reads another service's database schema directly." Any future need for `reporting-service` or `dashboard-web` to see run/split data is served through `validation-service`'s own API (or the `run.completed` event, VS-009/014) — never a direct query against the `validation` Postgres schema from outside this service.
+
+### GW-017 cross-reference — Locust load-test suite (owned by gateway-api)
+See `docs/product/backlog-gateway-api.md` GW-017 for a Locust load-test suite exercising this service's `POST /runs` (and validation-service's own synchronous execution cost) via gateway-api's public entry point — not duplicated here since gateway-api is the public-facing surface the load is actually driven through.
