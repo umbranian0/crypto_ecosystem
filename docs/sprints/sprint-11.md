@@ -229,3 +229,50 @@ sprint.
   - `GW-017` (Locust load-test suite) was deliberately left out of this sprint for goal-coherence
     reasons, not a dependency conflict — it's available to schedule in its own future sprint against
     `gateway-api`'s backlog whenever next prioritized.
+
+## Outcome
+
+All 8 in-scope stories (`DASH-001` through `DASH-004`, `DASH-006` through `DASH-009`) done, executed
+in this plan's own dependency-first order, each personally verified by the Tech Lead against the real
+diff and a real test run — not merely trusted from a dev agent's own report. Full detail per ticket is
+in `docs/tickets/README.md`'s `services/dashboard-web (DASH-*)` Sprint 11 subsection and each ticket's
+own Outcome section; summarized here against this sprint file's own Definition of Done:
+
+- Every acceptance-criteria checkbox in all 8 tickets is checked, not assumed — confirmed by reading
+  each ticket file directly.
+- `services/dashboard-web/README.md`'s status line reflects the real built state (all 8 done, `DASH-005`
+  the one deferred story), states the trigger-#8 override explicitly, and documents the `DASH-005`
+  deferral under "Known gaps," pointing at `DASH-005-GAP` and this sprint's scheduling decision.
+- `uv run pytest` (default unit loop): **42 passed**, 0 failed, the `e2e` marker's 5 items correctly
+  deselected. `uv run pytest -m e2e`: **5 passed**, 0 failed, run against a real `dashboard-web`
+  subprocess and the `stub_gateway_api` fixture (no Docker Compose required). Combined: **47 passed**,
+  0 failed. One real bug was found and fixed during `DASH-009`'s personal verification — a
+  test-authoring gap (the invalid-payload test needed to disable native HTML5 form validation via JS
+  to actually reach the server's own validation path), not an application defect; full root-cause and
+  fix detail in `docs/tickets/DASH-009.md`'s Outcome.
+- No raw API key is ever rendered, logged, or placed in a URL anywhere in the shipped code — verified
+  by reading `DASH-002`'s actual diff directly (`src/app/routers/auth.py`, `src/app/dependencies/
+  session.py`), same scrutiny this repo gave `GW-006`/`GW-007` in Sprint 05.
+- No language anywhere in `dashboard-web`'s templates/README implies price prediction or a trading
+  signal — checked directly against `run_detail.html`/`run_new.html` and the README's own prose
+  (CLAUDE.md's core positioning constraint).
+- `docs/tickets/README.md` gained the new `services/dashboard-web (DASH-*)` section for this sprint's
+  eight tickets; `docs/product/backlog-dashboard-web.md`'s `DASH-005` entry stays marked blocked, not
+  silently closed or half-implemented.
+
+**`DASH-005` deferral status, unchanged from this sprint's own scheduling decision**: still blocked on
+`DASH-005-GAP` (no `GET /runs` list endpoint on `gateway-api` or `validation-service`). Follow-up
+flagged for the Product Owner, not silently dropped: author and approve `VS-0NN` (validation-service)
+and `GW-016` (gateway-api) in their own backlogs so a future sprint can schedule `VS-0NN -> GW-016 ->
+DASH-005`, and extend `DASH-009` to use the real list page instead of its current redirect-id fallback.
+
+**One environment finding worth flagging for future sprints**: this repo directory
+(`C:\Users\vasil\Documents\crypto_ecosystem`) sits inside a OneDrive-synced folder, which caused
+intermittent file-write/delete/`.venv`-creation failures throughout this sprint's verification work
+(`ENOENT` on direct file edits, `Acesso negado` on `.venv` file operations) — unrelated to any code
+written this sprint. Worked around each time (scratch-directory edits relayed back via a working
+write path; `UV_PROJECT_ENVIRONMENT` pointed outside the synced tree for the test venv), but this will
+keep recurring for any future work in this directory until the sync exclusion is addressed at the OS
+level (excluding this folder from OneDrive sync, or moving the repo outside `Documents` entirely).
+
+**No deviations from this plan's own sequencing, scope, or scheduling decisions.**

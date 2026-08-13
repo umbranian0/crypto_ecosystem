@@ -1,6 +1,6 @@
 # Ticket index
 
-Eight sections are tracked here, kept as clearly separated: `libs/naive_first_engine` (NFE-*, Sprint 01+02, done), `services/validation-service` (VS-*, Sprint 03+04+06+09+10), `libs/common` (LC-*, Sprint 04+10; ARCH-*, Sprint 06+10), `services/gateway-api` (GW-*, Sprint 05+06), `infra` (INF-*, Sprint 06+07), the cross-cutting Operability backlog (OPS-*, Sprint 08+09), and `services/ingestion-service` (INGEST-*, Sprint 10). Sprint 06 (docs/sprints/sprint-06.md) spans ARCH-*/INF-*/two VS-*/one GW-* tickets in one debt sprint — see the "Sprint 06" subsections under each relevant module below. Sprint 10 (docs/sprints/sprint-10.md) closes four longstanding pure-documentation debt items (LC-005, ARCH-007, ARCH-008, VS-016) plus one retroactive tracking ticket (INGEST-001) — see the "Sprint 10" subsections under each relevant module below.
+Nine sections are tracked here, kept as clearly separated: `libs/naive_first_engine` (NFE-*, Sprint 01+02, done), `services/validation-service` (VS-*, Sprint 03+04+06+09+10), `libs/common` (LC-*, Sprint 04+10; ARCH-*, Sprint 06+10), `services/gateway-api` (GW-*, Sprint 05+06), `infra` (INF-*, Sprint 06+07), the cross-cutting Operability backlog (OPS-*, Sprint 08+09), `services/ingestion-service` (INGEST-*, Sprint 10), and `services/dashboard-web` (DASH-*, Sprint 11). Sprint 06 (docs/sprints/sprint-06.md) spans ARCH-*/INF-*/two VS-*/one GW-* tickets in one debt sprint — see the "Sprint 06" subsections under each relevant module below. Sprint 10 (docs/sprints/sprint-10.md) closes four longstanding pure-documentation debt items (LC-005, ARCH-007, ARCH-008, VS-016) plus one retroactive tracking ticket (INGEST-001) — see the "Sprint 10" subsections under each relevant module below.
 
 # libs/naive_first_engine (NFE-*)
 
@@ -485,3 +485,67 @@ needed. `git status` scoped to `services/ingestion-service/connectors/` and
 `services/ingestion-service/tests/` after this ticket shows no changes introduced by this ticket
 (pre-existing uncommitted modifications to `connectors/*.py` from a prior, unrelated session were
 present before this ticket started and were left untouched, not authored or altered here).
+
+# services/dashboard-web (DASH-*)
+
+Source: docs/sprints/sprint-11.md, docs/product/backlog-dashboard-web.md.
+
+## Sprint 11
+
+| Ticket | Story | Depends on | Status |
+|---|---|---|---|
+| [DASH-001](DASH-001.md) | Service scaffolding | none | done |
+| [DASH-002](DASH-002.md) | Login screen (API key -> server-side session) | DASH-001 | done |
+| [DASH-003](DASH-003.md) | Session-to-downstream-header DI seam | DASH-002 | done |
+| [DASH-004](DASH-004.md) | Run detail view (`GET /runs/{id}`, `GET /runs/{id}/splits`) | DASH-003 | done |
+| [DASH-006](DASH-006.md) | Submit-a-run form (`POST /runs`) | DASH-003, DASH-004 | done |
+| [DASH-007](DASH-007.md) | Logout / session invalidation | DASH-002, DASH-003 | done |
+| [DASH-008](DASH-008.md) | Health check endpoint | DASH-001 | done |
+| [DASH-009](DASH-009.md) | Selenium E2E suite for the core PoC loop | DASH-002, DASH-004, DASH-006, DASH-005-GAP fallback | done |
+
+`DASH-005` (runs list, Must) is **deliberately deferred out of this sprint** — blocked on
+`DASH-005-GAP`, which requires new, not-yet-authored `VS-0NN` (validation-service) and `GW-016`
+(gateway-api) backlog tickets outside this sprint's/role's authority to schedule. `GW-017` (Locust
+load-test suite, gateway-api backlog) deliberately kept out of this sprint for goal-coherence reasons,
+not a dependency conflict. See docs/sprints/sprint-11.md's scheduling decisions for full reasoning.
+
+## Execution / parallelization plan (Sprint 11)
+
+- **Round 0 (Tech Lead, direct)**: DASH-001 — pure scaffolding, done directly rather than delegated,
+  same precedent as NFE-001/VS-001/LC-001/GW-001.
+- **Round 1**: DASH-002 (login screen, depends on DASH-001) — this sprint's most security-sensitive
+  ticket, given the same extra scrutiny this repo gave GW-006/GW-007 in Sprint 05.
+- **Round 2**: DASH-003 (DI seam, depends on DASH-002) — every later route depends on this exact
+  header shape and unauthenticated-rejection-before-route-logic behavior.
+- **Round 3**: DASH-004 (run detail, depends on DASH-003) — run to completion before DASH-006 starts.
+- **Round 4**: DASH-006 (submit-a-run, depends on DASH-003 **and** DASH-004's redirect target) — not
+  run in parallel with DASH-004 despite both formally sharing only DASH-003 as a common ancestor, per
+  sprint-11.md's own sequencing correction.
+- **Round 5 (parallel)**: DASH-007 (logout, depends on DASH-002+DASH-003) and DASH-008 (health check,
+  depends on DASH-001 only) — disjoint files (`auth.py` vs `main.py`), safe to run together.
+- **Round 6**: DASH-009 (Selenium E2E suite, depends on DASH-002/004/006 + the disclosed
+  `DASH-005-GAP` fallback) — run last, exercises functionality that must already exist.
+
+**Sprint 11 outcome**: all 8 in-scope stories (DASH-001-004, DASH-006-009) done, executed in this
+plan's own dependency-first order, each personally verified by the Tech Lead against the actual diff
+and a real test run — not merely trusted from a dev agent's own report. `services/dashboard-web` now
+exists as a real, tested, running FastAPI + Jinja2/HTMX service: a tenant logs in with a `gateway-api`
+API key (`DASH-002`, given GW-006/GW-007-level scrutiny — raw key confirmed never rendered, logged, or
+placed in a URL, only sent as `Authorization: Bearer <key>`), every downstream call shares one DI seam
+(`DASH-003`), a run's status and per-split results render from `gateway-api`'s real contract
+(`DASH-004`), a new run can be submitted through a form matching `POST /runs`'s real shape exactly with
+no shortcut around the purge gap or naive baselines (`DASH-006`), plus logout (`DASH-007`) and a real
+DB-connectivity-style health check against `gateway-api` (`DASH-008`). `DASH-009`'s Selenium E2E suite
+(the first browser-level suite in this platform) exercises all three flows end-to-end against a real
+subprocess `dashboard-web` instance and a stub `gateway-api` fixture — one real bug was found and fixed
+during personal verification (a test-authoring gap, not an app defect: the invalid-payload test needed
+to disable native HTML5 form validation via JS to actually reach the server's own validation path; see
+`docs/tickets/DASH-009.md`'s Outcome for full detail). Full suite: **47 passed**, 0 failed (42 unit +
+5 e2e). `DASH-005` (runs list) is deliberately deferred, not built and not faked — `services/
+dashboard-web/README.md` states this explicitly, and `DASH-009`'s "view a completed run" flow uses the
+disclosed `DASH-005-GAP` fallback (the run id from `DASH-006`'s own redirect) rather than any
+client-side substitute, confirmed via `grep` across `src/app/routers/` showing no list route exists.
+`GW-017` (Locust) stays out of this sprint per its own scheduling decision. **Follow-up for the Product
+Owner, not this sprint**: author and approve `VS-0NN` (validation-service tenant-scoped `GET /runs`
+list) and `GW-016` (matching gateway-api proxy route) so a future sprint can unblock `DASH-005`.
+

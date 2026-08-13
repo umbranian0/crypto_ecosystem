@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Submit a validation run -- dashboard-web{% endblock %}
+{% block content %}
+<h2>Submit a validation run</h2>
+<p>This runs the leakage-free, purged walk-forward validation protocol against the
+mandatory naive baselines -- it does not generate a prediction, forecast, or trading
+signal.</p>
+{% if error %}
+<p class="error">{{ error }}</p>
+{% endif %}
+<form method="post" action="/runs/new">
+    <label for="dataset_id">Dataset id</label>
+    <input type="text" id="dataset_id" name="dataset_id" required
+           value="{{ values.dataset_id if values else '' }}">
+
+    <fieldset>
+        <legend>Dataset reference (provide exactly one)</legend>
+
+        <label for="dataset_reference_path">Local file path</label>
+        <input type="text" id="dataset_reference_path" name="dataset_reference_path"
+               value="{{ values.dataset_reference_path if values else '' }}">
+
+        <label for="dataset_reference_inline">Inline payload (JSON)</label>
+        <textarea id="dataset_reference_inline" name="dataset_reference_inline"
+                  rows="4">{{ values.dataset_reference_inline if values else '' }}</textarea>
+    </fieldset>
+
+    <label for="horizon">Horizon</label>
+    <input type="number" id="horizon" name="horizon" min="1" required
+           value="{{ values.horizon if values else '' }}">
+
+    <label for="purge_gap_hours">Purge gap (hours)</label>
+    <input type="number" id="purge_gap_hours" name="purge_gap_hours" min="0" required
+           value="{{ values.purge_gap_hours if values else '' }}">
+
+    <label for="train_window">Train window</label>
+    <input type="number" id="train_window" name="train_window" min="1" required
+           value="{{ values.train_window if values else '' }}">
+
+    <label for="test_window">Test window</label>
+    <input type="number" id="test_window" name="test_window" min="1" required
+           value="{{ values.test_window if values else '' }}">
+
+    <label for="step">Step</label>
+    <input type="number" id="step" name="step" min="1" required
+           value="{{ values.step if values else '' }}">
+
+    <button type="submit">Submit run</button>
+</form>
+{% endblock %}

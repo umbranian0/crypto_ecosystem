@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}Run {{ run.id }} -- dashboard-web{% endblock %}
+{% block content %}
+<h2>Validation run {{ run.id }}</h2>
+
+<table>
+    <tbody>
+        <tr><th>Status</th><td>{{ run.status }}</td></tr>
+        <tr><th>Dataset</th><td>{{ run.dataset_id }}</td></tr>
+        <tr><th>Horizon</th><td>{{ run.horizon }}</td></tr>
+        <tr><th>Purge gap (hours)</th><td>{{ run.purge_gap_hours }}</td></tr>
+        <tr><th>Created at</th><td>{{ run.created_at }}</td></tr>
+        <tr><th>Completed at</th><td>{{ run.completed_at if run.completed_at else "--" }}</td></tr>
+        <tr><th>Failure reason</th><td>{{ run.failure_reason if run.failure_reason else "--" }}</td></tr>
+    </tbody>
+</table>
+
+<h3>Per-split validation results</h3>
+{% if splits %}
+<p>Benchmark comparison of the model against the Naive0 baseline for each walk-forward split.
+These are validation/audit metrics only.</p>
+<table>
+    <thead>
+        <tr>
+            <th>Split</th>
+            <th>Train</th>
+            <th>Purge</th>
+            <th>Test</th>
+            <th>Model MAE</th>
+            <th>Model RMSE</th>
+            <th>Model sMAPE</th>
+            <th>Model MASE</th>
+            <th>Model DA</th>
+            <th>Model F1</th>
+            <th>Model OOS R2</th>
+            <th>Naive0 MAE</th>
+            <th>Naive0 RMSE</th>
+            <th>Naive0 sMAPE</th>
+            <th>Naive0 MASE</th>
+            <th>Naive0 DA</th>
+            <th>Naive0 F1</th>
+            <th>Naive0 OOS R2</th>
+            <th>DM statistic</th>
+            <th>DM p-value</th>
+            <th>DM verdict</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for split in splits %}
+        <tr>
+            <td>{{ split.split_index }}</td>
+            <td>{{ split.train_start }} -- {{ split.train_end }}</td>
+            <td>{{ split.purge_start }} -- {{ split.purge_end }}</td>
+            <td>{{ split.test_start }} -- {{ split.test_end }}</td>
+            <td>{{ split.model_mae }}</td>
+            <td>{{ split.model_rmse }}</td>
+            <td>{{ split.model_smape }}</td>
+            <td>{{ split.model_mase }}</td>
+            <td>{{ split.model_da }}</td>
+            <td>{{ split.model_f1 }}</td>
+            <td>{{ split.model_oos_r2 }}</td>
+            <td>{{ split.naive0_mae }}</td>
+            <td>{{ split.naive0_rmse }}</td>
+            <td>{{ split.naive0_smape }}</td>
+            <td>{{ split.naive0_mase }}</td>
+            <td>{{ split.naive0_da }}</td>
+            <td>{{ split.naive0_f1 }}</td>
+            <td>{{ split.naive0_oos_r2 }}</td>
+            <td>{{ split.dm_statistic }}</td>
+            <td>{{ split.dm_pvalue }}</td>
+            <td>{{ split.dm_verdict }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p>No per-split validation results yet for this run.</p>
+{% endif %}
+{% endblock %}
