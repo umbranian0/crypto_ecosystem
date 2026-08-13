@@ -123,6 +123,20 @@ Acceptance criteria:
 Rationale for priority: `validation-service`'s `POST /runs` is synchronous and can hold a connection open for a full run duration (per its own README) — a proxy in front of it without timeout/error handling turns a slow run into a gateway-level failure mode nobody designed for.
 Depends on: GW-008
 
+### GW-016 — Proxy route for validation-service's `GET /runs` list endpoint [Must]
+**As a** pilot client (or, pre-pilot, `dashboard-web`/an internally-provisioned test client) **I want** `gateway-api` to proxy `validation-service`'s new tenant-scoped `GET /runs` list endpoint (VS-022) **so that** `dashboard-web`'s `DASH-005` runs-list page — and any future caller needing to enumerate runs — has a real endpoint to call through this platform's one public-facing surface, matching GW-008's already-established routing pattern exactly.
+
+Acceptance criteria:
+- [ ] `gateway-api` exposes `GET /runs` (query params `limit`/`offset` forwarded unmodified) with request/response shapes matching `validation-service`'s real `GET /runs` (VS-022, `docs/product/backlog-validation-service.md`) exactly — reusing the same `RunSummaryResponse` list-envelope model from `naive_first_common.contracts` VS-022 adds there, not a locally redefined shape (same DRY precedent GW-008/ARCH-003 already established for `RunDetailResponse`/`SplitResultResponse`).
+- [ ] Handler body does nothing but: resolve verified tenant (GW-006/GW-007) → forward `limit`/`offset` + the verified `X-Tenant-Id` header via `httpx` to `VALIDATION_SERVICE_URL` → return the response unmodified — no new business logic, no pagination/ordering reimplemented at this layer (matches GW-008's "does not own any business logic" boundary).
+- [ ] Cross-tenant isolation is proven the same way GW-008 already proves it for `GET /runs/{id}`: a request authenticated as tenant A returns only tenant A's runs — no branch/filter is added in this router beyond forwarding the verified tenant header; the isolation guarantee comes entirely from `validation-service`'s own tenant-scoped `list_runs` (VS-022).
+- [ ] GW-009's existing timeout/connection-failure handling (`502`/`504`) applies to this new route with no special-casing — reuses the same downstream-failure dependency already wired for `POST /runs`/`GET /runs/{id}`/`GET /runs/{id}/splits`, not a new error-handling path.
+- [ ] Tests (mirroring `tests/test_runs_routing.py`'s existing `httpx.MockTransport` approach): forwards correctly and returns validation-service's response shape unmodified; `limit`/`offset` pass through; tenant A's authenticated request never sees tenant B's runs (seeded into the mock backend, same non-tautological pattern GW-008's own cross-tenant test already uses); a downstream `422` (bad `limit`) passes through unmodified.
+- [ ] `services/gateway-api/README.md`'s Contract section documents this fourth proxied endpoint alongside the existing three, cross-referencing `DASH-005`/`DASH-005-GAP` as the reason it exists.
+
+Rationale for priority: Must — this is the second, symmetric half of closing `DASH-005-GAP` (VS-022 is the first); without both, `dashboard-web`'s own Must-priority `DASH-005` story stays blocked and `DASH-009`'s E2E suite keeps relying on its documented redirect-id fallback instead of exercising the real list page. Matches this service's stated "owns: ... HTTP routing/orchestration to validation-service's real endpoints" boundary, extended by the one endpoint VS-022 adds.
+Depends on: VS-022 (validation-service must expose the real endpoint before this proxy has anything to forward to), GW-007 (verified tenant forwarding), GW-009 (failure handling)
+
 ### GW-010 — API-key revocation [Should]
 **As a** tenant admin (or operator, pre-self-service) **I want** to revoke an API key **so that** a leaked or rotated key stops working immediately without needing to delete/recreate the tenant.
 
@@ -197,3 +211,17 @@ Acceptance criteria:
 
 Rationale for priority: valuable tooling to have available ahead of the first real pilot's traffic pattern, but nothing in flight depends on it and no trigger from implementation-plan.md fires it yet — Should, not Must.
 Depends on: GW-008, GW-009 (the routing/failure-handling paths being load-tested)
+
+### GW-018 — Proxy routes for reporting-service's `POST /reports/generate` and `GET /reports/{id}` [Must]
+**As a** pilot client (or, pre-pilot, an internally-provisioned test client) needing to trigger and retrieve audit reports **I want** `gateway-api` to proxy `reporting-service`'s two endpoints (`POST /reports/generate`, `GET /reports/{id}`, per `docs/product/backlog-reporting-service.md`'s RS-004/RS-005) **so that** a client can reach `reporting-service` through this platform's one public-facing surface at all — today it is unreachable from outside the Docker network regardless of whether it's running, exactly the gap `reporting-service`'s own backlog flags as `RS-GAP` and explicitly declines to fix itself (RS-106, "this module owns no other service's routing").
+
+Acceptance criteria:
+- [ ] `gateway-api` exposes `POST /reports/generate` (body: `run_id`) and `GET /reports/{id}` with request/response shapes matching `reporting-service`'s real `RS-004`/`RS-005` contract exactly (`{id, status}` on generate per RS-004's `201`; `{id, run_id, report_kind, generated_at, status, content}` on retrieval per RS-005's `200`) — read from `reporting-service`'s actual router code once built, not guessed, same discipline GW-008's own ticket applied to `validation-service`'s real models.
+- [ ] Handler bodies do nothing but: resolve verified tenant (GW-006/GW-007) → forward the request body/path param + verified `X-Tenant-Id` header via `httpx` to a new `REPORTING_SERVICE_URL` env var (same pattern as `VALIDATION_SERVICE_URL`, not hardcoded, defaulting to a `localhost` equivalent for non-Compose local dev) → return the response unmodified — no report-rendering or generation logic reimplemented here (matches this service's "does not own any business logic" boundary).
+- [ ] Cross-tenant access to a report is proven impossible at this layer the same way GW-008 proves it for runs: a request authenticated as tenant A for a `report_id` belonging to tenant B gets the same `404` `reporting-service`'s own RS-005 already returns (this router adds no new isolation branching — that logic stays in `reporting-service`, per DRY across service boundaries, implementation-plan.md section 9).
+- [ ] GW-009's existing timeout/connection-failure handling (`502`/`504`) applies to both new routes with no special-casing — reused, not reimplemented.
+- [ ] Tests (`httpx.MockTransport`, mirroring `test_runs_routing.py`): both routes forward correctly and return `reporting-service`'s response shape unmodified; cross-tenant `404` proof; a `reporting-service` connection failure/timeout returns `502`/`504`.
+- [ ] `services/gateway-api/README.md`'s Contract section documents both new proxied endpoints and the `REPORTING_SERVICE_URL` env var, cross-referencing `RS-GAP` as the reason they exist.
+
+Rationale for priority: Must — without this, `reporting-service`'s already-built `POST /reports/generate`/`GET /reports/{id}` (RS-004/RS-005) are unreachable through the platform's one public-facing surface, leaving the whole reporting PoC unusable end-to-end even once it's wired into Compose (INF-018). Paired with INF-018 as the two prerequisites `RS-GAP` names explicitly.
+Depends on: `reporting-service`'s RS-004/RS-005 existing as real, running routes (that module's own backlog, not built by this story), GW-007, GW-009; practically also wants INF-018 (compose wiring) to be testable against a real running `reporting-service`, though this story's own mocked-transport tests don't strictly require it
