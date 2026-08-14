@@ -1,6 +1,6 @@
 # Ticket index
 
-Eleven sections are tracked here, kept as clearly separated: `libs/naive_first_engine` (NFE-*, Sprint 01+02, done), `services/validation-service` (VS-*, Sprint 03+04+06+09+10), `libs/common` (LC-*, Sprint 04+10; ARCH-*, Sprint 06+10), `services/gateway-api` (GW-*, Sprint 05+06), `infra` (INF-*, Sprint 06+07), the cross-cutting Operability backlog (OPS-*, Sprint 08+09), `services/ingestion-service` (INGEST-*, Sprint 10), `services/dashboard-web` (DASH-*, Sprint 11), `services/reporting-service` (RS-*, Sprint 12), and `services/economic-service` (ECON-*, Sprint 13 — a disclosed, user-authorized override of trigger #11's ethical/business-honesty boundary, scaffolding-only, see that section below for the full framing). Sprint 06 (docs/sprints/sprint-06.md) spans ARCH-*/INF-*/two VS-*/one GW-* tickets in one debt sprint — see the "Sprint 06" subsections under each relevant module below. Sprint 10 (docs/sprints/sprint-10.md) closes four longstanding pure-documentation debt items (LC-005, ARCH-007, ARCH-008, VS-016) plus one retroactive tracking ticket (INGEST-001) — see the "Sprint 10" subsections under each relevant module below. **Note on the Sprint 12/13 file-content incident (resolved)**: due to a race between two concurrent background agent sessions writing to this repo directory at nearly the same time (Sprint 12's `reporting-service` PM output and Sprint 13's `economic-service` PM output both originally arrived from their respective agents under the same working filename before being placed/renamed), `docs/sprints/sprint-12.md`'s committed content ended up containing `services/economic-service` (ECON-*) planning text instead of `services/reporting-service` content, despite its commit message correctly reading "Sequence Sprint 12: services/reporting-service PoC." The Sprint 12 Tech Lead caught the mismatch independently, correctly did not treat it as authorization to build `economic-service` under Sprint 12, and worked from `docs/product/backlog-reporting-service.md` and its own task instructions directly instead. The file has since been corrected in place, restoring the real `reporting-service` sprint content (recovered from this session's own prior read of the source, not from git history, since the wrong content had already been committed). `docs/sprints/sprint-13.md` (the correct, intact `economic-service` sprint file, including its Outcome section) was unaffected throughout.
+Eleven sections are tracked here, kept as clearly separated: `libs/naive_first_engine` (NFE-*, Sprint 01+02, done), `services/validation-service` (VS-*, Sprint 03+04+06+09+10+14), `libs/common` (LC-*, Sprint 04+10; ARCH-*, Sprint 06+10), `services/gateway-api` (GW-*, Sprint 05+06+14), `infra` (INF-*, Sprint 06+07+14), the cross-cutting Operability backlog (OPS-*, Sprint 08+09), `services/ingestion-service` (INGEST-*, Sprint 10), `services/dashboard-web` (DASH-*, Sprint 11), `services/reporting-service` (RS-*, Sprint 12), and `services/economic-service` (ECON-*, Sprint 13 — a disclosed, user-authorized override of trigger #11's ethical/business-honesty boundary, scaffolding-only, see that section below for the full framing). Sprint 14 (docs/sprints/sprint-14.md) closes two disclosed capability gaps (`DASH-005-GAP`, `RS-GAP`) across three modules (`validation-service`, `gateway-api`, `infra`) in one sprint — see the "Sprint 14" subsections under each relevant module below. Sprint 06 (docs/sprints/sprint-06.md) spans ARCH-*/INF-*/two VS-*/one GW-* tickets in one debt sprint — see the "Sprint 06" subsections under each relevant module below. Sprint 10 (docs/sprints/sprint-10.md) closes four longstanding pure-documentation debt items (LC-005, ARCH-007, ARCH-008, VS-016) plus one retroactive tracking ticket (INGEST-001) — see the "Sprint 10" subsections under each relevant module below. **Note on the Sprint 12/13 file-content incident (resolved)**: due to a race between two concurrent background agent sessions writing to this repo directory at nearly the same time (Sprint 12's `reporting-service` PM output and Sprint 13's `economic-service` PM output both originally arrived from their respective agents under the same working filename before being placed/renamed), `docs/sprints/sprint-12.md`'s committed content ended up containing `services/economic-service` (ECON-*) planning text instead of `services/reporting-service` content, despite its commit message correctly reading "Sequence Sprint 12: services/reporting-service PoC." The Sprint 12 Tech Lead caught the mismatch independently, correctly did not treat it as authorization to build `economic-service` under Sprint 12, and worked from `docs/product/backlog-reporting-service.md` and its own task instructions directly instead. The file has since been corrected in place, restoring the real `reporting-service` sprint content (recovered from this session's own prior read of the source, not from git history, since the wrong content had already been committed). `docs/sprints/sprint-13.md` (the correct, intact `economic-service` sprint file, including its Outcome section) was unaffected throughout.
 
 # libs/naive_first_engine (NFE-*)
 
@@ -138,6 +138,14 @@ confirm failure, revert, confirm pass) was personally re-run, `git status` scope
 containers after the `naive-first-postgres` container (found exited at the start of this sprint's
 verification pass) was restarted.
 
+## Sprint 14
+
+| Ticket | Story | Depends on | Status |
+|---|---|---|---|
+| [VS-022](VS-022.md) | Tenant-scoped `GET /runs` list endpoint | VS-003, VS-004, VS-013 (all done) | done |
+
+See docs/sprints/sprint-14.md. Closes `DASH-005-GAP` (open since Sprint 11) -- the first half of the sprint's `VS-022 -> GW-016` chain, run in parallel with `INF-018` (infra). Adds `RunSummaryResponse` to `libs/common/src/naive_first_common/contracts.py` (the single canonical definition, reused by `GW-016`, not redefined) and a new `list_runs` method on `ValidationRunRepository`, implemented by both the SQLite (VS-004) and Postgres (VS-013) backends without changing either's existing `create_run`/`get_run`/`update_run_status` call sites. The hard server-side `limit` ceiling (max 100, `422` on out-of-range, never clamped) and the non-tautological cross-tenant test (asserts by id, not just count) received the sprint's own flagged extra review scrutiny. `services/validation-service/README.md`'s Routes section gains `GET /runs`; VS-016's doc-sync check re-run and confirmed still passing.
+
 # libs/common (LC-*)
 
 Source: docs/sprints/sprint-04.md, docs/product/backlog-libs-common.md.
@@ -240,6 +248,15 @@ Deferred: GW-010 through GW-014 (Should/Could). Not started: GW-015 (Won't, this
 
 See docs/sprints/sprint-06.md Phase 4. Sprint 06's second extra-sensitive ticket (alongside ARCH-002) — RLS `SET LOCAL` tenant-scoping hook must fire on every pooled-connection checkout, not just once at startup. **Follow-up flagged, not silently accepted**: see INF-014 below — the Postgres role both services actually connect as is a superuser (`BYPASSRLS`), so RLS policies are correctly written and proven-in-test but currently unenforced against real deployed credentials.
 
+## Sprint 14
+
+| Ticket | Story | Depends on | Status |
+|---|---|---|---|
+| [GW-016](GW-016.md) | Proxy route for validation-service's `GET /runs` list endpoint | VS-022 (this sprint), GW-007, GW-009 (done) | done |
+| [GW-018](GW-018.md) | Proxy routes for reporting-service's `POST /reports/generate` / `GET /reports/{id}` | reporting-service's RS-004/RS-005 (done), GW-007, GW-009 (done) | done |
+
+See docs/sprints/sprint-14.md. `GW-016` closes the second, symmetric half of `DASH-005-GAP` (`VS-022` is the first) -- runs after `VS-022` lands. `GW-018` closes the `gateway-api` half of `RS-GAP` (paired with `INF-018`) -- run strictly after `GW-016` completes and its diff is personally verified by the Tech Lead, not in parallel, per the sprint's own binding same-file-collision-avoidance instruction (both tickets touch the router layer and README Contract section). `GW-016` reuses `VS-022`'s new `RunSummaryResponse` from `naive_first_common.contracts`; `GW-018` adds a new `REPORTING_SERVICE_URL` env var and a new `reports.py` router module (disjoint from `runs.py`, zero file overlap with `GW-016`). Both reuse GW-009's existing timeout/failure handling unmodified. `GW-018`'s own documentation restates the sprint's disclosed caveat: only the manual `POST /reports/generate` -> `GET /reports/{id}` flow is reachable end-to-end through `gateway-api` after this sprint -- the automatic `run.completed`-triggered flow (`RS-006`) remains `todo` in Sprint 12, a gap in `RS-006`, not a `GW-018` defect.
+
 # infra (INF-*)
 
 Source: docs/sprints/sprint-06.md, docs/product/backlog-infra.md.
@@ -336,6 +353,14 @@ scoped to those paths after each ticket).
 **Sprint 04 outcome**: all 4 in-scope `libs/common` Must stories (LC-001–004) plus VS-010 done, matching sprint-04.md's Definition of Done. `libs/common`: `.venv\Scripts\python.exe -m pytest -q` passes 14/14 (LC-002/003 unit tests + LC-004's standalone fail-closed app-level suite). `services/validation-service`: `.venv\Scripts\python.exe -m pytest -q` passes 51/51 (48 pre-existing Sprint 03 tests, now exercising `Depends(get_tenant_context)` instead of the interim field, plus 3 new VS-010 fail-closed-before-repository tests). Both READMEs updated (`libs/common` status "scaffolded"; `services/validation-service` Contract section documents the `X-Tenant-Id` header replacing the retired `tenant_id` body/query field). LC-001 was scaffolded directly by the Tech Lead (no design decision to delegate, same precedent as NFE-001/VS-001); LC-002/003/004/VS-010 were each delegated to a dev subagent and personally verified by the Tech Lead by reading the actual diff (not just trusting the agent's self-report) before being marked done — VS-010 in particular was checked for: `Depends(get_tenant_context)` imported unmodified from `naive_first_common` with no local reimplementation, the interim `tenant_id` field/params fully removed (not left dead), tenant-isolation logic unchanged apart from the source of `tenant_id`, and the new fail-closed test's non-tautological proof (a repository fake that fails the test if reached) run directly by the Tech Lead. No deviations from sprint-04.md's binding notes: 401 (not 400) used throughout LC-003/LC-004/VS-010; LC-001 never touched `services/validation-service/pyproject.toml`; VS-010 was the ticket that added `naive_first_common` to that file. No code outside `libs/common`/`services/validation-service` was touched.
 
 **Sprint 06 outcome**: all 14 in-scope stories (ARCH-001/002/003/004, INF-001–007, VS-013, VS-014, GW-012) done, matching sprint-06.md's Definition of Done. All 4 modules' full suites pass with zero regressions, verified directly by the Tech Lead: `libs/naive_first_engine` 94/94 (untouched, sanity baseline), `libs/common` 20/20, `services/validation-service` 63/63, `services/gateway-api` 66/66. A real Postgres+TimescaleDB and Redis are running in `infra/docker-compose.yml` alongside real, containerized `validation-service`/`gateway-api`; a full-stack smoke test (provision tenant -> `POST /runs` through `gateway-api` -> proxied to `validation-service` -> real `naive_first_engine` execution -> persisted results -> proxied back) was executed for real, not simulated, during INF-004. All 10 grooming-session binding decisions were implemented as specified, not merely referenced (see the full confirmation checklist in the Tech Lead's sprint report to "main"). One real, load-bearing finding from INF-005 (both services' migrations collide on a shared `public.alembic_version` if neither schema-qualifies its version table) was caught, escalated into a hard requirement on VS-013/GW-012 (rather than left as the original ticket's "should"), and confirmed fixed by rerunning both services' full suites together. One new gap was surfaced and deliberately NOT silently patched: the Postgres role both services actually connect as (`naive_first`, provisioned by INF-001) is a superuser, which Postgres unconditionally exempts from RLS — VS-013's and GW-012's RLS policies are correctly authored and proven against a purpose-built non-superuser test role, but are not yet enforced against the real running credentials. Tracked as a new follow-up (INF-014, proposed, not yet scheduled) rather than counted as "done" in this sprint's RLS acceptance criteria. Round 2's ARCH-002 (memoization keyed by URL, not zero-arg) and GW-012 (SET LOCAL firing per-transaction, not once at startup, proven via a `pool_size=1`/`pg_backend_pid()` pooled-connection-reuse test) received the sprint's mandated extra scrutiny, both personally verified by the Tech Lead reading the actual code and diff, not just trusting a green checkmark.
+
+## Sprint 14
+
+| Ticket | Story | Depends on | Status |
+|---|---|---|---|
+| [INF-018](INF-018.md) | `reporting-service` wired into Docker Compose as a real, runnable container | INF-001, INF-002, INF-014, reporting-service's RS-001/RS-002 (all done) | done |
+
+See docs/sprints/sprint-14.md. Closes the infra half of `RS-GAP` (paired with `GW-018`), run in parallel with `VS-022` from the start of the sprint -- genuinely independent, disjoint files (`infra/docker-compose.yml` + `services/reporting-service/Dockerfile` vs. `services/validation-service/`). Packaging/wiring only -- zero changes under `services/reporting-service/src/`, confirmed via `git status` scoped to that path before and after. `DATABASE_URL` uses the existing non-superuser `naive_first_app` role (INF-014), not `naive_first` -- does not reintroduce the RLS-bypass gap that role was created to close. Verified against the real, live Compose stack, not merely a config-file review: `docker compose up reporting-service` succeeds, `POST /reports/generate`/`GET /reports/{id}` respond over the container's exposed port. `infra/README.md`'s "not yet wired into compose" statement updated to remove `reporting-service`, cross-referencing `GW-018` as the other `RS-GAP` half needed for actual reachability from outside the Docker network.
 
 # Operability (OPS-*)
 
@@ -563,14 +588,14 @@ section 6) -- no pilot audit request exists yet, same disclosed-override precede
 | Ticket | Story | Depends on | Status |
 |---|---|---|---|
 | [RS-001](RS-001.md) | Service scaffolding | none | done |
-| [RS-002](RS-002.md) | `reporting` Postgres schema + Repository pattern with RLS | RS-001 | todo |
-| [RS-003](RS-003.md) | Report Factory + "validation audit" renderer | RS-001 | todo |
-| [RS-004](RS-004.md) | Manual `POST /reports/generate` endpoint | RS-002, RS-003 | todo |
-| [RS-005](RS-005.md) | `GET /reports/{id}` retrieval endpoint | RS-002 | todo |
-| [RS-006](RS-006.md) | Redis Streams subscriber for `run.completed` | RS-002, RS-003, RS-004 | todo |
-| [RS-007](RS-007.md) | Health check endpoint | RS-002 | todo |
-| [RS-008](RS-008.md) | OpenAPI contract / README doc-sync check | RS-004, RS-005 | todo |
-| [RS-009](RS-009.md) | CI wiring | RS-001 through RS-006 | todo |
+| [RS-002](RS-002.md) | `reporting` Postgres schema + Repository pattern with RLS | RS-001 | done |
+| [RS-003](RS-003.md) | Report Factory + "validation audit" renderer | RS-001 | done |
+| [RS-004](RS-004.md) | Manual `POST /reports/generate` endpoint | RS-002, RS-003 | done |
+| [RS-005](RS-005.md) | `GET /reports/{id}` retrieval endpoint | RS-002 | done |
+| [RS-006](RS-006.md) | Redis Streams subscriber for `run.completed` | RS-002, RS-003, RS-004 | done |
+| [RS-007](RS-007.md) | Health check endpoint | RS-002 | done |
+| [RS-008](RS-008.md) | OpenAPI contract / README doc-sync check | RS-004, RS-005 | done |
+| [RS-009](RS-009.md) | CI wiring | RS-001 through RS-006 | done |
 
 ## Execution / parallelization plan (Sprint 12)
 
@@ -594,7 +619,49 @@ section 6) -- no pilot audit request exists yet, same disclosed-override precede
 - **Round 5 (Should, tail work)**: RS-007 (health check, depends on RS-002), RS-008 (doc-sync check,
   depends on RS-004+RS-005), RS-009 (CI wiring, depends on RS-001 through RS-006, runs last).
 
-**Sprint 12 outcome**: (Tech Lead fills in after verification -- see this sprint's own final report.)
+**Sprint 12 outcome**: all 9 in-scope stories (RS-001 through RS-009) done. `services/reporting-service`
+now exists as a real, tested FastAPI service: `reporting.reports` Postgres schema behind a
+`ReportRepository` with real RLS enforced against the non-superuser `naive_first_app` role (RS-002);
+a Factory + `ValidationAuditRenderer` reproducing the `naive-first-audit` skill's report structure
+with DM verdicts passed through verbatim and the mandatory disclaimer present in every report,
+including status-only ones (RS-003); `POST /reports/generate` (RS-004) and `GET /reports/{id}`
+(RS-005), both tenant-isolated via `naive_first_common.get_tenant_context`; a Redis Streams
+subscriber on `run.completed` (RS-006) that reuses RS-004's own `generate_validation_audit_report`
+function with zero duplicated fetch/render/persist logic and a real defense-in-depth status re-check
+against the freshly fetched run detail, not the event payload; a real-DB `GET /health` (RS-007); a
+route-existence doc-sync check (RS-008); and CI wiring matching every other module's pattern exactly
+(RS-009). Final full-suite count, independently re-confirmed by the Tech Lead multiple times from
+fresh copies outside the OneDrive-synced tree (not taken on any single dev agent's report alone):
+**36 passed, 0 failed**, including the real-Postgres RLS cross-tenant proof
+(`test_rls_blocks_cross_tenant_reads_at_the_database_level`, run as the actual non-superuser
+`naive_first_app` role) and the real-Redis integration tests in `test_subscriber.py` (not
+skip-guarded away -- both Postgres and Redis were reachable throughout this sprint's execution).
+Two dev-agent sessions (RS-002, RS-006's first attempt) were interrupted by usage limits before
+updating their own ticket files; in both cases the Tech Lead found the shipped code and tests already
+complete and correct on disk, personally verified them (including, for RS-002, discovering and fixing
+a real environment gap -- the `reporting` schema had never been migrated onto the live Postgres
+container -- and diagnosing a severe Postgres-connection slowdown down to the same IPv6-loopback
+`localhost` DNS quirk this repo's own Sprint 09 already documented, worked around via
+`PGCONNECT_TIMEOUT`), and completed the ticket files/README documentation acceptance criteria
+directly rather than re-delegating from scratch. RS-006's second attempt (after the first was
+declared dead) succeeded cleanly on its own. Every ticket's Review acceptance criteria were personally
+verified by the Tech Lead reading the actual diff/files and independently re-running tests -- not
+trusted from any dev agent's self-report alone, per this sprint's own extra-scrutiny flags on RS-002
+(RLS proof against a real non-superuser role) and RS-003 (DM-verdict verbatim passthrough, disclaimer
+presence, no positioning violations).
+
+**Known gap, disclosed not silently accepted**: `docs/sprints/sprint-12.md`'s own on-disk content was
+found to be genuinely mismatched with this sprint at the start of this work (containing
+`services/economic-service` planning content instead of `services/reporting-service`, despite its own
+commit message correctly reading "Sequence Sprint 12: services/reporting-service PoC") -- this sprint
+was executed from the requester's own detailed restated framing, cross-verified directly against
+`docs/product/backlog-reporting-service.md` (which matched that framing exactly), not from the
+mismatched file. The coordinator has since confirmed this was a concurrent-session write race and
+restored the file's correct content separately -- not an action taken by this sprint's own tickets.
+`RS-GAP` (no `gateway-api` proxy route for this service's endpoints, not yet wired into
+`infra/docker-compose.yml`) remains open by design, per the backlog's own explicit scope decision --
+follow-up `GW-0NN`/`INF-0NN` tickets are needed before this service is reachable end-to-end through
+the platform's one public-facing surface.
 
 # services/economic-service (ECON-*)
 

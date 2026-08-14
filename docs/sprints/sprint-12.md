@@ -246,3 +246,40 @@ within this sprint's scope per the sizing reasoning above; none was cut for capa
   - Once `GW-0NN`/`INF-0NN` are approved in their own backlogs (a follow-up outside this sprint), a
     future sprint should schedule them so this service becomes reachable end-to-end through
     `gateway-api` — flagged for the Product Owner/PM, not silently dropped.
+
+## Outcome
+
+All 9 in-scope stories (`RS-001` through `RS-009`) done, each personally verified by the Tech Lead
+against the actual diff and a real test run — not merely trusted from any dev agent's report. Full
+suite: **36 passed, 0 failed, 88% coverage**, independently re-run multiple times from fresh copies
+against real Postgres and Redis.
+
+**What shipped**: `services/reporting-service` now exists as a real, tested, running FastAPI service —
+`reporting.reports` Postgres schema with RLS (cross-tenant proof run as the real non-superuser
+`naive_first_app` role), a Factory + `ValidationAuditRenderer` reproducing the `naive-first-audit`
+skill's report structure (DM verdicts pass through verbatim, disclaimer present in every report,
+"did not beat naive" rendered plainly with no softening), a manual `POST /reports/generate` endpoint,
+a tenant-isolated `GET /reports/{id}` retrieval endpoint, a Redis Streams subscriber for
+`run.completed` (reusing `RS-004`'s exact generation function, proven by an identity test, with a
+defense-in-depth status re-check against the freshly fetched run rather than trusting the event
+payload), a real-DB health check, a route-existence doc-sync check (drift-detection demo personally
+reproduced end-to-end by the Tech Lead), and CI wiring into `.github/workflows/ci.yml`.
+
+**Real gaps found and fixed during verification, not silently accepted**: the `reporting` Postgres
+schema had never actually been migrated onto the live container (found and fixed); a severe Postgres
+connection slowdown traced to the same IPv6-loopback `localhost` DNS quirk Sprint 09 already
+documented (worked around via `PGCONNECT_TIMEOUT`, no code change); one dev-agent session (RS-002)
+was interrupted by a usage limit with its code already complete and correct on disk, verified and
+finished by the Tech Lead directly; RS-006's first attempt stalled with zero output and was killed
+and relaunched, succeeding cleanly on retry; a transient RS-008/RS-009 concurrent-landing race
+produced one flaky doc-sync test failure mid-flight, independently reconfirmed clean (36/36) from two
+separate fresh copies afterward. `docs/sprints/sprint-12.md` itself had briefly contained mismatched
+(`economic-service`) content early in this sprint's build window, due to a cross-agent write race —
+caught and corrected mid-sprint (see `docs/tickets/README.md`'s own incident note); this sprint's
+tickets were built from the Tech Lead's own restated task framing, cross-verified against
+`docs/product/backlog-reporting-service.md` directly, not from the momentarily-wrong file.
+
+**`RS-GAP` remains open by design, not silently worked around**: `reporting-service` has no
+`gateway-api` proxy route and (as of this sprint's own scope) was not yet confirmed wired into
+`infra/docker-compose.yml` — both are Sprint 14's `GW-018`/`INF-018` tickets, tracked separately.
+No deviations from this plan's own sequencing or scope.

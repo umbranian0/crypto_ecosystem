@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Naive-First Audit Report -- run {{ run.id }}</title>
+</head>
+<body>
+<h1>Naive-First Audit Report -- run {{ run.id }}</h1>
+
+<h2>1. Scope</h2>
+<table>
+    <tbody>
+        <tr><th>Run id</th><td>{{ run.id }}</td></tr>
+        <tr><th>Status</th><td>{{ run.status }}</td></tr>
+        <tr><th>Dataset</th><td>{{ run.dataset_id }}</td></tr>
+        <tr><th>Horizon</th><td>{{ run.horizon }}</td></tr>
+        <tr><th>Purge gap (hours)</th><td>{{ run.purge_gap_hours }}</td></tr>
+        <tr><th>Created at</th><td>{{ run.created_at }}</td></tr>
+        <tr><th>Completed at</th><td>{{ run.completed_at if run.completed_at else "--" }}</td></tr>
+        <tr><th>Failure reason</th><td>{{ run.failure_reason if run.failure_reason else "--" }}</td></tr>
+    </tbody>
+</table>
+
+{% if run.status != "completed" %}
+<h2>Status</h2>
+<p>This run has not completed (status: "{{ run.status }}"). No validation results are available yet
+for this report -- the sections below (leakage-protocol parameters, results table, verdict) are
+omitted rather than populated with fabricated or placeholder metrics. Re-generate this report once
+the run reaches "completed" status.</p>
+{% else %}
+
+<h2>2. Leakage-protocol parameters</h2>
+<p>This audit does not independently re-derive a leakage pass/fail checklist -- computing/validating
+the leakage-aware protocol is validation-service's/naive_first_engine's own bounded context. The
+protocol parameters this run actually used, verbatim from the run record:</p>
+<ul>
+    <li>Horizon: {{ run.horizon }}</li>
+    <li>Purge gap (hours): {{ run.purge_gap_hours }}</li>
+    <li>Splits evaluated: {{ splits | length }}</li>
+</ul>
+
+<h2>3. Results table (per split)</h2>
+{% if splits %}
+<table>
+    <thead>
+        <tr>
+            <th>Split</th>
+            <th>Train</th>
+            <th>Purge</th>
+            <th>Test</th>
+            <th>Model MAE</th>
+            <th>Model RMSE</th>
+            <th>Model sMAPE</th>
+            <th>Model MASE</th>
+            <th>Model DA</th>
+            <th>Model F1</th>
+            <th>Model OOS R2</th>
+            <th>Naive0 MAE</th>
+            <th>Naive0 RMSE</th>
+            <th>Naive0 sMAPE</th>
+            <th>Naive0 MASE</th>
+            <th>Naive0 DA</th>
+            <th>Naive0 F1</th>
+            <th>Naive0 OOS R2</th>
+            <th>DM statistic</th>
+            <th>DM p-value</th>
+            <th>DM verdict</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for split in splits %}
+        <tr>
+            <td>{{ split.split_index }}</td>
+            <td>{{ split.train_start }} -- {{ split.train_end }}</td>
+            <td>{{ split.purge_start }} -- {{ split.purge_end }}</td>
+            <td>{{ split.test_start }} -- {{ split.test_end }}</td>
+            <td>{{ split.model_mae }}</td>
+            <td>{{ split.model_rmse }}</td>
+            <td>{{ split.model_smape }}</td>
+            <td>{{ split.model_mase }}</td>
+            <td>{{ split.model_da }}</td>
+            <td>{{ split.model_f1 }}</td>
+            <td>{{ split.model_oos_r2 }}</td>
+            <td>{{ split.naive0_mae }}</td>
+            <td>{{ split.naive0_rmse }}</td>
+            <td>{{ split.naive0_smape }}</td>
+            <td>{{ split.naive0_mase }}</td>
+            <td>{{ split.naive0_da }}</td>
+            <td>{{ split.naive0_f1 }}</td>
+            <td>{{ split.naive0_oos_r2 }}</td>
+            <td>{{ split.dm_statistic }}</td>
+            <td>{{ split.dm_pvalue }}</td>
+            <td>{{ split.dm_verdict }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p>No per-split results are available for this run.</p>
+{% endif %}
+
+<h2>4. Verdict</h2>
+{% if splits %}
+{% set better_count = splits | selectattr("dm_verdict", "equalto", "better") | list | length %}
+{% set worse_count = splits | selectattr("dm_verdict", "equalto", "worse") | list | length %}
+{% set no_diff_count = splits | selectattr("dm_verdict", "equalto", "no significant difference") | list | length %}
+<p>Diebold-Mariano verdict count across {{ splits | length }} split(s), model vs. Naive0:
+{{ better_count }} better, {{ worse_count }} worse, {{ no_diff_count }} no significant difference
+(each split's verdict as returned by validation-service, unaltered here).</p>
+<p>Per-split outcome, stated plainly:</p>
+<ul>
+    {% for split in splits %}
+    <li>
+        Split {{ split.split_index }}:
+        {% if split.dm_verdict == "better" %}
+        the model beat naive on this split (DM verdict: "better").
+        {% elif split.dm_verdict == "worse" %}
+        the model did not beat naive on this split -- Naive0 performed significantly better (DM
+        verdict: "worse").
+        {% else %}
+        no significant difference between the model and Naive0 on this split (DM verdict:
+        "no significant difference").
+        {% endif %}
+    </li>
+    {% endfor %}
+</ul>
+<p>Overall:
+{% if better_count == 0 %}
+the model did not beat naive on any split evaluated in this run.
+{% elif worse_count == 0 and no_diff_count == 0 %}
+the model beat naive on every split evaluated in this run.
+{% else %}
+the model's performance against naive was mixed across splits (not stable) -- see the per-split
+outcomes above.
+{% endif %}
+</p>
+{% else %}
+<p>No per-split results are available, so no verdict can be stated for this run.</p>
+{% endif %}
+
+<h2>5. Statistical accuracy vs. economic value</h2>
+{% endif %}
+<p>This audit evaluates statistical forecast accuracy only. No transaction costs, slippage, execution, or position sizing were modeled unless the client separately commissioned the economic module (Subsystem 5). A model that beats naive statistically may still be unprofitable after costs, and vice versa is not implied either.</p>
+
+{% if run.status == "completed" %}
+<h2>6. Recommendations</h2>
+<ul>
+    <li>If any split's DM verdict is "worse" or "no significant difference," treat the naive
+    baseline as the safer default for that horizon rather than the audited model.</li>
+    <li>Re-audit after any change to the model, feature set, or preprocessing.</li>
+    <li>Commission the economic module (Subsystem 5) separately if profitability after costs is a
+    question this audit did not answer.</li>
+</ul>
+{% endif %}
+</body>
+</html>

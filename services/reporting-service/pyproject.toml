@@ -1,0 +1,38 @@
+[project]
+name = "reporting-service"
+version = "0.1.0"
+description = "Renders audit reports from validation-service's run/split results and stores them (reporting.* Postgres schema). Triggered by validation-service's run.completed Redis Streams event, or via a manual POST /reports/generate endpoint."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "pydantic>=2.6",
+    "sqlalchemy>=2.0",
+    "alembic>=1.13",
+    "redis>=5.0",
+    "psycopg[binary]>=3.1",
+    "httpx>=0.27",
+    "jinja2>=3.1",
+    "naive_first_common",
+]
+
+[tool.uv.sources]
+naive_first_common = { path = "../../libs/common", editable = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/app"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[dependency-groups]
+dev = [
+    "pytest>=7.4",
+    "naive_first_common",
+    "pytest-cov>=7.1.0",
+]
