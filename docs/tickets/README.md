@@ -1,6 +1,6 @@
 # Ticket index
 
-Nine sections are tracked here, kept as clearly separated: `libs/naive_first_engine` (NFE-*, Sprint 01+02, done), `services/validation-service` (VS-*, Sprint 03+04+06+09+10), `libs/common` (LC-*, Sprint 04+10; ARCH-*, Sprint 06+10), `services/gateway-api` (GW-*, Sprint 05+06), `infra` (INF-*, Sprint 06+07), the cross-cutting Operability backlog (OPS-*, Sprint 08+09), `services/ingestion-service` (INGEST-*, Sprint 10), and `services/dashboard-web` (DASH-*, Sprint 11). Sprint 06 (docs/sprints/sprint-06.md) spans ARCH-*/INF-*/two VS-*/one GW-* tickets in one debt sprint — see the "Sprint 06" subsections under each relevant module below. Sprint 10 (docs/sprints/sprint-10.md) closes four longstanding pure-documentation debt items (LC-005, ARCH-007, ARCH-008, VS-016) plus one retroactive tracking ticket (INGEST-001) — see the "Sprint 10" subsections under each relevant module below.
+Eleven sections are tracked here, kept as clearly separated: `libs/naive_first_engine` (NFE-*, Sprint 01+02, done), `services/validation-service` (VS-*, Sprint 03+04+06+09+10), `libs/common` (LC-*, Sprint 04+10; ARCH-*, Sprint 06+10), `services/gateway-api` (GW-*, Sprint 05+06), `infra` (INF-*, Sprint 06+07), the cross-cutting Operability backlog (OPS-*, Sprint 08+09), `services/ingestion-service` (INGEST-*, Sprint 10), `services/dashboard-web` (DASH-*, Sprint 11), `services/reporting-service` (RS-*, Sprint 12), and `services/economic-service` (ECON-*, Sprint 13 — a disclosed, user-authorized override of trigger #11's ethical/business-honesty boundary, scaffolding-only, see that section below for the full framing). Sprint 06 (docs/sprints/sprint-06.md) spans ARCH-*/INF-*/two VS-*/one GW-* tickets in one debt sprint — see the "Sprint 06" subsections under each relevant module below. Sprint 10 (docs/sprints/sprint-10.md) closes four longstanding pure-documentation debt items (LC-005, ARCH-007, ARCH-008, VS-016) plus one retroactive tracking ticket (INGEST-001) — see the "Sprint 10" subsections under each relevant module below. **Note on the Sprint 12/13 file-content incident (resolved)**: due to a race between two concurrent background agent sessions writing to this repo directory at nearly the same time (Sprint 12's `reporting-service` PM output and Sprint 13's `economic-service` PM output both originally arrived from their respective agents under the same working filename before being placed/renamed), `docs/sprints/sprint-12.md`'s committed content ended up containing `services/economic-service` (ECON-*) planning text instead of `services/reporting-service` content, despite its commit message correctly reading "Sequence Sprint 12: services/reporting-service PoC." The Sprint 12 Tech Lead caught the mismatch independently, correctly did not treat it as authorization to build `economic-service` under Sprint 12, and worked from `docs/product/backlog-reporting-service.md` and its own task instructions directly instead. The file has since been corrected in place, restoring the real `reporting-service` sprint content (recovered from this session's own prior read of the source, not from git history, since the wrong content had already been committed). `docs/sprints/sprint-13.md` (the correct, intact `economic-service` sprint file, including its Outcome section) was unaffected throughout.
 
 # libs/naive_first_engine (NFE-*)
 
@@ -548,4 +548,76 @@ client-side substitute, confirmed via `grep` across `src/app/routers/` showing n
 `GW-017` (Locust) stays out of this sprint per its own scheduling decision. **Follow-up for the Product
 Owner, not this sprint**: author and approve `VS-0NN` (validation-service tenant-scoped `GET /runs`
 list) and `GW-016` (matching gateway-api proxy route) so a future sprint can unblock `DASH-005`.
+
+# services/reporting-service (RS-*)
+
+Source: docs/product/backlog-reporting-service.md, docs/sprints/sprint-12.md. Sprint goal: a `"validation_audit"` HTML
+report can be generated for a validation-service run, either synchronously via a manual endpoint or
+automatically on that run's `run.completed` Redis Streams event, and retrieved afterward through a
+tenant-isolated endpoint. Deliberate, disclosed override of trigger #7 (implementation-plan.md
+section 6) -- no pilot audit request exists yet, same disclosed-override precedent as `gateway-api`
+(trigger #5) and `dashboard-web` (trigger #8).
+
+## Sprint 12
+
+| Ticket | Story | Depends on | Status |
+|---|---|---|---|
+| [RS-001](RS-001.md) | Service scaffolding | none | done |
+| [RS-002](RS-002.md) | `reporting` Postgres schema + Repository pattern with RLS | RS-001 | todo |
+| [RS-003](RS-003.md) | Report Factory + "validation audit" renderer | RS-001 | todo |
+| [RS-004](RS-004.md) | Manual `POST /reports/generate` endpoint | RS-002, RS-003 | todo |
+| [RS-005](RS-005.md) | `GET /reports/{id}` retrieval endpoint | RS-002 | todo |
+| [RS-006](RS-006.md) | Redis Streams subscriber for `run.completed` | RS-002, RS-003, RS-004 | todo |
+| [RS-007](RS-007.md) | Health check endpoint | RS-002 | todo |
+| [RS-008](RS-008.md) | OpenAPI contract / README doc-sync check | RS-004, RS-005 | todo |
+| [RS-009](RS-009.md) | CI wiring | RS-001 through RS-006 | todo |
+
+## Execution / parallelization plan (Sprint 12)
+
+- **Round 0 (Tech Lead, direct)**: RS-001 -- pure scaffolding, done directly rather than delegated,
+  same precedent as NFE-001/VS-001/LC-001/GW-001/DASH-001.
+- **Round 1 (parallel)**: RS-002 (`repositories/`+`models.py`+`migrations/`, security-sensitive --
+  RLS cross-tenant proof must run as a real non-superuser role) and RS-003 (`renderers/`+
+  `templates/`, positioning-sensitive -- DM verdicts pass through verbatim, disclaimer mandatory) --
+  disjoint files, both depend on RS-001 only.
+- **Round 2**: RS-004 (manual generate endpoint, depends on RS-002 AND RS-003 both actually done) --
+  its own `src/app/generation.py` extracts the fetch-render-persist sequence into a reusable function
+  RS-006 must later import, not duplicate.
+- **Round 3 (parallel)**: RS-005 (`GET /reports/{id}`, depends on RS-002 only, deliberately its own
+  router file `report_retrieval.py` disjoint from RS-004's `report_generation.py` to avoid file
+  overlap, mirroring VS-007/VS-008's `runs.py`/`splits.py` split) -- run in parallel with nothing
+  else at this point since RS-004 must land first for RS-006's own dependency; RS-005 itself could
+  have run alongside RS-004 in Round 2 (file-disjoint), scheduled in its own round here for clarity.
+- **Round 4**: RS-006 (Redis subscriber, depends on RS-002, RS-003, RS-004 -- specifically reuses
+  RS-004's `generate_validation_audit_report` function, flagged for review scrutiny if a duplicate
+  sequence appears).
+- **Round 5 (Should, tail work)**: RS-007 (health check, depends on RS-002), RS-008 (doc-sync check,
+  depends on RS-004+RS-005), RS-009 (CI wiring, depends on RS-001 through RS-006, runs last).
+
+**Sprint 12 outcome**: (Tech Lead fills in after verification -- see this sprint's own final report.)
+
+# services/economic-service (ECON-*)
+
+Source: `docs/sprints/sprint-13.md`, `docs/product/backlog-economic-service.md`. **This is not a routine trigger override.** Trigger #11 (implementation-plan.md section 6) exists "per the ethical boundary in docs section 2.7" — CLAUDE.md's own binding rule: "only wire up for a model that already beats naive in `validation-service`; never claim profitability before that." That trigger has **not** fired: no model has ever beaten Naive0 on this platform, and `VS-017` (the precondition for a real client-model DM verdict to even exist) is itself deferred and unbuilt in `validation-service`. Sprint 13 is a disclosed, user-authorized override building **scaffolding only** — an inputs-only Postgres schema, typed contracts, a mock-only upstream integration, and a structural, code-enforced eligibility gate (`ECON-005`) that makes it provably impossible for the shipped service to return a real profitability number today, not just documented as forbidden.
+
+## Sprint 13
+
+| Ticket | Story | Depends on | Status |
+|---|---|---|---|
+| [ECON-001](ECON-001.md) | Service scaffolding | none | done |
+| [ECON-002](ECON-002.md) | `economic.*` Postgres schema + Repository pattern for cost/slippage *inputs* (never a profitability-output table) | ECON-001 | done |
+| [ECON-003](ECON-003.md) | Contracts: `SimulationRequest` + two structurally disjoint response models (`EligibleSimulationResult`, `NotEligibleForSimulation`) | ECON-001 | done |
+| [ECON-004](ECON-004.md) | Mocked-upstream-only integration (`MockValidationResultClient`, hard architectural rule, never a real `httpx` call) | ECON-001, ECON-003 | done |
+| [ECON-005](ECON-005.md) | The structural eligibility gate (`POST /simulations`, `check_economic_eligibility`) — this sprint's actual deliverable | ECON-002, ECON-003, ECON-004 | done |
+| [ECON-006](ECON-006.md) | No profitability language outside the gated computation path (README rewrite, grep-style doc-sync check, OpenAPI eligibility-precondition text) | ECON-001, ECON-005 | done |
+
+## Execution / parallelization plan (Sprint 13)
+
+- **Round 0 (Tech Lead, direct)**: ECON-001 — pure scaffolding, done directly rather than delegated, same precedent as NFE-001/VS-001/LC-001/GW-001/DASH-001/RS-001.
+- **Round 1 (parallel)**: ECON-002 (`economic.*` schema/repositories, security- and ethics-sensitive — the inputs-only design decision) and ECON-003 (contracts, load-bearing for ECON-005's disjoint-response-shape requirement) — disjoint files, both depend on ECON-001 only, per sprint-13.md's own sequencing decision.
+- **Round 2**: ECON-004 (mock-only upstream client, depends on ECON-001 and ECON-003 — needs `UpstreamValidationResult`'s exact shape to mock against; sequenced after both Round 1 branches land for simplicity, though it only strictly needs ECON-003).
+- **Round 3**: ECON-005 (the structural eligibility gate, depends on ECON-002, ECON-003, ECON-004 — the first story needing all three prior branches complete). Given this repo's "extra scrutiny" treatment (same category as GW-006/GW-007, DASH-002), plus additional scrutiny beyond those per sprint-13.md's own instruction, since a mistake here is a business-honesty failure, not a bug.
+- **Round 4**: ECON-006 (doc-sync/positioning polish, depends on ECON-001 and ECON-005 — its grep check needs ECON-005's guard/route code to exist to scan). Runs last.
+
+**Sprint 13 outcome**: all 6 in-scope Must stories done. `.venv\Scripts\python.exe -m pytest -q` in `services/economic-service` passes **50/50**, 0 failed (2 ECON-001 smoke tests, 8 ECON-002 model/repository/no-profitability-column tests, 8 ECON-003 contract tests, 6 ECON-004 upstream-client tests, 5 ECON-005 eligibility-gate tests including all four required negative/positive-control tests plus the guard structural check, and ECON-006's doc-sync-check test suite — final count independently re-confirmed by the Tech Lead multiple times throughout the sprint, not taken on any single dev agent's report alone). Every ticket's Review acceptance criteria were personally verified by the Tech Lead reading the actual diff/files, not merely trusting a green checkmark — ECON-002's no-profitability-column-name regression guard and RLS authoring were read directly; ECON-004 was found by the Tech Lead to have two real test-authoring bugs (a false-positive AST-based "only implementer" check counting the Protocol interface's own stub method, and a false-positive raw-substring `_URL` check matching the module's own docstring prose) after its dev agent was interrupted by a session usage limit before self-verifying — both fixed by the Tech Lead directly and re-confirmed against a fresh grep of the real `src/app/` tree; ECON-005 (this sprint's highest-stakes ticket) received the sprint's mandated extra scrutiny — the Tech Lead personally re-ran all four required tests individually plus the guard structural check (all pass), read every route handler in `src/app/routers/` directly (only `create_simulation` exists; it never calls `compute_economic_simulation` directly), read `dependencies/upstream.py` directly (unconditional, branch-free `MockValidationResultClient` return) and grepped the whole `src/app/` tree for `httpx`/`"live"`/`os.environ`/`_URL` (zero real hits outside docstring prose and the guard's own comparison), and re-read `models.py`/the 0001 migration directly (three tables, zero profitability-output-shaped column names); ECON-006's drift-detection demonstration was personally reproduced end-to-end by the Tech Lead (inject a real violation → confirm the check fails with exit 1 and the exact expected hits → revert via a pre-injection backup → confirm `git diff` shows zero residual change → confirm the check and full suite pass clean again). Zero changes to any file under `libs/naive_first_engine`, `libs/common`, `services/validation-service`, `services/gateway-api`, `services/ingestion-service`, `services/reporting-service`, or `services/dashboard-web` — confirmed via `git status` scoped to those paths both before and after this sprint (a concurrent, unrelated `services/reporting-service` (RS-*) session was independently active on this same repo during this sprint; confirmed no cross-contamination into `services/economic-service`'s files by direct inspection). See `docs/sprints/sprint-13.md`'s own Outcome section for the full four-part non-negotiable verification writeup.
 
