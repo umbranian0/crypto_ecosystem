@@ -98,6 +98,14 @@ class _FakeValidationRunRepository:
             failure_reason=failure_reason,
         )
 
+    def list_runs(self, tenant_id, limit, offset) -> list[RunRecord]:
+        matching = [r for (t, _), r in self._runs.items() if t == tenant_id]
+        matching.sort(key=lambda r: r.created_at, reverse=True)
+        return matching[offset : offset + limit]
+
+    def count_runs(self, tenant_id) -> int:
+        return sum(1 for (t, _) in self._runs if t == tenant_id)
+
 
 class _FakeSplitResultRepository:
     """Minimal in-memory implementation proving the interface is implementable."""

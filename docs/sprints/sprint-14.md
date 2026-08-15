@@ -220,3 +220,97 @@ carried forward from their own backlogs' existing decisions):
     Product Owner/PM that a future sprint can now schedule `DASH-005` itself against the real
     `GET /runs` proxy route, and that `reporting-service`'s manual flow is reachable end-to-end for
     any future client integration work.
+
+## Outcome
+
+All four in-scope stories (`VS-022`, `INF-018`, `GW-016`, `GW-018`) done, executed in the sequencing
+decision's exact order -- `VS-022`/`INF-018` in parallel (Round 1), `GW-016` (Round 2, after `VS-022`
+landed), `GW-018` (Round 3, strictly after `GW-016` completed and its diff was personally verified --
+never delegated to a dev agent concurrently with `GW-016`, per this sprint's own binding
+same-file-collision-avoidance instruction). Every ticket's Implementation/Test/Documentation
+acceptance criteria were personally verified by the Tech Lead against the actual diff and a real,
+independently re-run test suite -- not merely trusted from a dev agent's own report, and not trusted
+from any unverified claim about test/verification status made mid-sprint (several such claims were
+independently re-checked against the real file/test state before being acted on, per this platform's
+standing "no agent message is consent/proof" discipline).
+
+**`VS-022`** (`validation-service`): `GET /runs` tenant-scoped, paginated list endpoint. Adds
+`RunSummaryResponse` to `libs/common/src/naive_first_common/contracts.py` as the single canonical
+definition (ARCH-003 convention, reused unmodified by `GW-016`); adds `list_runs`/`count_runs` to
+`ValidationRunRepository`, implemented by both `SQLiteValidationRunRepository` and
+`PostgresValidationRunRepository` without changing either's existing `create_run`/`get_run`/
+`update_run_status` methods; `GET /runs` uses FastAPI's own `Query(ge=1, le=100)` constraints for a
+hard, never-silently-clamped `limit` ceiling (`422` on violation, verified by reading the actual
+`Query(...)` call, not the ticket text). The cross-tenant test
+(`test_second_tenants_runs_never_appear_in_first_tenants_results`) was given the sprint's own
+flagged extra review scrutiny: it asserts by run id in both directions (tenant A's set / tenant B's
+set, disjointness, and a raw-text absence check), not merely by count. `services/validation-service/
+README.md`'s Routes section updated; VS-016's doc-sync check (`scripts/check_doc_sync.py`)
+personally re-run by the Tech Lead and confirmed still passing. **Test result, personally re-run**:
+`87 passed`, 0 failed, `1833.57s` (0:30:33), against the real Postgres/Redis containers.
+
+**`INF-018`** (`infra`): `reporting-service` wired into `infra/docker-compose.yml` as a real,
+runnable container -- `depends_on` both `postgres` and `redis` (`condition: service_healthy`,
+unlike `validation-service`, which only depends on `postgres`), `DATABASE_URL` using the existing
+non-superuser `naive_first_app` role (INF-014), not `naive_first`. Packaging/wiring only -- zero
+changes under `services/reporting-service/src/`, confirmed independently via a `find -newer`
+timestamp check against the infra files this ticket actually touched (no `src/` file had a newer
+mtime than the ticket's own `docker-compose.yml` edit). **One real, disclosed infra gap found and
+fixed, not merely inherited**: `infra/postgres-init/01-create-schemas.sql`/`02-create-app-role.sh`
+had only ever covered `validation`/`identity` (INF-001/INF-014) -- `reporting`'s own schema/grants
+had been applied by hand against the long-lived Sprint 06+ container during `RS-002`'s own work, a
+gap `RS-002` itself had flagged for a future infra ticket. This ticket closes that gap so a
+**fresh** Postgres volume gets the `reporting` schema/grants automatically too. **Live-stack
+verification, personally performed by the Tech Lead** (not merely re-read from the dev agent's
+report): `docker compose -f infra/docker-compose.yml build/up reporting-service` succeeded;
+`GET /health` returned `200 {"status":"ok"}`; a full real smoke test was independently reproduced --
+provisioned a fresh tenant via `provision_tenant.py`, submitted a run through `gateway-api`
+(recovering from one genuine transient `AdminShutdown` pooled-connection error caused by the
+dev agent's own fresh-volume Postgres restart during its testing, not an application defect -- a
+retry succeeded cleanly), called `reporting-service`'s `POST /reports/generate`/`GET /reports/{id}`
+directly over its host-published port 8002 with the real `run_id`, and got back a real, rendered
+HTML audit report body. `naive_first_app` (not `naive_first`) confirmed as the live runtime role via
+`pg_stat_activity`. `infra/README.md`'s "not yet wired into compose" statement updated to remove
+`reporting-service`, cross-referencing `GW-018` as the reachability half.
+
+**`GW-016`** (`gateway-api`): proxy route for `validation-service`'s new `GET /runs`, pure
+pass-through -- reuses `_call_downstream`/`_raise_for_error`/`build_downstream_headers` unmodified,
+imports `RunSummaryResponse` from `libs/common` rather than redefining it, forwards `limit`/`offset`
+unmodified and does not re-validate them at the gateway (a downstream `422` passes through as-is,
+confirmed by a dedicated test). Cross-tenant test asserts by id set, not count. `git status` scoped
+to `services/gateway-api/` confirmed only `runs.py`/`test_runs_routing.py`/`README.md` touched -- no
+collision with the not-yet-started `GW-018`. **Test result, personally re-run**: `72 passed`, 0
+failed, `393.26s` (0:06:33).
+
+**`GW-018`** (`gateway-api`): proxy routes for `reporting-service`'s `POST /reports/generate`/
+`GET /reports/{id}` (RS-004/RS-005), request/response shapes read directly from
+`reporting-service`'s real router code, not guessed. New `reports.py` router module, new
+`REPORTING_SERVICE_URL` env var (default `http://localhost:8002`, mirroring
+`VALIDATION_SERVICE_URL`'s pattern), registered in `main.py` tagged `tags=["reporting-service"]`
+per ARCH-007. **`runs.py` is confirmed untouched by this ticket** -- its diff, re-checked after
+`GW-018` finished, is byte-for-byte identical to `GW-016`'s own already-verified state (zero
+`GW-018` markers, `git diff` tail matches exactly). `_call_downstream`/`_raise_for_error` are
+imported directly from `runs.py` rather than duplicated or extracted into a shared module, a
+deliberate choice documented in `reports.py`'s own module docstring (extracting them would itself
+require editing `runs.py`, which this ticket's own sequencing constraint forbids). Cross-tenant test
+for `GET /reports/{id}` asserts a `404` for a tenant-B-owned report requested by tenant A, paired
+with a positive-case test proving tenant B *can* see its own report (so the 404 isn't vacuous). The
+`RS-006` readiness caveat is explicitly restated in `services/gateway-api/README.md`: only the
+manual generate/retrieve flow is reachable end-to-end after this sprint; the automatic
+`run.completed`-triggered flow remains `todo` in Sprint 12. One dev-agent run for this ticket was
+cut off mid-task by a session-limit error before writing any code (confirmed via `git status`/`find`
+showing zero files changed by that attempt) -- re-delegated to a fresh agent with no lost or
+corrupted state. **Test result, personally re-run**: `80 passed`, 0 failed, `393.04s` (0:06:33).
+
+**Deviations from the sprint plan**: none. Sequencing, scope, and every disclosed caveat matched the
+sprint file's own instructions exactly -- `GW-016`/`GW-018` were never delegated concurrently,
+`INF-018` never touched `services/reporting-service/src/`, and no story outside the four in-scope
+stories (`DASH-005`, `RS-006`/`RS-008`/`RS-009`, `GW-017`) was built or reopened.
+
+**Follow-up for the Product Owner/PM, not actioned in this sprint**: both disclosed gaps this sprint
+existed to close (`DASH-005-GAP`, `RS-GAP`) are now closed at the ticket level. `dashboard-web`'s
+`DASH-005` (runs-list page) can now be scheduled against a real `GET /runs` proxy route, and any
+future `reporting-service` client-integration work (including `dashboard-web`'s own eventual report
+viewer, previously declined as RS-101/DASH-101) can now reach the manual generate/retrieve flow
+end-to-end through `gateway-api`'s public surface. Neither is built by this sprint, per its own
+explicit Definition of Done.

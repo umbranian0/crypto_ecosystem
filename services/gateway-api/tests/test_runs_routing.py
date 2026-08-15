@@ -1,5 +1,6 @@
 """GW-008: `app.routers.runs` (POST /runs, GET /runs/{id}, GET /runs/{id}/
-splits).
+splits). GW-016: `GET /runs` (list, proxying VS-022's tenant-scoped list
+endpoint).
 
 Fakes `validation-service` with `httpx.MockTransport` (ticket Test AC1) whose
 handler mimics the real response shapes read directly from
@@ -102,8 +103,9 @@ _SEED_SPLITS: dict[str, list[dict]] = {RUN_OWNED_BY_A: [_SPLIT_RECORD]}
 class FakeValidationService:
     """Records every request it handles (ticket Test AC3: proving the
     outbound call actually carries `X-Tenant-Id`), and mimics
-    validation-service's real create/get/get-splits behavior, including its
-    404-collapses-both-cases tenant-ownership rule (VS-007/VS-008).
+    validation-service's real create/get/get-splits/list behavior, including
+    its 404-collapses-both-cases tenant-ownership rule (VS-007/VS-008) and
+    VS-022's tenant-scoped `GET /runs` list.
     """
 
     seen_requests: list[httpx.Request]
@@ -135,6 +137,55 @@ class FakeValidationService:
             }
             self.created_runs[new_id] = record
             return httpx.Response(201, json={"id": new_id, "status": "completed"})
+
+        if request.method == "GET" and path == "/runs":
+            # Mimics VS-022's own `Query(ge=1, le=100)` 422 for an
+            # out-of-range `limit`, forwarded unmodified by GW-016.
+            raw_limit = request.url.params.get("limit")
+            if raw_limit is not None and int(raw_limit) < 1:
+                return httpx.Response(
+                    422,
+                    json={
+                        "detail": [
+                            {
+                                "type": "greater_than_equal",
+                                "loc": ["query", "limit"],
+                                "msg": "Input should be greater than or equal to 1",
+                            }
+                        ]
+                    },
+                )
+
+            limit = int(raw_limit) if raw_limit is not None else 20
+            offset = int(request.url.params.get("offset", 0))
+
+            tenant_runs = [
+                run
+                for run in {**_SEED_RUNS, **self.created_runs}.values()
+                if run["tenant_id"] == tenant_id
+            ]
+            tenant_runs.sort(key=lambda run: run["created_at"], reverse=True)
+            page = tenant_runs[offset : offset + limit]
+
+            return httpx.Response(
+                200,
+                json={
+                    "items": [
+                        {
+                            "id": run["id"],
+                            "dataset_id": run["dataset_id"],
+                            "horizon": run["horizon"],
+                            "status": run["status"],
+                            "created_at": run["created_at"],
+                            "completed_at": run["completed_at"],
+                        }
+                        for run in page
+                    ],
+                    "limit": limit,
+                    "offset": offset,
+                    "total": len(tenant_runs),
+                },
+            )
 
         if request.method == "GET" and path.endswith("/splits"):
             run_id = path.removeprefix("/runs/").removesuffix("/splits")
@@ -312,3 +363,65 @@ def test_missing_auth_returns_401_before_any_downstream_call(
 
     assert response.status_code == 401
     assert fake_validation_service.seen_requests == []
+
+
+# --- GW-016: GET /runs (list) ---
+
+
+def test_get_runs_forwards_and_returns_response_shape(client: TestClient) -> None:
+    response = client.get("/runs", headers={"Authorization": f"Bearer {RAW_KEY_A}"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert set(body.keys()) == {"items", "limit", "offset", "total"}
+    assert body["limit"] == 20
+    assert body["offset"] == 0
+    assert body["total"] == 1
+    assert len(body["items"]) == 1
+    assert set(body["items"][0].keys()) == {
+        "id",
+        "dataset_id",
+        "horizon",
+        "status",
+        "created_at",
+        "completed_at",
+    }
+    assert body["items"][0]["id"] == RUN_OWNED_BY_A
+
+
+def test_get_runs_forwards_limit_and_offset_unmodified(
+    client: TestClient, fake_validation_service: FakeValidationService
+) -> None:
+    response = client.get(
+        "/runs?limit=5&offset=10", headers={"Authorization": f"Bearer {RAW_KEY_A}"}
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["limit"] == 5
+    assert body["offset"] == 10
+
+    seen = fake_validation_service.seen_requests[-1]
+    assert seen.url.params["limit"] == "5"
+    assert seen.url.params["offset"] == "10"
+
+
+def test_cross_tenant_get_runs_never_returns_other_tenants_run(client: TestClient) -> None:
+    """Non-tautological cross-tenant proof (ticket Test AC): tenant A's
+    list never contains tenant B's seeded run, asserted by id -- not just a
+    count check.
+    """
+    response = client.get("/runs", headers={"Authorization": f"Bearer {RAW_KEY_A}"})
+
+    assert response.status_code == 200
+    ids = {item["id"] for item in response.json()["items"]}
+    assert ids == {RUN_OWNED_BY_A}
+    assert RUN_OWNED_BY_B not in ids
+
+
+def test_get_runs_downstream_422_passes_through_unmodified(client: TestClient) -> None:
+    response = client.get(
+        "/runs?limit=0", headers={"Authorization": f"Bearer {RAW_KEY_A}"}
+    )
+
+    assert response.status_code == 422

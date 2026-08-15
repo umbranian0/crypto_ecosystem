@@ -342,3 +342,78 @@ def test_alembic_upgrade_head_lands_alembic_version_in_validation_schema() -> No
     inspector = inspect(create_engine(ENGINE_URL))
     run_columns = {c["name"] for c in inspector.get_columns("runs", schema="validation")}
     assert {"id", "tenant_id", "dataset_id"}.issubset(run_columns)
+
+
+def test_list_runs_orders_by_created_at_descending(run_repo) -> None:
+    tenant = _unique_tenant("tenant")
+    run_1 = run_repo.create_run(
+        tenant_id=tenant, dataset_id="dataset-1", horizon=1, purge_gap_hours=4.0, split_config=SPLIT_CONFIG
+    )
+    run_2 = run_repo.create_run(
+        tenant_id=tenant, dataset_id="dataset-2", horizon=1, purge_gap_hours=4.0, split_config=SPLIT_CONFIG
+    )
+    run_3 = run_repo.create_run(
+        tenant_id=tenant, dataset_id="dataset-3", horizon=1, purge_gap_hours=4.0, split_config=SPLIT_CONFIG
+    )
+
+    listed = run_repo.list_runs(tenant, limit=20, offset=0)
+
+    assert [r.id for r in listed] == [run_3.id, run_2.id, run_1.id]
+
+
+def test_list_runs_paginates_with_limit_and_offset(run_repo) -> None:
+    tenant = _unique_tenant("tenant")
+    created = [
+        run_repo.create_run(
+            tenant_id=tenant,
+            dataset_id=f"dataset-{i}",
+            horizon=1,
+            purge_gap_hours=4.0,
+            split_config=SPLIT_CONFIG,
+        )
+        for i in range(5)
+    ]
+    expected_desc_order = list(reversed([r.id for r in created]))
+
+    page_1 = run_repo.list_runs(tenant, limit=2, offset=0)
+    page_2 = run_repo.list_runs(tenant, limit=2, offset=2)
+    page_3 = run_repo.list_runs(tenant, limit=2, offset=4)
+
+    assert [r.id for r in page_1] == expected_desc_order[0:2]
+    assert [r.id for r in page_2] == expected_desc_order[2:4]
+    assert [r.id for r in page_3] == expected_desc_order[4:5]
+
+
+def test_count_runs_returns_total_unpaginated_count(run_repo) -> None:
+    tenant = _unique_tenant("tenant")
+    for i in range(4):
+        run_repo.create_run(
+            tenant_id=tenant,
+            dataset_id=f"dataset-{i}",
+            horizon=1,
+            purge_gap_hours=4.0,
+            split_config=SPLIT_CONFIG,
+        )
+
+    assert run_repo.count_runs(tenant) == 4
+    assert run_repo.count_runs(tenant) == len(run_repo.list_runs(tenant, limit=100, offset=0))
+
+
+def test_list_runs_tenant_isolation_never_leaks_across_tenants(run_repo) -> None:
+    tenant_a = _unique_tenant("tenant-a")
+    tenant_b = _unique_tenant("tenant-b")
+
+    run_a = run_repo.create_run(
+        tenant_id=tenant_a, dataset_id="dataset-a", horizon=1, purge_gap_hours=4.0, split_config=SPLIT_CONFIG
+    )
+    run_b = run_repo.create_run(
+        tenant_id=tenant_b, dataset_id="dataset-b", horizon=1, purge_gap_hours=4.0, split_config=SPLIT_CONFIG
+    )
+
+    tenant_a_ids = {r.id for r in run_repo.list_runs(tenant_a, limit=20, offset=0)}
+    tenant_b_ids = {r.id for r in run_repo.list_runs(tenant_b, limit=20, offset=0)}
+
+    assert tenant_a_ids == {run_a.id}
+    assert tenant_b_ids == {run_b.id}
+    assert run_a.id not in tenant_b_ids
+    assert run_b.id not in tenant_a_ids

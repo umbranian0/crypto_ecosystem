@@ -62,6 +62,22 @@ to a different tenant" -- this handler translates `None` into a single `404`
 for both cases, with no branch that would distinguish them (a `403`, or any
 differently-shaped response for the cross-tenant case, would itself leak that
 the run exists).
+
+`GET /runs` (VS-022): tenant-scoped, paginated list of this tenant's runs,
+closing `DASH-005-GAP` so `dashboard-web`'s runs-list page has something to
+call. Tenant resolution is the same `Depends(get_tenant_context)` seam as the
+other two handlers -- no bypass, no query-param tenant id. `limit`/`offset`
+are validated by FastAPI's own `Query(...)` constraints (`ge=1, le=100` for
+`limit`, `ge=0` for `offset`), so an out-of-range value never reaches this
+function body -- it is rejected as a `422` before `ValidationRunRepository`
+is touched at all, the same "validate before touching the repository"
+precedent `POST /runs`' field constraints already established.
+`ValidationRunRepository.list_runs` (not this handler) is responsible for the
+`created_at` descending ordering, mirroring `get_splits`'s
+"ordering is the repository's job" precedent (VS-003 Design section). An
+empty tenant returns `200` with an empty `items` list, never a `404` -- an
+empty list is a valid, successful answer to "what are this tenant's runs",
+not an error.
 """
 
 from __future__ import annotations
@@ -69,10 +85,16 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 
 from naive_first_common import TenantContext, get_tenant_context
-from naive_first_common.contracts import RunDetailResponse, RunRequest, RunResponse
+from naive_first_common.contracts import (
+    RunDetailResponse,
+    RunRequest,
+    RunResponse,
+    RunSummaryResponse,
+)
 from naive_first_engine.protocol import (
     NAIVE0_KEY,
     NAIVE_LAST_KEY,
@@ -89,6 +111,23 @@ from app.dependencies.repositories import (
 from app.repositories.interfaces import SplitResultRecord
 
 router = APIRouter()
+
+
+class RunListResponse(BaseModel):
+    """Response envelope for `GET /runs` (VS-022 Design section): `items` is
+    the current page (`RunSummaryResponse`, imported from
+    `naive_first_common.contracts`, never redefined here); `limit`/`offset`
+    echo back the resolved query params; `total` is a real, unpaginated count
+    of this tenant's runs (`ValidationRunRepository.count_runs`), not omitted.
+    This envelope shape is local to this router, not a shared contract --
+    unlike `RunSummaryResponse`, GW-016's own proxy endpoint defines its own
+    envelope if/when it needs one.
+    """
+
+    items: list[RunSummaryResponse]
+    limit: int
+    offset: int
+    total: int
 
 
 @router.post("/runs", response_model=RunResponse, status_code=201)
@@ -191,6 +230,34 @@ def create_run(
     )
 
     return RunResponse(id=run.id, status="completed")
+
+
+@router.get("/runs", response_model=RunListResponse)
+def list_runs(
+    run_repository: ValidationRunRepositoryDep,
+    tenant: TenantContext = Depends(get_tenant_context),
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+) -> RunListResponse:
+    runs = run_repository.list_runs(tenant.tenant_id, limit, offset)
+    total = run_repository.count_runs(tenant.tenant_id)
+
+    return RunListResponse(
+        items=[
+            RunSummaryResponse(
+                id=run.id,
+                dataset_id=run.dataset_id,
+                horizon=run.horizon,
+                status=run.status,
+                created_at=run.created_at,
+                completed_at=run.completed_at,
+            )
+            for run in runs
+        ],
+        limit=limit,
+        offset=offset,
+        total=total,
+    )
 
 
 @router.get("/runs/{run_id}", response_model=RunDetailResponse)

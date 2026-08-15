@@ -35,7 +35,7 @@ from datetime import datetime
 from uuid import uuid4
 
 from naive_first_common.db import build_engine
-from sqlalchemy import Engine, select, update
+from sqlalchemy import Engine, func, select, update
 from sqlalchemy.orm import Session
 
 from app.models import Base, Run, SplitResult
@@ -186,6 +186,27 @@ class SQLiteValidationRunRepository:
                 .values(status=status, completed_at=completed_at, failure_reason=failure_reason)
             )
             session.commit()
+
+    def list_runs(self, tenant_id: str, limit: int, offset: int) -> list[RunRecord]:
+        with Session(self._engine) as session:
+            rows = (
+                session.execute(
+                    select(Run)
+                    .where(Run.tenant_id == tenant_id)
+                    .order_by(Run.created_at.desc())
+                    .limit(limit)
+                    .offset(offset)
+                )
+                .scalars()
+                .all()
+            )
+            return [_run_to_record(row) for row in rows]
+
+    def count_runs(self, tenant_id: str) -> int:
+        with Session(self._engine) as session:
+            return session.execute(
+                select(func.count()).select_from(Run).where(Run.tenant_id == tenant_id)
+            ).scalar_one()
 
 
 class SQLiteSplitResultRepository:

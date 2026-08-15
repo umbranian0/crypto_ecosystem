@@ -14,7 +14,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from app.dependencies.repositories import HealthCheckEngineDep
-from app.routers import runs
+from app.routers import reports, runs
 
 app = FastAPI(
     title="gateway-api",
@@ -23,6 +23,7 @@ app = FastAPI(
 )
 
 app.include_router(runs.router, tags=["validation-service"])
+app.include_router(reports.router, tags=["reporting-service"])
 
 
 @app.get("/health", response_model=None)

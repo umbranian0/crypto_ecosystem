@@ -28,11 +28,23 @@ Ordering decision (VS-003 ticket Design section, binding on VS-004/VS-008):
 `SplitResultRepository.get_splits` returns splits already ordered by
 `split_index`. This is the repository's job, not the caller's -- every caller
 (including VS-008) gets correct ordering by construction instead of having to
-remember to sort.
+remember to sort. VS-022 extends this same decision to
+`ValidationRunRepository.list_runs`, which returns runs ordered by
+`created_at` descending.
 
 Every method's first parameter after `self` is `tenant_id` (AC2, no
 exceptions): both interfaces are tenant-scoped at the method-signature level,
 not just by convention at the implementation.
+
+VS-022 (`GET /runs` list endpoint): `list_runs(tenant_id, limit, offset)`
+returns a `tenant_id`-scoped page of `RunRecord`s ordered by `created_at`
+descending -- the repository's job, not the router's, per the ordering
+decision above. `count_runs(tenant_id)` returns the total number of runs for
+that tenant (unpaginated), the total-count method the router's response
+envelope's `total` field needs; a separate method rather than folding the
+count into `list_runs`'s return value keeps `list_runs`'s signature
+unchanged from a plain `list[RunRecord]` and mirrors `get_splits`'s existing
+"one query concept, one method" style.
 """
 
 from __future__ import annotations
@@ -125,6 +137,19 @@ class ValidationRunRepository(typing.Protocol):
         completed_at: datetime | None = None,
         failure_reason: str | None = None,
     ) -> None: ...
+
+    def list_runs(self, tenant_id: str, limit: int, offset: int) -> list[RunRecord]:
+        """Returns this tenant's runs ordered by `created_at` descending
+        (VS-022 AC3) -- ordering is this method's responsibility, not the
+        caller's (see module docstring), mirroring `get_splits`'s precedent.
+        """
+        ...
+
+    def count_runs(self, tenant_id: str) -> int:
+        """Total number of runs for this tenant (unpaginated) -- backs the
+        `GET /runs` response envelope's `total` field (VS-022).
+        """
+        ...
 
 
 @typing.runtime_checkable

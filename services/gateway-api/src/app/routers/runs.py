@@ -28,7 +28,7 @@ cross-tenant request receives is entirely validation-service's own
 `get_run`-returns-`None`-for-both-cases behavior (VS-007/VS-008), forwarded
 as-is via `_raise_for_status`.
 
-GW-009: `_call_downstream` wraps each of the three outbound `httpx` calls to
+GW-009: `_call_downstream` wraps each of the outbound `httpx` calls to
 translate a *transport*-level failure (connection refused/unreachable ->
 `502`, timeout -> `504`) into a generic `HTTPException`, distinct from
 `_raise_for_error`'s handling of a normal-but-non-2xx response. A `201`
@@ -36,25 +36,59 @@ response with `status: "failed"` in the body is not a transport failure and
 never reaches `_call_downstream`'s except clauses -- it is a successful HTTP
 response that flows through unmodified, exactly as GW-008 already forwards a
 `status: "completed"` response.
+
+GW-016: `GET /runs` follows the exact same handler flow as the three
+existing proxy handlers -- resolve tenant -> build headers -> forward via
+`_call_downstream`/`_raise_for_error` -> return unmodified. `limit`/`offset`
+query params are forwarded to `validation-service` unmodified; no
+pagination/ordering is reimplemented here (that's VS-022's `list_runs`'s
+job). `RunSummaryResponse` (the `items` element shape) is imported from
+`naive_first_common.contracts` (VS-022/ARCH-003), never redefined; the
+`{items, limit, offset, total}` envelope around it (`RunListResponse`) is
+this router's own local wire shape, matching `validation-service`'s own
+envelope field names exactly since this is pass-through, not
+reimplementation (same precedent as `RunResponse`/`RunDetailResponse`/
+`SplitResultResponse` being this router's own Pydantic models even though
+they're field-for-field copies of validation-service's).
 """
 
 from __future__ import annotations
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from naive_first_common.contracts import (
     RunDetailResponse,
     RunRequest,
     RunResponse,
+    RunSummaryResponse,
     SplitResultResponse,
 )
 from naive_first_common.tenant_context import TenantContext
+from pydantic import BaseModel
 
 from app.dependencies.auth import get_authenticated_tenant
 from app.dependencies.http_client import ValidationServiceClientDep
 from app.dependencies.routing import build_downstream_headers
 
 router = APIRouter()
+
+
+class RunListResponse(BaseModel):
+    """Response envelope for `GET /runs` (GW-016): mirrors
+    `validation-service`'s own `RunListResponse` envelope field-for-field
+    (`services/validation-service/src/app/routers/runs.py`) since this is a
+    pass-through proxy, not a reimplementation. `items` uses
+    `RunSummaryResponse`, imported from `naive_first_common.contracts`
+    (VS-022/ARCH-003) -- never redefined here. This envelope shape itself is
+    local to this router, not a shared contract type -- matching the
+    existing precedent of `RunResponse`/`RunDetailResponse`/
+    `SplitResultResponse` above.
+    """
+
+    items: list[RunSummaryResponse]
+    limit: int
+    offset: int
+    total: int
 
 
 def _raise_for_error(response: httpx.Response) -> None:
@@ -72,8 +106,8 @@ def _raise_for_error(response: httpx.Response) -> None:
 
 
 def _call_downstream(fn, *args, **kwargs) -> httpx.Response:
-    """GW-009: shared transport-failure wrapper for the three proxy calls
-    below. Only translates *transport*-level `httpx` exceptions (connection
+    """GW-009: shared transport-failure wrapper for the proxy calls below.
+    Only translates *transport*-level `httpx` exceptions (connection
     refused/unreachable, timeout) into `502`/`504` -- a normal response
     (including validation-service's own `201`+`status:"failed"`) is not an
     exception and never reaches this except block, so it passes through
@@ -103,6 +137,21 @@ def create_run(
     )
     _raise_for_error(response)
     return RunResponse(**response.json())
+
+
+@router.get("/runs", response_model=RunListResponse)
+def list_runs(
+    client: ValidationServiceClientDep,
+    tenant: TenantContext = Depends(get_authenticated_tenant),
+    limit: int = Query(default=20),
+    offset: int = Query(default=0),
+) -> RunListResponse:
+    headers = build_downstream_headers(tenant)
+    response = _call_downstream(
+        client.get, "/runs", params={"limit": limit, "offset": offset}, headers=headers
+    )
+    _raise_for_error(response)
+    return RunListResponse(**response.json())
 
 
 @router.get("/runs/{run_id}", response_model=RunDetailResponse)

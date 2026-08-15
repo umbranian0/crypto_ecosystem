@@ -2,12 +2,12 @@
 (ARCH-003).
 
 This module is the sole, canonical definition of `RunRequest`/`RunResponse`/
-`RunDetailResponse`/`SplitResultResponse` -- both `gateway-api` and
-`validation-service` import these classes from here; neither service defines
-its own copy. (Originally created by copying validation-service's
-pre-ARCH-003 field lists verbatim, per the ticket's binding decision,
-grooming #5 -- but that was a one-time bootstrapping step, not a standing
-description of where the field lists live now.)
+`RunDetailResponse`/`SplitResultResponse`/`RunSummaryResponse` -- both
+`gateway-api` and `validation-service` import these classes from here;
+neither service defines its own copy. (Originally created by copying
+validation-service's pre-ARCH-003 field lists verbatim, per the ticket's
+binding decision, grooming #5 -- but that was a one-time bootstrapping step,
+not a standing description of where the field lists live now.)
 """
 
 from __future__ import annotations
@@ -51,6 +51,27 @@ class RunDetailResponse(BaseModel):
     created_at: datetime
     completed_at: datetime | None
     failure_reason: str | None
+
+
+class RunSummaryResponse(BaseModel):
+    """One `runs` row, list-view shape (VS-022): a strict subset of
+    `RunDetailResponse`'s fields -- `split_config`/`tenant_id`/`failure_reason`
+    are deliberately omitted (list rows don't need the full split config, the
+    tenant is already implied by the caller's own auth context, and a failed
+    run's reason is a detail-view concern, `GET /runs/{id}`'s job, not this
+    list endpoint's). Field names/types are cross-checked against
+    `RunDetailResponse` above rather than hand-copied, per ARCH-003's "single
+    canonical definition" convention -- both `validation-service`'s `GET /runs`
+    (VS-022) and, later, `gateway-api`'s proxy of it (GW-016) import this same
+    class rather than redefining it.
+    """
+
+    id: str
+    dataset_id: str
+    horizon: int
+    status: str
+    created_at: datetime
+    completed_at: datetime | None
 
 
 class SplitResultResponse(BaseModel):

@@ -100,6 +100,45 @@ services:
       # HTTP calls (GW-009) already handle validation-service being
       # unreachable (502/504), so this doesn't need a hard startup ordering.
 
+  reporting-service:
+    build:
+      context: ../services/reporting-service
+      additional_contexts:
+        libs: ../libs
+    container_name: naive-first-reporting-service
+    restart: unless-stopped
+    ports:
+      # Bound to localhost only, same rationale as validation-service above
+      # (ARCH-005 / "gateway-api is the only internet-facing service"):
+      # GW-018 (separate ticket) is what makes this reachable from outside
+      # the Docker network, via a gateway-api proxy route, not a public port
+      # binding here.
+      - "127.0.0.1:${REPORTING_SERVICE_PORT:-8002}:8002"
+    environment:
+      # DATABASE_URL points at the `reporting` schema's parent database via
+      # the internal Compose network hostname, using the non-superuser
+      # runtime role naive_first_app (INF-014) -- same rationale as
+      # validation-service/gateway-api above: naive_first stays
+      # migration-only so Postgres RLS is actually enforced against the
+      # running app's connection.
+      DATABASE_URL: ${REPORTING_SERVICE_DATABASE_URL:-postgresql://${POSTGRES_APP_USER:-naive_first_app}:${POSTGRES_APP_PASSWORD:-naive_first_app_dev_password}@postgres:5432/${POSTGRES_DB:-naive_first}}
+      REDIS_URL: ${REPORTING_SERVICE_REDIS_URL:-redis://redis:6379/0}
+      # Internal Compose network hostname -- reporting-service calls
+      # validation-service's GET /runs/{id}/GET /runs/{id}/splits directly by
+      # hostname inside the Docker network (see reporting-service's own
+      # README), never through gateway-api.
+      VALIDATION_SERVICE_URL: ${REPORTING_SERVICE_VALIDATION_SERVICE_URL:-http://validation-service:8000}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      # Unlike validation-service, reporting-service DOES depend on redis at
+      # startup readiness: RS-006's future Redis Streams subscriber needs
+      # Redis available (even though nothing consumes REDIS_URL yet, same
+      # "wired through but not yet consumed" situation validation-service's
+      # own REDIS_URL was in before VS-014 landed).
+      redis:
+        condition: service_healthy
+
 volumes:
   postgres-data:
   redis-data:

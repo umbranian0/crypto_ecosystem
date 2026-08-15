@@ -33,7 +33,9 @@ pooled connection's next, differently-tenanted, transaction). This is what
 makes the RLS policy actually scope queries to the calling tenant; the
 `.where(Model.tenant_id == tenant_id)` clauses below are retained anyway
 (matching VS-004's existing style) as defense in depth, not
-as the enforcement mechanism -- RLS is.
+as the enforcement mechanism -- RLS is. VS-022's `list_runs`/`count_runs`
+follow the same "RLS is the enforcement mechanism, the `.where` clause is
+defense in depth" stance as every other method in this module.
 """
 
 from __future__ import annotations
@@ -41,7 +43,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import uuid4
 
-from sqlalchemy import Engine, select, text, update
+from sqlalchemy import Engine, func, select, text, update
 from sqlalchemy.orm import Session
 
 from app.models import Base, Run, SplitResult
@@ -134,6 +136,27 @@ class PostgresValidationRunRepository:
                 .values(status=status, completed_at=completed_at, failure_reason=failure_reason)
             )
             session.commit()
+
+    def list_runs(self, tenant_id: str, limit: int, offset: int) -> list[RunRecord]:
+        with _tenant_scoped_session(self._engine, tenant_id) as session:
+            rows = (
+                session.execute(
+                    select(Run)
+                    .where(Run.tenant_id == tenant_id)
+                    .order_by(Run.created_at.desc())
+                    .limit(limit)
+                    .offset(offset)
+                )
+                .scalars()
+                .all()
+            )
+            return [_run_to_record(row) for row in rows]
+
+    def count_runs(self, tenant_id: str) -> int:
+        with _tenant_scoped_session(self._engine, tenant_id) as session:
+            return session.execute(
+                select(func.count()).select_from(Run).where(Run.tenant_id == tenant_id)
+            ).scalar_one()
 
 
 class PostgresSplitResultRepository:

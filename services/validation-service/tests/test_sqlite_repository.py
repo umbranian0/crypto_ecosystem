@@ -232,3 +232,81 @@ def test_tenant_isolation_update_run_status_does_not_affect_other_tenant(run_rep
 
     # And tenant_b still sees nothing under that run_id.
     assert run_repo.get_run("tenant-b", run_a.id) is None
+
+
+def test_list_runs_orders_by_created_at_descending(run_repo) -> None:
+    run_1 = run_repo.create_run(
+        tenant_id="tenant-1", dataset_id="dataset-1", horizon=1, purge_gap_hours=4.0, split_config=SPLIT_CONFIG
+    )
+    run_2 = run_repo.create_run(
+        tenant_id="tenant-1", dataset_id="dataset-2", horizon=1, purge_gap_hours=4.0, split_config=SPLIT_CONFIG
+    )
+    run_3 = run_repo.create_run(
+        tenant_id="tenant-1", dataset_id="dataset-3", horizon=1, purge_gap_hours=4.0, split_config=SPLIT_CONFIG
+    )
+
+    listed = run_repo.list_runs("tenant-1", limit=20, offset=0)
+
+    assert [r.id for r in listed] == [run_3.id, run_2.id, run_1.id]
+
+
+def test_list_runs_paginates_with_limit_and_offset(run_repo) -> None:
+    created = [
+        run_repo.create_run(
+            tenant_id="tenant-1",
+            dataset_id=f"dataset-{i}",
+            horizon=1,
+            purge_gap_hours=4.0,
+            split_config=SPLIT_CONFIG,
+        )
+        for i in range(5)
+    ]
+    expected_desc_order = list(reversed([r.id for r in created]))
+
+    page_1 = run_repo.list_runs("tenant-1", limit=2, offset=0)
+    page_2 = run_repo.list_runs("tenant-1", limit=2, offset=2)
+    page_3 = run_repo.list_runs("tenant-1", limit=2, offset=4)
+
+    assert [r.id for r in page_1] == expected_desc_order[0:2]
+    assert [r.id for r in page_2] == expected_desc_order[2:4]
+    assert [r.id for r in page_3] == expected_desc_order[4:5]
+
+
+def test_count_runs_returns_total_unpaginated_count(run_repo) -> None:
+    for i in range(4):
+        run_repo.create_run(
+            tenant_id="tenant-1",
+            dataset_id=f"dataset-{i}",
+            horizon=1,
+            purge_gap_hours=4.0,
+            split_config=SPLIT_CONFIG,
+        )
+
+    assert run_repo.count_runs("tenant-1") == 4
+    assert run_repo.count_runs("tenant-1") == len(run_repo.list_runs("tenant-1", limit=100, offset=0))
+
+
+def test_list_runs_and_count_runs_are_empty_for_unknown_tenant(run_repo) -> None:
+    run_repo.create_run(
+        tenant_id="tenant-1", dataset_id="dataset-1", horizon=1, purge_gap_hours=4.0, split_config=SPLIT_CONFIG
+    )
+
+    assert run_repo.list_runs("tenant-unknown", limit=20, offset=0) == []
+    assert run_repo.count_runs("tenant-unknown") == 0
+
+
+def test_list_runs_tenant_isolation_never_leaks_across_tenants(run_repo) -> None:
+    run_a = run_repo.create_run(
+        tenant_id="tenant-a", dataset_id="dataset-a", horizon=1, purge_gap_hours=4.0, split_config=SPLIT_CONFIG
+    )
+    run_b = run_repo.create_run(
+        tenant_id="tenant-b", dataset_id="dataset-b", horizon=1, purge_gap_hours=4.0, split_config=SPLIT_CONFIG
+    )
+
+    tenant_a_ids = {r.id for r in run_repo.list_runs("tenant-a", limit=20, offset=0)}
+    tenant_b_ids = {r.id for r in run_repo.list_runs("tenant-b", limit=20, offset=0)}
+
+    assert tenant_a_ids == {run_a.id}
+    assert tenant_b_ids == {run_b.id}
+    assert run_a.id not in tenant_b_ids
+    assert run_b.id not in tenant_a_ids

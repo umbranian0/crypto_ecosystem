@@ -19,12 +19,16 @@ been piling up waiting on it: `VS-013` (Postgres-backed validation-service repos
 (Redis Streams `run.completed` publisher), and `GW-012` (Postgres-backed identity repositories +
 RLS). This README does not claim the trigger fired on time — it didn't.
 
-**Not yet wired into compose, and this is deliberate, not an oversight:** `ingestion-service`,
-`reporting-service`, and `dashboard-web` are not Compose services here. Per
-implementation-plan.md section 6, each has its own not-yet-true trigger — `ingestion-service` is
-trigger #6, `reporting-service` is trigger #7, `dashboard-web` is trigger #8 — none of which this
-debt sprint's scope changes. `minio`/object storage is likewise absent (tracked separately as
-INF-008, not part of this sprint). See
+**Not yet wired into compose, and this is deliberate, not an oversight:** `ingestion-service` and
+`dashboard-web` are not Compose services here. Per implementation-plan.md section 6, each has its
+own not-yet-true trigger — `ingestion-service` is trigger #6, `dashboard-web` is trigger #8 —
+neither of which this debt sprint's scope changes. `minio`/object storage is likewise absent
+(tracked separately as INF-008, not part of this sprint). `reporting-service` (trigger #7) was
+also built ahead of its trigger, at explicit user request (see its own README) — it **is** now a
+real Compose service (`reporting-service (INF-018)` section below) as of this ticket, closing the
+infra half of the `RS-GAP` capability gap; it is still not reachable from outside the Docker
+network until `GW-018` (a separate, sibling ticket) adds a `gateway-api` proxy route to it — see
+that section for the exact boundary. See
 [../docs/solution-design.md](../docs/solution-design.md) section 5 for the full target service
 list, and per-service Alembic migration environments under each service's own `migrations/`
 directory (one per Postgres schema — `ingestion`, `validation`, `reporting`, `identity`, later
@@ -261,6 +265,129 @@ authenticated by `gateway-api`, forwarded to `validation-service` over the inter
 network (`http://validation-service:8000`), executed there, and the response proxied back
 unmodified in shape. See `services/gateway-api/README.md` / `services/validation-service/README.md`
 for the full request/response contract.
+
+## reporting-service (INF-018)
+
+`reporting-service` compose entry: `build.context` is `../services/reporting-service`
+(`services/reporting-service/Dockerfile`, already existed pre-ticket per RS-001 — this ticket only
+wired it into Compose, did not author it), with `libs/common` pulled in via a named
+`additional_contexts: {libs: ../libs}` build context — same pattern as `gateway-api`, since
+`reporting-service` also only depends on `naive_first_common` (not `naive_first_engine`). Host
+port defaults to `8002` (`REPORTING_SERVICE_PORT`), mapped to the container's own `8002` (the
+Dockerfile's own `EXPOSE`/`CMD` port — unlike `validation-service`/`gateway-api`, which both run
+their app on `8000` internally and remap it, `reporting-service`'s own Dockerfile already binds
+uvicorn to `8002`, so this Compose entry does not remap it). Bound to `127.0.0.1` only, same
+rationale as `validation-service`'s own port binding above (ARCH-005 / "gateway-api is the only
+internet-facing service") — `GW-018` (a separate, sibling ticket, not part of this one) is what
+adds a `gateway-api` proxy route so this service becomes reachable from outside the Docker network;
+until that lands, this port is Compose-network-internal (and host-loopback for local debugging)
+only.
+
+Started after `postgres` **and** `redis`, both with `depends_on: ...: condition: service_healthy`
+— unlike `validation-service`, which only depends on `postgres` (its own Redis Streams publisher,
+VS-014, hadn't landed at INF-003's time). `reporting-service` needs Redis ready at startup for
+RS-006's future `run.completed` Streams subscriber, even though nothing consumes `REDIS_URL` yet
+today (RS-004/RS-005 only call `validation-service`'s REST API directly, not Redis) — same
+"wired through but not yet consumed" situation `validation-service`'s own `REDIS_URL` was in
+before `VS-014` landed.
+
+Env vars (see `infra/.env.example`), all internal Compose network hostnames rather than
+`localhost`, all env-var driven with in-Compose defaults rather than hardcoded:
+- `DATABASE_URL` (from `REPORTING_SERVICE_DATABASE_URL`, default
+  `postgresql://naive_first_app:naive_first_app_dev_password@postgres:5432/naive_first`) —
+  connects as the non-superuser runtime role `naive_first_app` (INF-014), never `naive_first` —
+  verified live for this ticket (see the smoke test below): Postgres RLS on `reporting.reports`
+  (RS-002) is only actually enforced against a non-superuser/non-`BYPASSRLS` connection.
+- `REDIS_URL` (from `REPORTING_SERVICE_REDIS_URL`, default `redis://redis:6379/0`) — not yet
+  consumed by the app (RS-006 not built yet), same as above.
+- `VALIDATION_SERVICE_URL` (from `REPORTING_SERVICE_VALIDATION_SERVICE_URL`, default
+  `http://validation-service:8000`) — `reporting-service` calls `validation-service`'s real
+  `GET /runs/{id}`/`GET /runs/{id}/splits` directly by hostname inside the Docker network (see
+  `services/reporting-service/README.md`), never through `gateway-api` — this is an internal
+  service-to-service call, not an external client request.
+
+**Real, disclosed infra gap found and fixed by this ticket, not by `reporting-service`'s own
+tickets**: `infra/postgres-init/01-create-schemas.sql` only ever created the `validation`/`identity`
+schemas (INF-001), and `infra/postgres-init/02-create-app-role.sh` only ever granted
+`naive_first_app` `USAGE`/CRUD on those two (INF-014) — `reporting`'s own schema/grants had been
+applied *by hand* against the live, already-running Postgres container/volume during RS-002's own
+work (see `docs/tickets/RS-002.md`'s "One real gap found and fixed by the Tech Lead" note, which
+explicitly flagged this as "a real, disclosed infra gap for a future `INF-0NN` ticket"). This
+ticket is that follow-up: both `postgres-init` scripts now also cover `reporting`, so a **fresh**
+Postgres volume gets the schema/grants automatically too, not just the long-lived Sprint 06+
+container this repo has been running against. The already-running container's schema/grants were
+confirmed still present (not re-applied, since they already existed from RS-002's manual fix) via
+`docker exec naive-first-postgres psql -U naive_first -d naive_first -c '\dt reporting.*'` and a
+`naive_first_app` `USAGE`/CRUD spot-check (see the smoke test below).
+
+The service still runs standalone against a directly-configured `DATABASE_URL`/`REDIS_URL`/
+`VALIDATION_SERVICE_URL` outside Compose (e.g. `uv run uvicorn app.main:app --port 8002` from
+`services/reporting-service/`) — this Compose entry is purely an additional way to run it, not a
+replacement.
+
+Start it (brings up `postgres` and `redis` first via `depends_on`):
+
+```
+docker compose -f infra/docker-compose.yml build reporting-service
+docker compose -f infra/docker-compose.yml up -d reporting-service
+```
+
+Verify the container is up on its own:
+
+```
+curl http://localhost:8002/health
+```
+
+Expected: `{"status":"ok"}` (a real `SELECT 1` against the `reporting` schema through
+`reporting-service`'s own memoized `Engine`, RS-007).
+
+### Real, live-stack smoke test (Test acceptance criteria, INF-018)
+
+This is the concrete proof `reporting-service` builds, runs, and its `POST /reports/generate`/
+`GET /reports/{id}` endpoints actually respond over the container's exposed host port — run
+against the real stack for this ticket, not asserted from reading the compose file. `reporting-service`
+resolves its tenant the same way `validation-service` does (`X-Tenant-Id` header, no API-key layer
+of its own — that only exists at `gateway-api`), and needs a real `run_id` from `validation-service`:
+
+```
+curl -s -X POST http://localhost:8001/runs \
+  -H "X-Tenant-Id: smoke-test-tenant-inf018" \
+  -H "Content-Type: application/json" \
+  -d '{"dataset_id":"smoke-test","dataset_reference":{"type":"inline","rows":[]},"horizon":1,"purge_gap_hours":0,"train_window":1,"test_window":1,"step":1}'
+```
+
+This returns a `201` with `{"id": "<run_id>", "status": "failed"}` (an empty-rows dataset fails
+validation-service's own processing — expected, and fine for this smoke test's purpose, which is
+proving the two services actually talk to each other, not exercising a real validation run). Then:
+
+```
+curl -s -X POST http://localhost:8002/reports/generate \
+  -H "X-Tenant-Id: smoke-test-tenant-inf018" \
+  -H "Content-Type: application/json" \
+  -d '{"run_id":"<run_id from above>"}'
+```
+
+Expected: `201` `{"id": "<report_id>", "status": "generated"}` — proof `reporting-service` reached
+`validation-service` over the internal Compose network (`http://validation-service:8000`), rendered
+a status-only report (since the run's own status is `"failed"`, not `"completed"`), and persisted it
+via `naive_first_app` against real Postgres RLS. Then:
+
+```
+curl -s http://localhost:8002/reports/<report_id from above> -H "X-Tenant-Id: smoke-test-tenant-inf018"
+```
+
+Expected: `200` with the full report body (`id`/`run_id`/`report_kind`/`generated_at`/`status`/
+`content`), `content` containing the rendered HTML audit report shell (status-only section, since
+the underlying run never completed).
+
+**Actually run for this ticket** (2026-08-14): all three calls above returned exactly the responses
+described (`201`/`201`/`200`). The role cross-check (`DATABASE_URL` connects as `naive_first_app`,
+not `naive_first`) was confirmed two ways: `docker exec naive-first-reporting-service printenv
+DATABASE_URL` shows the `naive_first_app` credential directly, and
+`docker exec naive-first-postgres psql -U naive_first -d naive_first -c "SELECT usename, count(*)
+FROM pg_stat_activity WHERE datname='naive_first' GROUP BY usename;"` showed live
+`naive_first_app` connections (from `reporting-service`'s own pooled `Engine`) alongside the
+`psql` session's own `naive_first` row, not a `naive_first`-only result.
 
 ## Migrations verified against Compose Postgres (INF-005)
 
