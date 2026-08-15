@@ -33,15 +33,24 @@ independently-checked facts both hold:
 1. `result.source == "live"` (never `"mock_fixture"`) -- there must be a real
    upstream result at all.
 2. `result.dm_verdict` indicates the client model beat Naive0 with
-   statistical significance, Harvey-corrected (NFE-012). The exact,
-   unambiguous rule this module implements: `dm_verdict` must start with the
-   literal prefix `"significant_outperformance"` (e.g.
-   `"significant_outperformance_harvey_corrected"`). Any other value --
-   including `"not_significant"`, `"naive0_better"`, and ECON-004's own
-   `"no_real_upstream_verdict_exists"` -- fails this check. Future readers
-   (ECON-006 and beyond): this prefix match is the one and only place this
-   string vocabulary is interpreted; do not add a second, divergent
-   interpretation elsewhere.
+   statistical significance, Harvey-corrected (NFE-012). **Corrected during a
+   repo-validation session** (was previously a loose `startswith()` prefix
+   match against an invented vocabulary that `naive_first_engine`'s real
+   `Verdict` type never actually produces): the exact, unambiguous rule this
+   module implements is now `dm_verdict == "better"` -- an exact match
+   against the one real value `naive_first_engine.dm_test.dm_test()`
+   (`libs/naive_first_engine/src/naive_first_engine/dm_test.py`) returns when
+   `p_value < 0.05 and statistic < 0`. Harvey's correction is applied
+   unconditionally inside that computation for any `horizon > 1` (no
+   opt-out), so it is never encoded as a string suffix -- `"better"` already
+   means "significant, Harvey-corrected outperformance," full stop. Any
+   other value -- `"worse"`, `"no significant difference"`, and ECON-004's
+   own mock verdict -- fails this check. `dm_verdict`'s type is now
+   `DmVerdict` (`contracts.py`, a `Literal` mirroring the real upstream
+   type), so a typo'd/near-miss string can no longer even be constructed.
+   Future readers (ECON-006 and beyond): this exact-match check is the one
+   and only place this string vocabulary is interpreted; do not add a
+   second, divergent interpretation elsewhere.
 
 Both facts are checked independently (not collapsed into one boolean) so
 `EligibilityDecision` can distinguish *why* a request was refused -- "no real
@@ -62,7 +71,7 @@ from dataclasses import dataclass
 
 from app.contracts import EligibleSimulationResult, SimulationRequest, UpstreamValidationResult
 
-_SIGNIFICANT_OUTPERFORMANCE_PREFIX = "significant_outperformance"
+_SIGNIFICANT_OUTPERFORMANCE_VERDICT = "better"
 
 
 class EligibilityReason(enum.Enum):
@@ -103,7 +112,7 @@ def check_economic_eligibility(
     if result.source != "live":
         return EligibilityDecision(reason=EligibilityReason.NO_REAL_UPSTREAM_RESULT)
 
-    if not result.dm_verdict.startswith(_SIGNIFICANT_OUTPERFORMANCE_PREFIX):
+    if result.dm_verdict != _SIGNIFICANT_OUTPERFORMANCE_VERDICT:
         return EligibilityDecision(reason=EligibilityReason.UPSTREAM_RESULT_DID_NOT_BEAT_NAIVE)
 
     simulation = compute_economic_simulation(result, request)

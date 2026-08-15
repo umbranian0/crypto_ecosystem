@@ -48,9 +48,17 @@ class MockValidationResultClient:
     override disclosure): the platform has never produced a real
     "client model beat naive" result, so any client claiming to talk to
     `validation-service` for a real verdict today would be fabricating one.
-    `dm_verdict` is deliberately worded `"no_real_upstream_verdict_exists"`
-    (not a plausible-looking DM result) so a caller can never mistake this
-    fixture for a genuine statistical finding.
+    `dm_verdict` uses `"no significant difference"` -- `DmVerdict`'s real,
+    always-refusing-on-its-own value (`contracts.py`; mirrors
+    `naive_first_engine.dm_test.Verdict`) -- rather than an invented
+    placeholder string, since `dm_verdict` is now a `Literal` and can no
+    longer hold an arbitrary value. `source="mock_fixture"` is still the
+    primary, always-checked-first reason this fixture is refused (ECON-005's
+    guard checks `source` before `dm_verdict`); using a real but
+    non-eligible verdict value here is defense in depth, not the load-bearing
+    refusal reason, and this is not a plausible claim of a genuine
+    statistical finding -- it is exactly what "no result exists yet" looks
+    like expressed in the real upstream vocabulary.
     """
 
     def get_result(self, tenant_id: str, validation_run_id: str) -> UpstreamValidationResult:
@@ -58,7 +66,7 @@ class MockValidationResultClient:
             source="mock_fixture",
             dm_statistic=0.0,
             dm_pvalue=1.0,
-            dm_verdict="no_real_upstream_verdict_exists",
+            dm_verdict="no significant difference",
         )
 
     def __repr__(self) -> str:

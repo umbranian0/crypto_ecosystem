@@ -51,3 +51,7 @@ No deviation from the ticket's binding design constraint: `EligibleSimulationRes
 Test run: `.venv\Scripts\python.exe -m pytest -q` from `services/economic-service/` — **10 passed** (2 pre-existing ECON-001 tests, 8 new ECON-003 tests), 0 failures, 1 unrelated `httpx`/`starlette.testclient` deprecation warning pre-existing from ECON-001's scaffolding.
 
 All Implementation, Test, and Documentation acceptance criteria checked off above are verified, not assumed. Review acceptance criteria are self-checked by the implementer as documented above; final sign-off is the Tech Lead's per the ticket's own process.
+
+## Post-verification correction (repo-validation session)
+
+`UpstreamValidationResult.dm_verdict` was originally typed as a bare `str`. A subsequent full-repo validation session found this too loose, combined with ECON-005's `startswith()` check, and cross-referenced the real upstream contract (`naive_first_engine.dm_test.Verdict`) to find the correct fix: `dm_verdict` is now typed `DmVerdict`, a `Literal["better", "worse", "no significant difference"]` mirroring that real type exactly, closing the "near-miss string" gap entirely (Pydantic now rejects construction with any other value). See `ECON-005.md`'s own "Post-verification correction" section for the full finding and the corresponding gate-logic fix.

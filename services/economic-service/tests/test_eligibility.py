@@ -102,7 +102,7 @@ def test_2_live_source_but_not_significant_verdict_refuses() -> None:
         source="live",
         dm_statistic=0.4,
         dm_pvalue=0.87,
-        dm_verdict="not_significant",
+        dm_verdict="no significant difference",
     )
     request = SimulationRequest(run_id="run-2", fee_schedule_id="fee-1", slippage_model_id="slip-1")
 
@@ -139,7 +139,7 @@ def test_2_live_source_but_not_significant_verdict_refuses() -> None:
     body = response.json()
     _assert_refusal_shape(body)
     assert body["reason_code"] == EligibilityReason.UPSTREAM_RESULT_DID_NOT_BEAT_NAIVE.value
-    assert body["upstream_verdict"]["dm_verdict"] == "not_significant"
+    assert body["upstream_verdict"]["dm_verdict"] == "no significant difference"
 
 
 def test_3_positive_control_live_and_significant_verdict_is_eligible() -> None:
@@ -159,7 +159,7 @@ def test_3_positive_control_live_and_significant_verdict_is_eligible() -> None:
         source="live",
         dm_statistic=3.21,
         dm_pvalue=0.004,
-        dm_verdict="significant_outperformance_harvey_corrected",
+        dm_verdict="better",
     )
     request = SimulationRequest(run_id="run-3", fee_schedule_id="fee-1", slippage_model_id="slip-1")
 

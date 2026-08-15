@@ -74,7 +74,7 @@ See `docs/tickets/ECON-002.md` for full acceptance criteria and outcome.
 `src/app/contracts.py` defines this service's first Pydantic wire contracts. Kept **local to `economic-service`**, not promoted to `libs/common/src/naive_first_common/contracts.py` — backlog decision 3 (`docs/product/backlog-economic-service.md`): only one consumer exists today (this service itself), so sharing now would be speculative generality ahead of `implementation-plan.md` section 9's DRY rule, which extracts on second duplication, not in anticipation of one.
 
 - **`SimulationRequest`** — `run_id: str`, `fee_schedule_id: str`, `slippage_model_id: str`. No numeric field on the request; a return figure only ever appears on the success response path.
-- **`UpstreamValidationResult`** — `source: Literal["mock_fixture", "live"]`, `dm_statistic: float`, `dm_pvalue: float`, `dm_verdict: str`. Mirrors `validation-service`'s own `split_results` row shape (its README "Data model" section) — this service reads a DM verdict, it never recomputes or second-guesses one. `source` is a `Literal`, not a bare `str`, so a typo can't silently defeat ECON-005's `"live"`-only gate check. Harvey-correction status is folded into `dm_verdict`'s own string vocabulary (e.g. `"significant_outperformance_harvey_corrected"`) rather than a separate boolean field. Consumed by ECON-004 (mock client) and ECON-005 (eligibility gate) by name — do not redefine this class elsewhere.
+- **`UpstreamValidationResult`** — `source: Literal["mock_fixture", "live"]`, `dm_statistic: float`, `dm_pvalue: float`, `dm_verdict: DmVerdict`. Mirrors `validation-service`'s own `split_results` row shape (its README "Data model" section) — this service reads a DM verdict, it never recomputes or second-guesses one. `source` is a `Literal`, not a bare `str`, so a typo can't silently defeat ECON-005's `"live"`-only gate check. **Corrected during a repo-validation session**: `dm_verdict` is now `DmVerdict`, a `Literal["better", "worse", "no significant difference"]` mirroring `naive_first_engine.dm_test.Verdict` exactly — the original bare-`str` design plus a `startswith("significant_outperformance")` gate check was checking for a string format the real upstream `Verdict` type never actually produces (Harvey's correction is applied unconditionally inside the DM-test computation itself, never encoded as a string suffix; `"better"` already means "significant, Harvey-corrected outperformance"). Consumed by ECON-004 (mock client) and ECON-005 (eligibility gate) by name — do not redefine this class elsewhere.
 - **`EligibleSimulationResult`** — `run_id: str`, `cost_adjusted_return: float`, `slippage_adjusted_return: float`, `total_cost_bps: float` (`>= 0`), `upstream_verdict: UpstreamValidationResult`. Success-path response only; only ever constructible when an upstream verdict has passed ECON-005's gate.
 - **`NotEligibleForSimulation`** — `reason_code: str`, `message: str`, `upstream_verdict: UpstreamValidationResult | None`. Refusal-path response with **zero numeric fields of any kind** (no `float`, no `int`, no `Optional[float]`) — a genuinely separate class from `EligibleSimulationResult`, not the same class with nullable numeric fields defaulting to `None`. This is deliberate: a nullable-numeric-field design would let a serialization bug silently emit a value (e.g. `0.0`) that reads as "no result" instead of "not eligible" — exactly the fabricated/placeholder-number failure mode this backlog exists to prevent. The optional `upstream_verdict` field carries the DM statistic/p-value that caused the refusal (statistical evidence, not a computed-output figure), which is why its presence does not violate the "no numeric field" rule at the top level.
 
@@ -82,7 +82,7 @@ See `docs/tickets/ECON-003.md` for full acceptance criteria and outcome.
 
 ## Upstream integration (ECON-004) — mock-only, hard architectural rule
 
-`src/app/upstream_client.py` defines `UpstreamValidationResultClient` (a `typing.Protocol`, one method: `get_result(tenant_id, validation_run_id) -> UpstreamValidationResult`) and its **sole implementation this sprint**, `MockValidationResultClient` — hardcoded fixture data only, `source="mock_fixture"` always, `dm_verdict="no_real_upstream_verdict_exists"` (deliberately not a plausible-looking DM result, so nobody mistakes it for a real finding). `src/app/dependencies/upstream.py` wires `get_upstream_client()`/`UpstreamValidationResultClientDep` — this provider must never grow a conditional/env-var branch toward a real client; wiring one is its own new, separately-authorized ticket.
+`src/app/upstream_client.py` defines `UpstreamValidationResultClient` (a `typing.Protocol`, one method: `get_result(tenant_id, validation_run_id) -> UpstreamValidationResult`) and its **sole implementation this sprint**, `MockValidationResultClient` — hardcoded fixture data only, `source="mock_fixture"` always, `dm_verdict="no significant difference"` (a real, always-refusing `DmVerdict` value, not an invented placeholder — `source` remains the primary, first-checked refusal reason). `src/app/dependencies/upstream.py` wires `get_upstream_client()`/`UpstreamValidationResultClientDep` — this provider must never grow a conditional/env-var branch toward a real client; wiring one is its own new, separately-authorized ticket.
 
 **Hard rule, binding for every future ticket against this service**: no `httpx` import and no `VALIDATION_SERVICE_URL`-style environment variable read anywhere in this service's code, until (a) `VS-017` ships in `validation-service` and (b) a real run produces a genuine, Harvey-corrected, statistically significant outperformance verdict. `tests/test_upstream_client.py::test_upstream_client_module_has_no_httpx_import_and_no_url_env_var_read` is the permanent regression guard for this rule (AST-based: no `httpx`/`os` import anywhere in `upstream_client.py`). `tests/test_upstream_client.py::test_mock_client_is_the_only_di_wired_implementation` proves, by parsing every file under `src/app/` with `ast`, that `MockValidationResultClient` is the only class that actually implements `get_result` (the Protocol's own stub-bodied `get_result` — `...`, no real logic — is correctly excluded from that count) and that the real `Depends()` default (`get_upstream_client`) returns exactly that class.
 
@@ -108,13 +108,19 @@ both hold:
 
 1. `result.source == "live"` (never `"mock_fixture"`) -- there must be a
    real upstream result at all, checked first.
-2. `result.dm_verdict` starts with the literal prefix
-   `"significant_outperformance"` (e.g.
-   `"significant_outperformance_harvey_corrected"`) -- the client model must
-   have beaten Naive0 with statistical significance, Harvey-corrected
-   (NFE-012). Any other value -- `"not_significant"`, `"naive0_better"`, and
-   ECON-004's own `"no_real_upstream_verdict_exists"` included -- fails this
-   check.
+2. `result.dm_verdict == "better"` -- an exact match against the one real
+   `DmVerdict` value (`libs/naive_first_engine/src/naive_first_engine/dm_test.py`'s
+   `Verdict` type: `"better"`/`"worse"`/`"no significant difference"`)
+   indicating the client model beat Naive0 with statistical significance,
+   Harvey-corrected (NFE-012, applied unconditionally inside the DM-test
+   computation itself -- never encoded as a string suffix). **Corrected
+   during a repo-validation session**: this was previously a loose
+   `startswith("significant_outperformance")` prefix match against an
+   invented vocabulary the real upstream type never produces; `"worse"` and
+   `"no significant difference"` (including ECON-004's own mock verdict)
+   both fail this check, as does any string that isn't exactly `"better"` --
+   `dm_verdict`'s `Literal` type means no other string can even be
+   constructed.
 
 Both facts are checked independently, fact 1 before fact 2, so the returned
 `EligibilityDecision` (a tagged dataclass, not a bare boolean) distinguishes

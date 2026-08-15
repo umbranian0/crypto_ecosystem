@@ -18,7 +18,7 @@ def _upstream_verdict(**overrides) -> dict:
         "source": "mock_fixture",
         "dm_statistic": -1.23,
         "dm_pvalue": 0.87,
-        "dm_verdict": "not_significant",
+        "dm_verdict": "no significant difference",
     }
     payload.update(overrides)
     return payload
@@ -59,17 +59,17 @@ def test_not_eligible_for_simulation_valid_without_upstream_verdict():
 
 def test_not_eligible_for_simulation_valid_with_upstream_verdict():
     result = NotEligibleForSimulation(
-        reason_code="not_significant",
+        reason_code="upstream_result_did_not_beat_naive",
         message="Upstream DM verdict did not show significant outperformance.",
         upstream_verdict=_upstream_verdict(),
     )
-    assert result.upstream_verdict.dm_verdict == "not_significant"
+    assert result.upstream_verdict.dm_verdict == "no significant difference"
 
 
 def test_eligible_simulation_result_rejects_not_eligible_shape():
     with pytest.raises(ValidationError):
         EligibleSimulationResult(
-            reason_code="not_significant",
+            reason_code="upstream_result_did_not_beat_naive",
             message="Upstream DM verdict did not show significant outperformance.",
         )
 
