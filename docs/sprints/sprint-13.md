@@ -265,3 +265,96 @@ code, not merely asserted by it.
     direct code inspection of the guard, the DI wiring, and every route handler) is this sprint's own
     definition-of-done gate — it cannot be satisfied by a dev agent's self-report or a passing CI badge
     alone.
+
+## Outcome
+
+All 6 in-scope Must stories (`ECON-001` through `ECON-006`) done. `services/economic-service`'s full
+suite: `.venv\Scripts\python.exe -m pytest -q` → **50 passed, 0 failed** (independently re-run by the
+Tech Lead multiple times across the sprint, most recently after `ECON-006` landed). `ECON-001` was
+scaffolded directly by the Tech Lead (no design decision to delegate, same precedent as
+NFE-001/VS-001/GW-001/DASH-001/RS-001); `ECON-002` through `ECON-006` were each delegated to a `dev`
+subagent and personally verified against the actual diff, not merely trusted from the agent's own
+report — two real, disclosed gaps were caught this way (see below), not silently accepted.
+
+**What shipped**: `services/economic-service/src/app/{models.py, repositories/{interfaces.py,
+sqlite_repository.py}, contracts.py, upstream_client.py, dependencies/{repositories.py, upstream.py},
+eligibility.py, routers/simulations.py, main.py}`, `migrations/` (Alembic, schema-qualified to
+`economic`, RLS authored), `scripts/check_profitability_language.py`, and matching `tests/*.py` for
+every ticket. `economic.*` holds three inputs-only tables (`fee_schedules`, `slippage_models`,
+`simulation_configs`) — no profitability-output table or column exists anywhere, enforced by a
+permanent, metadata-introspecting regression test (`tests/test_no_profitability_columns.py`).
+`POST /simulations` is gated by a single named function, `check_economic_eligibility`
+(`src/app/eligibility.py`), reachable only through `MockValidationResultClient`
+(`src/app/upstream_client.py`) today — which always returns `source="mock_fixture"` — so the gate's
+two-condition refusal (`source != "live"`, checked first) fires on every real request the running
+service can currently receive.
+
+**Real gaps caught during verification, not silently accepted**:
+- `ECON-004`'s dev agent was interrupted mid-task by a session usage limit before running its own final
+  self-check. On independent re-verification the Tech Lead found two real test-authoring bugs: (1) the
+  "only one DI-wired implementer" AST check counted `UpstreamValidationResultClient`'s own stub-bodied
+  Protocol method (`get_result(...) -> ...`) as a second "implementer," a false positive; (2) the "no
+  `_URL` env var read" check did a raw substring search across the whole file including its own
+  docstring, which explains the rule in prose using the literal text `*_URL` — another false positive
+  on documentation, not code. Neither indicated an actual violation of ECON-004's real constraint
+  (confirmed by a from-scratch grep of `src/app/` before and after). Both fixed directly by the Tech
+  Lead; the Documentation acceptance criteria (README section, ticket Outcome) were also completed by
+  the Tech Lead since the agent never reached them.
+- A concurrent, unrelated `services/reporting-service` (RS-*, Sprint 12) session was independently
+  active on this same repo throughout this sprint, at one point writing to the same shared scratchpad
+  directory `ECON-002`'s dev agent was using. Checked directly per an explicit ask: `git status` and a
+  file-by-file listing of `services/economic-service/` after `ECON-002` landed showed zero leaked
+  content from that concurrent work — every file present matched `ECON-002`'s own stated file list.
+
+## Non-negotiable verification — performed personally by the Tech Lead, stated explicitly per
+sprint requirement, not folded into a generic "tests passed" line
+
+1. **Personal re-run of `ECON-005`'s full four-test suite.** Re-ran each of the five tests
+   (`test_1_mock_fixture_result_through_real_endpoint_refuses`,
+   `test_2_live_source_but_not_significant_verdict_refuses`,
+   `test_3_positive_control_live_and_significant_verdict_is_eligible`,
+   `test_4_every_real_request_through_the_actual_running_service_refuses`, and the guard structural
+   check) individually by explicit test id — all 5 passed individually, and the full suite (44 at that
+   point, later 50 after `ECON-006`) passed with zero regressions.
+2. **Read every route handler in `src/app/routers/` directly.** Only one router module exists
+   (`simulations.py`; `routers/__init__.py` is empty). Its single handler, `create_simulation`, calls
+   `check_economic_eligibility(upstream_verdict, request)` and, on the eligible branch, returns
+   `decision.simulation` — it never imports or calls `compute_economic_simulation` (the pure
+   profitability computation) anywhere. `main.py`'s only other route, `/health`, has no relationship to
+   the computation function at all. A guard structural-check test independently confirms this by
+   AST-parsing the router source and asserting the string `compute_economic_simulation` never appears
+   in it, including under an aliased import.
+3. **Read `ECON-004`'s DI wiring directly.** `src/app/dependencies/upstream.py`'s `get_upstream_client()`
+   is a single, unconditional `return MockValidationResultClient()` — no branch, no env-var switch, no
+   config flag. Grepped the entire `src/app/` tree for `httpx`, the literal string `"live"`,
+   `os.environ`, `os.getenv`, and `_URL`: the only `httpx`/`_URL` hits anywhere are inside docstrings
+   explaining the rule in prose (never real imports/reads); the only real `os.environ` read in the whole
+   service is `dependencies/repositories.py`'s `ECONOMIC_SERVICE_DB_PATH` (the unrelated SQLite path);
+   every occurrence of `"live"` outside test files is either the `Literal["mock_fixture", "live"]` type
+   declaration on `UpstreamValidationResult` or the guard's own `if result.source != "live"` comparison
+   — never an assignment that could produce one. No route, dependency, environment variable, or config
+   flag anywhere in the shipped code can cause the real running service to construct or receive a
+   `source="live"` result today.
+4. **Read the `economic` schema's models/migration directly.** `src/app/models.py` defines exactly three
+   tables — `fee_schedules`, `slippage_models`, `simulation_configs` — with columns `id`/`tenant_id`/
+   `venue`/`fee_tiers`/`created_at` (fee schedules), `id`/`tenant_id`/`model_kind`/`parameters`/
+   `created_at` (slippage models), and `id`/`tenant_id`/`validation_run_id`/`fee_schedule_id`/
+   `slippage_model_id`/`turnover_assumptions`/`created_at` (simulation configs) — cross-checked against
+   `migrations/versions/0001_create_economic_schema.py`'s own `op.create_table` calls, which match
+   exactly. No table or column name anywhere resembles `pnl`/`profit`/`net_return`/`return`/`revenue`.
+   `SimulationConfig.validation_run_id` is a plain `String` column, confirmed to carry zero
+   `ForeignKey` — the only legitimate cross-service reference is the opaque string id
+   `validation-service`'s own REST API hands out, never a direct schema read.
+
+All four checks independently confirm the override note's central claim: this scaffold cannot return a
+profitability number today, structurally, not merely by policy. `services/economic-service/README.md`
+was rewritten (not status-line-edited) to carry this framing in CLAUDE.md's own language, discloses the
+trigger-#11 override with its full ethical framing intact (not softened — both verified upstream facts
+and ECON-004's hard mock-only rule are stated up front, before any technical section), and a permanent,
+demonstrated-working grep-style doc-sync check (`scripts/check_profitability_language.py`) guards
+against future drift. `docs/tickets/README.md` gained a new `services/economic-service (ECON-*)`
+section for all six tickets. Zero changes to any file under `libs/naive_first_engine`, `libs/common`,
+`services/validation-service`, `services/gateway-api`, `services/ingestion-service`,
+`services/reporting-service`, or `services/dashboard-web` — confirmed via `git status` scoped to those
+paths, both before this sprint started and again at close. `ECON-007` through `ECON-011` remain
+unscheduled/unbuilt, as planned.

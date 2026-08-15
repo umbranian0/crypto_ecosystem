@@ -1,0 +1,34 @@
+[project]
+name = "economic-service"
+version = "0.1.0"
+description = "Scaffolded skeleton for Subsystem 5 (transaction cost/slippage/portfolio simulation). Trigger #11 has NOT fired -- this is a disclosed, user-authorized override (Sprint 13) building an inputs-only schema, typed contracts, a mock-only upstream integration, and a structural eligibility gate that makes it impossible for this service to return a real profitability figure today. See README.md."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "pydantic>=2.6",
+    "sqlalchemy>=2.0",
+    "alembic>=1.13",
+    "naive_first_common",
+]
+
+[tool.uv.sources]
+naive_first_common = { path = "../../libs/common", editable = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/app"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[dependency-groups]
+dev = [
+    "pytest>=7.4",
+    "httpx>=0.27",
+    "pytest-cov>=7.1.0",
+]
