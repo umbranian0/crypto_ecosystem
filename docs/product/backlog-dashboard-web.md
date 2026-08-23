@@ -70,17 +70,17 @@ Acceptance criteria:
 Rationale: second required minimum-scope item; both endpoints already exist.
 Depends on: DASH-003
 
-### DASH-005 — Runs list view [Must, blocked]
+### DASH-005 — Runs list view [Must, done]
 As dashboard-web, I want a page listing the tenant's runs, so a user can find a run without knowing its ID.
 
 Acceptance criteria:
-- [ ] **Cannot be completed as specified today** — no `GET /runs` list endpoint exists on gateway-api or validation-service (confirmed by reading both READMEs' Contract/Routes sections).
-- [ ] No client-side substitute is invented (no local record-keeping/scraping) — see DASH-005-GAP.
-- [ ] Once DASH-005-GAP is resolved, this page calls the new tenant-scoped list endpoint and renders one row per run (id/status/dataset_id/horizon/created_at/completed_at), linking to DASH-004, most-recent-first.
-- [ ] Until resolved, the "see results" loop is only satisfiable via DASH-004 directly (e.g. the id returned by DASH-006's submit flow) — a disclosed gap, not a silent substitution, requiring explicit requester acknowledgment before scheduling.
+- [x] **Cannot be completed as specified today** — no `GET /runs` list endpoint exists on gateway-api or validation-service (confirmed by reading both READMEs' Contract/Routes sections). (Satisfied by construction once DASH-005-GAP closed in Sprint 14 — see below.)
+- [x] No client-side substitute is invented (no local record-keeping/scraping) — see DASH-005-GAP.
+- [x] Once DASH-005-GAP is resolved, this page calls the new tenant-scoped list endpoint and renders one row per run (id/status/dataset_id/horizon/created_at/completed_at), linking to DASH-004, most-recent-first.
+- [x] Until resolved, the "see results" loop is only satisfiable via DASH-004 directly (e.g. the id returned by DASH-006's submit flow) — a disclosed gap, not a silent substitution, requiring explicit requester acknowledgment before scheduling. (This gap is now closed by `DASH-005-01`, Sprint 15.)
 
-Rationale: Must per requested minimum scope, but blocked on a capability neither upstream service exposes — flagged, not faked (mirrors VS-010's own "blocked" precedent).
-Depends on: DASH-005-GAP (not yet ticketed), DASH-003
+Rationale: Must per requested minimum scope, was blocked on a capability neither upstream service exposed — flagged, not faked (mirrors VS-010's own "blocked" precedent) — now unblocked and done (`DASH-005-01`, Sprint 15, `docs/tickets/DASH-005-01.md`) since DASH-005-GAP closed in Sprint 14 (`VS-022` + `GW-016`).
+Depends on: DASH-005-GAP (closed, Sprint 14), DASH-003
 
 ### DASH-005-GAP — Flagged capability gap (not a dashboard-web story)
 Confirmed missing: gateway-api proxies exactly `POST /runs`, `GET /runs/{id}`, `GET /runs/{id}/splits`; validation-service's own Routes list has no list route either. Needed: a tenant-scoped `GET /runs` list endpoint on validation-service (paginated/bounded, ordered by `created_at` desc, tenant-isolated like `GET /runs/{id}`) plus a matching gateway-api proxy route (GW-008's pattern). Belongs as new tickets in `docs/product/backlog-validation-service.md` (new VS-0NN) and `docs/product/backlog-gateway-api.md` (new GW-016, since GW-015 is reserved/Won't) — not authored here, since dashboard-web owns no data access.

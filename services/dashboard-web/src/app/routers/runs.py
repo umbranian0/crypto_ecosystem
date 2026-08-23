@@ -57,6 +57,31 @@ restated in this ticket's Design section as its single highest-stakes
 constraint). `RunRequest` construction is the only validation performed
 client-side of gateway-api itself; a `422` gateway-api itself returns is
 forwarded verbatim, not reinterpreted.
+
+DASH-005-01: `GET /runs` (this same file, per this ticket's own Design section
+-- no second router module) calls gateway-api's real `GET /runs` (GW-016,
+itself a pass-through proxy of validation-service's VS-022) and renders
+`runs_list.html`, one row per run, in the server's own `created_at DESC`
+order (no client-side re-sort). The response envelope is parsed as
+`{"items": [...], "limit": ..., "offset": ..., "total": ...}`; each item is
+validated via the shared `RunSummaryResponse` (imported from
+`naive_first_common.contracts`, ARCH-003) -- `RunListResponse` itself is
+*not* imported from there (it does not exist in that module; per
+`services/gateway-api/README.md`'s own Contract section, it is that router's
+own page/router-local envelope, mirrored here the same way rather than a
+shared contract class). If the incoming request carries `limit`/`offset`
+query params they are forwarded to gateway-api unmodified (no locally
+invented defaults, no re-validation of gateway-api's/validation-service's own
+bounds); a non-200 response (including a `422` for an out-of-range value,
+forwarded generically the same way a transport failure is, since this list
+page has no form to redisplay a field-specific error against) reuses the
+same `_render_error_for_status` helper the `502`/`504` paths below use --
+this is the third occurrence of that exact "render `error.html` with a fixed
+message" branch across `run_new_submit`/`run_detail`/this route, so it is
+extracted into a helper here rather than copy-pasted a third time
+(implementation-plan.md section 9's "extract on second duplication" rule,
+per this ticket's own DRY check note). Zero runs renders `runs_list.html`'s
+own plain empty-state message, not an error.
 """
 
 from __future__ import annotations
@@ -70,6 +95,7 @@ from naive_first_common.contracts import (
     RunDetailResponse,
     RunRequest,
     RunResponse,
+    RunSummaryResponse,
     SplitResultResponse,
 )
 from pydantic import ValidationError
@@ -101,6 +127,58 @@ def _call_downstream(fn, *args, **kwargs) -> tuple[httpx.Response | None, int | 
         return None, 502
     except httpx.TimeoutException:
         return None, 504
+
+
+def _render_error_for_status(request: Request, status_code: int):
+    """Renders the shared `error.html` "results currently unavailable"
+    failure page for a given status code -- either a translated
+    transport-level failure's synthetic `502`/`504` (`_call_downstream`
+    above), or a non-2xx status forwarded from gateway-api itself. Extracted
+    here because this is the third occurrence of this exact branch across
+    `run_new_submit`/`run_detail`/`runs_list` (DASH-005-01) -- past the
+    "extract on second duplication" threshold (implementation-plan.md
+    section 9), per this ticket's own DRY check note.
+    """
+    return templates.TemplateResponse(
+        request, "error.html", {"message": _UNAVAILABLE_ERROR}, status_code=status_code
+    )
+
+
+@router.get("/runs")
+def runs_list(
+    request: Request,
+    headers: DownstreamHeadersDep,
+    base_url: GatewayApiUrlDep,
+    limit: int | None = None,
+    offset: int | None = None,
+):
+    """DASH-005-01: calls gateway-api's real `GET /runs` (GW-016) and renders
+    one row per run, in the server's own `created_at DESC` order -- see this
+    module's own docstring for the full DASH-005-01 note. `limit`/`offset`
+    are forwarded unmodified only if the incoming request itself supplied
+    them (no locally invented defaults); registered near the top of the
+    router for readability, though its own path (no path param) does not
+    collide with `/runs/new` or `/runs/{run_id}` either way.
+    """
+    params: dict[str, int] = {}
+    if limit is not None:
+        params["limit"] = limit
+    if offset is not None:
+        params["offset"] = offset
+
+    with httpx.Client(base_url=base_url) as client:
+        response, transport_status = _call_downstream(
+            client.get, "/runs", headers=headers, params=params
+        )
+        if transport_status is not None:
+            return _render_error_for_status(request, transport_status)
+        if response.status_code != 200:
+            return _render_error_for_status(request, response.status_code)
+
+        body = response.json()
+        runs = [RunSummaryResponse(**item) for item in body["items"]]
+
+    return templates.TemplateResponse(request, "runs_list.html", {"runs": runs})
 
 
 @router.get("/runs/new")
@@ -192,16 +270,9 @@ def run_new_submit(
             client.post, "/runs", json=run_request.model_dump(), headers=headers
         )
         if transport_status is not None:
-            return templates.TemplateResponse(
-                request, "error.html", {"message": _UNAVAILABLE_ERROR}, status_code=transport_status
-            )
+            return _render_error_for_status(request, transport_status)
         if response.status_code in (502, 504):
-            return templates.TemplateResponse(
-                request,
-                "error.html",
-                {"message": _UNAVAILABLE_ERROR},
-                status_code=response.status_code,
-            )
+            return _render_error_for_status(request, response.status_code)
         if response.status_code == 422:
             return templates.TemplateResponse(
                 request,
@@ -227,16 +298,9 @@ def run_detail(
             client.get, f"/runs/{run_id}", headers=headers
         )
         if transport_status is not None:
-            return templates.TemplateResponse(
-                request, "error.html", {"message": _UNAVAILABLE_ERROR}, status_code=transport_status
-            )
+            return _render_error_for_status(request, transport_status)
         if detail_response.status_code in (502, 504):
-            return templates.TemplateResponse(
-                request,
-                "error.html",
-                {"message": _UNAVAILABLE_ERROR},
-                status_code=detail_response.status_code,
-            )
+            return _render_error_for_status(request, detail_response.status_code)
         if detail_response.status_code == 404:
             return templates.TemplateResponse(request, "not_found.html", {}, status_code=404)
 
@@ -246,19 +310,9 @@ def run_detail(
             client.get, f"/runs/{run_id}/splits", headers=headers
         )
         if splits_transport_status is not None:
-            return templates.TemplateResponse(
-                request,
-                "error.html",
-                {"message": _UNAVAILABLE_ERROR},
-                status_code=splits_transport_status,
-            )
+            return _render_error_for_status(request, splits_transport_status)
         if splits_response.status_code in (502, 504):
-            return templates.TemplateResponse(
-                request,
-                "error.html",
-                {"message": _UNAVAILABLE_ERROR},
-                status_code=splits_response.status_code,
-            )
+            return _render_error_for_status(request, splits_response.status_code)
         splits = (
             [SplitResultResponse(**item) for item in splits_response.json()]
             if splits_response.status_code == 200

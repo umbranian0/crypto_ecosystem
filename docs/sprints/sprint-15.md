@@ -185,3 +185,90 @@ dependent on `DASH-005`'s output, not because of a priority judgment.
     closed `DASH-005-GAP` at the `validation-service`/`gateway-api` level); once this sprint closes, the
     original Sprint 11 PoC scope (login, run detail, submit-a-run, runs list, E2E coverage of all of
     it) is fully complete with no more disclosed gaps in this service.
+
+## Outcome
+
+Both in-scope tickets done, broken down and executed by the Tech Lead as `DASH-005-01` (runs list
+view) and `DASH-009-02` (flow-3 update), strictly sequential per this file's own sequencing decision —
+`DASH-009-02` was not started until `DASH-005-01`'s diff and test run were personally verified.
+Ticket files: `docs/tickets/DASH-005-01.md`, `docs/tickets/DASH-009-02.md`.
+
+**`DASH-005-01` (runs list view)**: `GET /runs` added to `services/dashboard-web/src/app/routers/
+runs.py`, reusing `DownstreamHeadersDep`/`GatewayApiUrlDep`/`_call_downstream` (DASH-003/006)
+unchanged; a new `services/dashboard-web/src/app/templates/runs_list.html` renders one row per run
+(id linking to `DASH-004`'s detail page, status, dataset_id, horizon, created_at, completed_at) in the
+server's own `created_at DESC` order, with a plain empty-state message for zero runs. Built against
+the **real** `RunListResponse`/`RunSummaryResponse` envelope from `services/gateway-api/README.md`'s
+Contract section (`GET /runs`, GW-016 entry) — `RunSummaryResponse` imported from
+`naive_first_common.contracts` (ARCH-003), `RunListResponse` deliberately **not** imported from there
+(it doesn't exist in that module; gateway-api's own README documents it as that router's own
+page-local envelope) — confirmed correct by the Tech Lead reading the actual diff, not assumed. A new
+`_render_error_for_status` helper was extracted during this ticket, replacing what would otherwise
+have been a fourth near-identical `502`/`504`-to-`error.html` branch in `runs.py` (past the "extract on
+second duplication" threshold, implementation-plan.md section 9). No client-side
+pagination/sorting/local-record-keeping was introduced (`grep`-confirmed across `src/app/`), and no
+"prediction"/"forecast"/"signal"/"recommendation" language appears in `runs_list.html` (mechanically
+enforced by a new banned-word test, mirroring `run_detail.html`'s existing convention). Test coverage
+is mock-based (`httpx.MockTransport`, same pattern as `DASH-004`/`DASH-006`'s own tests), with the mock
+envelope built directly from `services/gateway-api/README.md`'s Contract section and a code comment
+citing it — no real running `gateway-api`+`validation-service`+Postgres/Redis stack was available in
+this session to additionally prove it against the live stack, accepted as this sprint's Definition of
+Done allows ("at minimum, a mock built directly from the documented envelope shape with a code comment
+citing the README").
+
+**`DASH-009-02` (flow-3 update)**: `services/dashboard-web/tests/e2e/test_core_loop.py`'s flow 3
+(folded into `test_submit_run_valid_payload_redirects_and_shows_completed_results`) now navigates to
+the real `GET /runs` list page and clicks the `a[href='/runs/{run_id}']` link for the run flow 2's own
+redirect just created, instead of driving straight to the redirect URL — the run id itself is still
+obtained from flow 2's redirect, only how the test *reaches* the detail page changed.
+`tests/e2e/stub_gateway_api.py` gained a matching `GET /runs` handler (same envelope shape as the real
+contract, sourced from the stub's own `_runs` dict, reusing existing helpers) so the fixture
+gateway-api actually supports the real list page's own downstream call — necessary plumbing, not new
+capability. Zero changes to `src/app/routers/` or `src/app/templates/` from this ticket, confirmed by
+the Tech Lead via `git status` scoped to both paths. `docs/tickets/DASH-009.md`'s Outcome section and
+`services/dashboard-web/README.md`'s `DASH-009` section were both appended (not overwritten) to record
+the mechanism change and mark the original redirect-id-only fallback historical.
+
+**`DASH-009` scope decision, as executed**: the Tech Lead proceeded with `DASH-009-02` in this sprint
+rather than pulling it out per this file's own dissent flag. Reasoning: the change was bounded (only
+`tests/e2e/*`, zero `src/app/routers/`/`templates/` changes, confirmed by both `grep` and `git status`),
+was independently flagged as expected future work in both Sprint 11's and Sprint 14's own handoff
+notes, and added no new externally-visible `dashboard-web` capability — it completes `DASH-009`'s own
+already-approved acceptance criteria against its originally-preferred dependency (a real list page)
+now that dependency exists, rather than introducing new product scope requiring fresh PO approval.
+
+**Testing, personally re-run by the Tech Lead, not merely trusted from either dev agent's own report**:
+- `uv run pytest -q` (default unit loop): **50 passed**, 5 deselected (42 pre-existing + 8 new from
+  `DASH-005-01`, zero regressions) — re-confirmed unchanged after `DASH-009-02`.
+- `uv run pytest -m e2e -q`: **5 passed**, 0 failed (same 5 flows as Sprint 11's `DASH-009`, one flow's
+  navigation mechanism changed by `DASH-009-02`).
+- **Combined total: 55 tests (50 unit + 5 e2e), 0 failed.**
+- **Non-tautological regression proof** (Definition of Done's own spirit, not merely a green
+  checkmark): the Tech Lead temporarily removed the run-id link (`<a href="/runs/{{ run.id }}">`) from
+  `runs_list.html`, re-ran `test_submit_run_valid_payload_redirects_and_shows_completed_results` alone
+  — it failed (`TimeoutException` waiting for the link to appear), proving the test genuinely depends
+  on `DASH-005-01`'s list page rendering correctly rather than passing regardless. The template was
+  then reverted (diffed byte-identical against the pre-change version) and the test re-confirmed
+  passing.
+
+**Documentation, confirmed updated**: `services/dashboard-web/README.md`'s status line, "Known gaps"
+section, and a new "Runs list (DASH-005)" section; `docs/product/backlog-dashboard-web.md`'s `DASH-005`
+entry (all acceptance-criteria boxes checked, status `[Must, blocked]` → `[Must, done]`);
+`docs/tickets/DASH-009.md`'s Outcome section (appended); `docs/tickets/README.md`'s
+`services/dashboard-web (DASH-*)` section (new "Sprint 15" subsection, both tickets marked `done`).
+**One process deviation, disclosed rather than silently absorbed**: `DASH-005-01`'s dev agent was
+scoped to touch only `services/dashboard-web/` and `docs/product/backlog-dashboard-web.md`, so it
+correctly did not touch `docs/tickets/README.md` even though that ticket's own Documentation
+acceptance criterion asked for a Sprint 15 subsection there — the Tech Lead added that subsection
+directly as part of this sprint's wrap-up instead of re-delegating a doc-only fix.
+
+**No language implying price prediction or a trading signal** was introduced anywhere in this sprint's
+new page/template, confirmed both by direct read and by the new mechanical banned-word test.
+
+**Environment note, carried forward from `DASH-009`'s own Sprint 11 disclosure**: this repo directory
+sits inside a OneDrive-synced folder, causing intermittent direct file-write/edit failures (`ENOENT`)
+unrelated to either ticket's own code, confirmed again this session. Worked around throughout via the
+same two mechanisms as prior sprints: `UV_PROJECT_ENVIRONMENT` pointed outside the synced tree for
+`uv sync`/`uv run`, and — for direct repo-file writes/edits that failed — writing/editing a scratch
+copy outside the synced tree and using `cp` (confirmed to succeed into the synced directory even when
+direct write/redirect does not) to place it, rather than retrying the failing write in a loop.

@@ -138,3 +138,21 @@ Personally verified by the Tech Lead end-to-end, not trusted from the dev agent'
   this ticket's own code. Worked around by building the test venv outside the synced tree
   (`UV_PROJECT_ENVIRONMENT` pointed at a scratch directory) — flagged here since it will recur for any
   future work in this repo directory until the sync exclusion is addressed at the OS level.
+
+**Sprint 15 update (`DASH-009-02`)**: flow 3's redirect-id-only navigation described above is now
+historical. Once `DASH-005-01` built the real `GET /runs` list page (Sprint 15, closing the
+`DASH-005-GAP` fallback this ticket originally relied on), `DASH-009-02` rewrote flow 3's navigation
+step in `test_submit_run_valid_payload_redirects_and_shows_completed_results`: the test now navigates
+to `GET /runs` and clicks the `a[href='/runs/{run_id}']` link for the run flow 2's own redirect just
+created, then proceeds through the same status-polling loop and DOM assertions unchanged. The run id
+itself is still obtained from flow 2's redirect — only how the test reaches the detail page changed.
+`tests/e2e/stub_gateway_api.py` gained a matching `GET /runs` handler (returning the same
+`items`/`limit`/`offset`/`total` envelope shape as the real `gateway-api`/`validation-service`
+contract, items shaped like `RunSummaryResponse`, sourced from the stub's own `_runs` dict,
+most-recent-first) so the fixture gateway-api actually supports the real list page's own downstream
+call — necessary plumbing, not a new capability. No new page/route/template was added to
+`dashboard-web` itself; `git status` scoped to `src/app/routers/` and `src/app/templates/` confirmed
+zero changes. Final counts: `uv run pytest -q` — **50 passed**, 5 deselected (unit-test count is 50,
+not the original ticket's 42, because `DASH-005-01`'s own route tests were merged earlier this sprint
+— unrelated to this ticket, confirmed unchanged by this ticket's diff); `uv run pytest -m e2e -q` —
+**5 passed**, 0 failed.

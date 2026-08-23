@@ -9,14 +9,22 @@ since the ticket is explicit "not in-process TestClient" for `dashboard-web`
 itself; nothing forbids the *fixture* gateway-api from being a real, small,
 separately-run process too).
 
-Implements only the four `gateway-api` endpoints DASH-009's three flows
-actually exercise: `GET /health`, `POST /runs`, `GET /runs/{id}`,
+Implements only the five `gateway-api` endpoints DASH-009/DASH-009-02's flows
+actually exercise: `GET /health`, `POST /runs`, `GET /runs`, `GET /runs/{id}`,
 `GET /runs/{id}/splits` -- not gateway-api's full contract (GW-006's
 X-Api-Key fallback, tenant provisioning, etc. are out of scope for driving
-just these three flows). A run is marked `status: "completed"` with fake
+just these flows). A run is marked `status: "completed"` with fake
 per-split results synchronously at creation time (no real validation-service
 call), per the ticket Design section's explicit allowance, to keep flow 3
 fast and deterministic instead of simulating a real run duration.
+
+DASH-009-02: `GET /runs` was added so flow 3 could navigate via
+`dashboard-web`'s real `DASH-005-01` list page instead of driving straight to
+the post-submit redirect id. Returns the same envelope shape as the real
+`gateway-api`/`validation-service` contract (`{"items": [...], "limit": ...,
+"offset": ..., "total": ...}`, items shaped like `RunSummaryResponse`),
+built from this stub's own `_runs` dict, most-recent-first by `created_at`
+-- no new dependency, no duplicated helper (reuses `_require_valid_key`).
 
 Run as its own subprocess by `conftest.py`'s `stub_gateway_api` fixture
 (`python -m uvicorn tests.e2e.stub_gateway_api:app`), not imported/executed
@@ -74,6 +82,27 @@ def _fake_split(split_index: int) -> dict:
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/runs")
+def list_runs(authorization: str | None = Header(default=None)) -> dict:
+    """DASH-009-02: returns the real `gateway-api`/`validation-service`
+    envelope shape (`items`/`limit`/`offset`/`total`), items shaped like
+    `RunSummaryResponse` -- built from `_runs` (this stub's own tracking
+    dict), most-recent-first by `created_at`. `dashboard-web`'s `GET /runs`
+    route (`src/app/routers/runs.py`, DASH-005-01) is the only real caller;
+    it forwards no `limit`/`offset` unless the incoming request itself
+    supplied them, so this stub returns the full set with no pagination
+    slicing -- there is no fixture scenario needing more than a handful of
+    runs, and adding untested slicing logic here would be speculative.
+    """
+    _require_valid_key(authorization)
+    items = sorted(_runs.values(), key=lambda run: run["created_at"], reverse=True)
+    summaries = [
+        {key: run[key] for key in ("id", "dataset_id", "horizon", "status", "created_at", "completed_at")}
+        for run in items
+    ]
+    return {"items": summaries, "limit": len(summaries), "offset": 0, "total": len(summaries)}
 
 
 @app.post("/runs", status_code=201)

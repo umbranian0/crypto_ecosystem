@@ -1,10 +1,11 @@
 # dashboard-web
 
-**Status: DASH-001 through DASH-004 and DASH-006 through DASH-009 done (Sprint 11) -- scaffold,**
-**login/session, the session-to-downstream-header DI seam, run detail view, submit-a-run form,**
-**logout, a real health check, and a Selenium E2E suite covering the full login -> submit -> view**
-**loop (47/47 tests passing: 42 unit + 5 e2e). `DASH-005` (runs list) is the one deferred story --**
-**see "Known gaps" below. Built deliberately ahead of trigger #8 (implementation-plan.md section 6:**
+**Status: DASH-001 through DASH-009 done (Sprint 11 + Sprint 15) -- scaffold, login/session, the**
+**session-to-downstream-header DI seam, run detail view, submit-a-run form, logout, a real health**
+**check, a runs list view, and a Selenium E2E suite covering the full login -> submit -> view loop**
+**(50/50 unit tests passing + 5 e2e). `DASH-005` (runs list), deferred since Sprint 11, was closed in**
+**Sprint 15 (`DASH-005-01`) once `DASH-005-GAP` was resolved upstream (Sprint 14: `VS-022` +**
+**`GW-016`). Built deliberately ahead of trigger #8 (implementation-plan.md section 6:**
 **"as soon as a pilot client needs to see results without you manually sending them a file... second**
 **pilot client, or first client asking 'where do I log in'") -- no real pilot client exists yet, the**
 **same disclosed-override precedent `gateway-api`'s own README states for its own trigger #5 (see**
@@ -13,14 +14,13 @@
 **client exists."**
 **Sprint 11 goal: a tenant logs in with a gateway-api API key, submits a validation run through a**
 **form, and views that run's status and per-split results -- the minimum submit -> view loop. See**
-**docs/sprints/sprint-11.md and docs/tickets/README.md for live ticket status. `DASH-005` (runs**
-**list) is deliberately deferred this sprint -- see "Known gaps" below.**
+**docs/sprints/sprint-11.md and docs/tickets/README.md for live ticket status.**
 
 Formerly `dashboard/`. See [../../docs/solution-design.md](../../docs/solution-design.md) section 3.6.
 
 **Owns**: server-rendered UI only (FastAPI + Jinja2 + HTMX) -- login/session, run detail, submit-a-run
-form. (A runs-list page, report viewer, and degradation-alerts view are planned but not in scope this
-sprint -- see "Known gaps" below.)
+form, runs list. (A report viewer and degradation-alerts view are planned but not in scope yet -- see
+"Known gaps" below.)
 
 **Does not own**: any data access -- every page is rendered from calls to `gateway-api`'s public
 contract, same as an external client would use. This is deliberate: it keeps the UI honest to the same
@@ -62,6 +62,14 @@ schemas directly.
   section ("no new mechanism") -- no second session-validity check is written. Calls `SessionStore
   .delete` (DASH-002's existing method, imported not reimplemented), clears the cookie via `Response
   .delete_cookie`, and redirects (303) to `/login`.
+- **DASH-005-01**: `GET /runs` (`src/app/routers/runs.py`, same file/router module) reuses
+  `DownstreamHeadersDep`/`GatewayApiUrlDep`/`_call_downstream`, same as every other route here -- no
+  hand-rolled header or a fourth near-identical transport-failure try/except. This is also the point
+  where the 502/504-to-`error.html` branch (already duplicated once between DASH-004's `run_detail` and
+  DASH-006's `run_new_submit`) hit its third occurrence, so it was extracted into a small
+  `_render_error_for_status(request, status_code)` helper in this same file and all three call sites
+  (including the pre-existing two) now share it -- implementation-plan.md section 9's "extract on
+  second duplication" rule.
 - **DASH-008**: `GET /health` (`src/app/main.py`) intentionally does *not* consume `GatewayApiUrlDep`
   as a FastAPI `Depends()` parameter (unlike DASH-004/006) -- it calls `get_gateway_api_url()`
   directly as a plain function, since this route itself must stay outside the
@@ -72,11 +80,15 @@ schemas directly.
   implementation-plan.md section 9) -- not yet applicable, since `reporting-service` doesn't exist yet
   (trigger #7 unfired).
 
-**Contract**: consumes `gateway-api`'s OpenAPI schema (`POST /runs`, `GET /runs/{id}`,
+**Contract**: consumes `gateway-api`'s OpenAPI schema (`POST /runs`, `GET /runs`, `GET /runs/{id}`,
 `GET /runs/{id}/splits`, `GET /health`); no contract of its own beyond its rendered HTML routes.
 Response shapes are parsed via `naive_first_common.contracts`' shared `RunRequest`/`RunResponse`/
-`RunDetailResponse`/`SplitResultResponse` models (ARCH-003) -- the same models `gateway-api` itself
-uses -- rather than a third hand-duplicated copy of the same field list.
+`RunDetailResponse`/`SplitResultResponse`/`RunSummaryResponse` models (ARCH-003) -- the same models
+`gateway-api` itself uses -- rather than a third hand-duplicated copy of the same field list.
+`RunListResponse` (the `GET /runs` envelope `{items, limit, offset, total}`) is *not* one of those
+shared models -- per `gateway-api`'s own README, it is that router's own page/router-local envelope,
+so `dashboard-web` works with the parsed dict directly for the envelope fields, only `items` elements
+going through the shared `RunSummaryResponse`.
 - **DASH-004**: `GET /runs/{id}` (`src/app/routers/runs.py`) consumes `gateway-api`'s `GET /runs/{id}`
   and, on a successful detail fetch, `GET /runs/{id}/splits`, via the same shared
   `naive_first_common.contracts` `RunDetailResponse`/`SplitResultResponse` models -- if those models'
@@ -94,14 +106,14 @@ uses -- rather than a third hand-duplicated copy of the same field list.
   rendered on this route itself.
 
 **Known gaps (disclosed, not silent)**:
-- `DASH-005` (runs list) is **not built this sprint** -- no `GET /runs` list endpoint exists on
-  `gateway-api` or `validation-service` today. Blocked on new, not-yet-authored backlog tickets
-  (`VS-0NN` in `validation-service`, `GW-016` in `gateway-api`) -- see
-  `docs/product/backlog-dashboard-web.md`'s `DASH-005`/`DASH-005-GAP` entries and
-  `docs/sprints/sprint-11.md`'s scheduling decision. Until resolved, a run is only reachable via
-  `GET /runs/{id}` directly (e.g. the id returned by the submit-a-run form's redirect).
 - `GW-011` (JWT session auth) is not built either -- login uses `gateway-api`'s existing API-key auth
   (`GW-006`) instead (backlog decision 3).
+
+**Sprint 15**: `DASH-005` (runs list), deferred since Sprint 11, is now built (`DASH-005-01`) -- see
+"Runs list (DASH-005)" below. It was blocked on `DASH-005-GAP` (no `GET /runs` list endpoint existed on
+`gateway-api`/`validation-service`), closed in Sprint 14 (`VS-022` + `GW-016`). `DASH-009-02` (a
+separate, later ticket) will update the existing Selenium E2E suite's flow 3 to navigate via this new
+list page instead of Sprint 11's disclosed redirect-id fallback -- not yet done as of this entry.
 
 ## Authentication (DASH-002)
 
@@ -206,6 +218,36 @@ exact fields (`dataset_id`, `dataset_reference`, `horizon`, `purge_gap_hours`, `
 - A transport-level `httpx.ConnectError`/`httpx.TimeoutException`, or a `502`/`504` forwarded from
   `gateway-api`, renders the same `error.html` DASH-004 uses -- no second, near-identical template.
 
+## Runs list (DASH-005)
+
+`GET /runs` (`src/app/routers/runs.py`, DASH-005-01, Sprint 15) renders one row per tenant-scoped run,
+in the server's own `created_at DESC` order:
+
+- Resolves `headers: DownstreamHeadersDep`/`base_url: GatewayApiUrlDep` (DASH-003) -- no hand-rolled
+  `Authorization` header, same as every other route here. Calls `gateway-api`'s real `GET /runs`
+  (GW-016, itself a pass-through proxy of `validation-service`'s `GET /runs`, VS-022); `limit`/`offset`
+  query params on the incoming request are forwarded to `gateway-api` unmodified (no locally invented
+  defaults, no re-validation of `gateway-api`'s/`validation-service`'s own bounds).
+- Parses the response envelope as `{"items": [...], "limit": ..., "offset": ..., "total": ...}`; each
+  item is validated via the shared `naive_first_common.contracts.RunSummaryResponse` (imported, not
+  redefined). `RunListResponse` itself is **not** imported from `naive_first_common.contracts` -- it
+  does not exist there; per `gateway-api`'s own README, it is that router's own page/router-local
+  envelope, so this route works with the parsed dict directly for the envelope fields.
+- Renders `runs_list.html` with one row per run (`id` linking to DASH-004's `GET /runs/{id}`, `status`,
+  `dataset_id`, `horizon`, `created_at`, `completed_at`), in the order `gateway-api`/`validation-service`
+  returned them -- no client-side re-sort. Zero runs renders a plain "no validation runs yet" message,
+  not an error.
+- A transport-level `httpx.ConnectError`/`httpx.TimeoutException`, a `502`/`504` forwarded from
+  `gateway-api`, or any other non-`200` (e.g. a `422` for an out-of-range `limit`/`offset`, since this
+  list page has no form to redisplay a field-specific error against) reuses the same `error.html`
+  DASH-004/006 already use, via the new `_render_error_for_status` helper -- no new error template, no
+  leaked hostname/status/exception text.
+- **Positioning**: `runs_list.html`'s copy describes the rows as "validation runs" / "validation/audit
+  records" only -- never "prediction," "forecast," "signal," or "recommendation" (CLAUDE.md's core
+  positioning constraint), matching `run_detail.html`'s existing convention.
+- No client-side pagination, sorting, local record-keeping, or scraping of any other page is
+  introduced -- this route calls `gateway-api`'s own list endpoint and renders exactly what it returns.
+
 ## Health check (DASH-008)
 
 `GET /health` (`src/app/main.py`, same file gateway-api's/validation-service's own `/health`
@@ -227,7 +269,7 @@ Requires `GATEWAY_API_URL` (env var, default `http://localhost:8000`) pointing a
 `gateway-api` instance. `DASHBOARD_COOKIE_SECURE` (env var, default `"false"`) controls the login
 session cookie's `secure` flag -- see "Authentication (DASH-002)" above.
 
-**Tests**: `uv run pytest` (route-handler unit tests, mocked `gateway-api`) from this directory -- 42
+**Tests**: `uv run pytest` (route-handler unit tests, mocked `gateway-api`) from this directory -- 50
 tests, the `e2e` marker's items deselected by default (`addopts = "-m \"not e2e\""` in
 `pyproject.toml`).
 
@@ -235,13 +277,20 @@ tests, the `e2e` marker's items deselected by default (`addopts = "-m \"not e2e\
 separately via `uv run pytest -m e2e` -- 5 tests, exercising login (valid + invalid key), submit-a-run
 (valid + invalid payload), and view-a-run (completed run + nonexistent id), each in a real browser
 against a real running `dashboard-web` subprocess.
+- **Flow 3 navigation (`DASH-009-02`, Sprint 15)**: view-a-run now navigates via the real `GET /runs`
+  list page (`DASH-005-01`) -- the test clicks the just-created run's own link on the list page rather
+  than driving straight to the post-submit redirect URL. The original Sprint 11 framing ("no
+  runs-list page exists this sprint," the `DASH-005-GAP` redirect-id-only fallback) is now historical;
+  see `docs/tickets/DASH-009.md`'s Outcome section for the full note. The run id is still obtained
+  from the submit flow's own redirect -- only how the test reaches the detail page changed.
 - **Browser/WebDriver**: Chrome, auto-resolved by Selenium's built-in Selenium Manager (bundled with
   `selenium>=4.20`, a dev dependency) -- no manual `chromedriver` install needed in most environments.
   To use a different browser/driver, set Selenium's own standard driver-path env vars before running.
 - **Fixture `gateway-api`**: automatic, no setup required -- `tests/e2e/conftest.py`'s
   `stub_gateway_api` session fixture starts a minimal stub implementing just enough of `gateway-api`'s
-  real contract (`/health`, `POST /runs`, `GET /runs/{id}`, `GET /runs/{id}/splits`) as its own
-  subprocess. Does not require `infra/docker-compose.yml` or a real Postgres/Redis stack.
+  real contract (`/health`, `POST /runs`, `GET /runs`, `GET /runs/{id}`, `GET /runs/{id}/splits`) as
+  its own subprocess (the `GET /runs` handler was added by `DASH-009-02` to support the real list-page
+  navigation above). Does not require `infra/docker-compose.yml` or a real Postgres/Redis stack.
 - **Environment note**: if this repo directory sits inside a cloud-synced folder (e.g. OneDrive), you
   may see intermittent file-write/`.venv`-creation failures unrelated to this suite's own code; setting
   `UV_PROJECT_ENVIRONMENT` to a path outside the synced tree before `uv sync`/`uv run` works around it.

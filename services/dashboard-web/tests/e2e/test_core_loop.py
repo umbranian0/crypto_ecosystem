@@ -13,17 +13,22 @@ invented here, see ticket Analysis section):
    run's detail page; an invalid payload (`horizon=0`, DASH-006's own
    Pydantic `ValidationError` example) redisplays the form with an error, no
    redirect.
-3. View a run (DASH-004's own AC / DASH-005-GAP fallback): the id from flow
-   2's own redirect is used directly -- no runs-list page exists this sprint
-   and none is built here, so this is "navigate to the id flow 2 just
-   created," not a separate lookup. A syntactically valid but nonexistent id
-   renders the not-found page.
+3. View a run (DASH-004's own AC): the id is still obtained from flow 2's
+   own submit-and-redirect, but as of DASH-009-02 (Sprint 15, once
+   DASH-005-01's real runs-list page existed) the *navigation* to the detail
+   page goes through `GET /runs` (the real list page) and a click on that
+   run's own link, rather than driving straight to the redirect URL -- the
+   DASH-005-GAP redirect-id-only fallback this flow used through Sprint 11
+   is now historical, see `docs/tickets/DASH-009.md`'s Outcome section. A
+   syntactically valid but nonexistent id still renders the not-found page
+   (unchanged, driven directly since there is no list-page entry for an id
+   that was never created).
 
 `test_submit_run_valid_payload_redirects_and_shows_completed_results` is
 where flow 2's valid case and flow 3's valid case are exercised together --
-this is the DASH-005-GAP fallback exactly as the ticket's Design section
-describes it ("effectively the same navigation"), not two independent tests
-that would otherwise need a second way to reach a run id.
+flow 2 creates the run and captures its id from the redirect; flow 3 then
+proves the real list page surfaces that same run rather than reusing a
+second independent way to reach a run id.
 """
 
 from __future__ import annotations
@@ -112,6 +117,20 @@ def test_submit_run_valid_payload_redirects_and_shows_completed_results(driver, 
     run_id_match = re.search(r"/runs/([0-9a-f-]{36})$", driver.current_url)
     assert run_id_match is not None, f"unexpected post-submit URL {driver.current_url!r}"
     run_id = run_id_match.group(1)
+
+    # DASH-009-02: flow 3 now navigates to the detail page via the real
+    # runs-list page (DASH-005-01) rather than driving straight to the
+    # post-submit redirect URL -- the redirect-id-only mechanism (DASH-009's
+    # original DASH-005-GAP fallback) is now historical, see
+    # docs/tickets/DASH-009.md's Outcome section. The run id itself is still
+    # the one flow 2's own redirect just produced, only how we get *to* the
+    # detail page changes.
+    driver.get(f"{live_server}/runs")
+    _wait(driver).until(
+        EC.presence_of_element_located((By.CSS_SELECTOR, f"a[href='/runs/{run_id}']"))
+    )
+    driver.find_element(By.CSS_SELECTOR, f"a[href='/runs/{run_id}']").click()
+    _wait(driver).until(EC.url_matches(r"/runs/[0-9a-f-]{36}$"))
 
     # Bounded poll for `status` no longer being "running" (Design section's
     # allowance) -- the stub fixture marks a run "completed" synchronously at

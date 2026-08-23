@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Validation runs -- dashboard-web{% endblock %}
+{% block content %}
+<h2>Validation runs</h2>
+
+{% if runs %}
+<p>Each run below is a leakage-free, purged walk-forward validation run against the mandatory
+naive baselines. These are validation/audit records only.</p>
+<table>
+    <thead>
+        <tr>
+            <th>Run</th>
+            <th>Status</th>
+            <th>Dataset</th>
+            <th>Horizon</th>
+            <th>Created at</th>
+            <th>Completed at</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for run in runs %}
+        <tr>
+            <td><a href="/runs/{{ run.id }}">{{ run.id }}</a></td>
+            <td>{{ run.status }}</td>
+            <td>{{ run.dataset_id }}</td>
+            <td>{{ run.horizon }}</td>
+            <td>{{ run.created_at }}</td>
+            <td>{{ run.completed_at if run.completed_at else "--" }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p>No validation runs yet.</p>
+{% endif %}
+{% endblock %}
