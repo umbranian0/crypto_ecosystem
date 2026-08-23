@@ -19,6 +19,16 @@ requirements:
 - `test_alembic_upgrade_head_lands_alembic_version_in_reporting_schema`:
   confirms `alembic_version` (not just `reports`) lands in the `reporting`
   schema, per this ticket's hard requirement (mirrors INF-005/VS-013).
+- `test_set_local_scope_does_not_leak_across_pooled_connection_reuse`: mirrors
+  gateway-api's `tests/test_postgres_repository.py` test of the same name
+  exactly (a real bug of this class was found and fixed once already, VS-021
+  in validation-service's `create_run`). Proves `_tenant_scoped_session`'s
+  `SELECT set_config('app.tenant_id', :tenant_id, true)` is genuinely
+  per-transaction, not a value that survives a connection's return to (and
+  reuse from) the pool -- via `restricted_role_engine`'s `pool_size=1,
+  max_overflow=0`, `pg_backend_pid()` to prove the same physical connection
+  was actually recycled, and `current_setting('app.tenant_id', true)` to
+  check for leakage.
 
 Skipped, not failed, when Postgres isn't reachable (e.g. Docker not running
 locally) -- CI/other devs without Compose up should not break on this file --
@@ -31,6 +41,7 @@ import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
 
 import pytest
@@ -38,7 +49,7 @@ from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
-from app.repositories.postgres_repository import PostgresReportRepository
+from app.repositories.postgres_repository import PostgresReportRepository, _tenant_scoped_session
 
 SERVICE_ROOT = Path(__file__).resolve().parent.parent
 
@@ -252,3 +263,156 @@ def test_alembic_upgrade_head_lands_alembic_version_in_reporting_schema() -> Non
     assert {"id", "tenant_id", "run_id", "report_kind", "generated_at", "content", "status"}.issubset(
         report_columns
     )
+
+
+_RESTRICTED_ROLE = "reporting_pool_reuse_test_role"
+_RESTRICTED_ROLE_PASSWORD = "reporting_pool_reuse_test_role_password"  # test-only, dropped at teardown
+
+
+def _with_credentials(url: str, user: str, password: str) -> str:
+    parts = urlsplit(url)
+    netloc = f"{user}:{password}@{parts.hostname}"
+    if parts.port:
+        netloc += f":{parts.port}"
+    return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+
+
+def _drop_test_role_if_exists(conn) -> None:
+    # `DROP ROLE` alone fails with "cannot be dropped because some objects
+    # depend on it" once GRANTs exist against it (e.g. a previous test run
+    # that crashed before its own teardown ran) -- `DROP OWNED BY` first
+    # clears those dependent privileges.
+    exists = conn.execute(
+        text("SELECT 1 FROM pg_roles WHERE rolname = :role"), {"role": _RESTRICTED_ROLE}
+    ).scalar()
+    if exists:
+        conn.execute(text(f"DROP OWNED BY {_RESTRICTED_ROLE}"))
+        conn.execute(text(f"DROP ROLE {_RESTRICTED_ROLE}"))
+
+
+@pytest.fixture(scope="module")
+def restricted_role_engine():
+    """A non-superuser, non-BYPASSRLS role -- mirrors gateway-api's own
+    `restricted_role_engine` fixture exactly (see that module's docstring
+    for why an infra-provisioned superuser role can't prove RLS enforcement
+    on its own: Postgres superusers, and any role with `BYPASSRLS`, ignore
+    RLS entirely, `FORCE ROW LEVEL SECURITY` included). Grants mirror
+    exactly what `PostgresReportRepository`'s two real methods need: schema
+    USAGE plus SELECT/INSERT on `reporting.reports`, nothing else (no
+    UPDATE/DELETE method exists on `ReportRepository`).
+
+    `pool_size=1, max_overflow=0` (test-only, not production config): forces
+    every sequential `Session()`/`_tenant_scoped_session()` call using this
+    engine onto the SAME physical connection, which is exactly what the
+    pooled-connection-reuse test below needs to prove -- a bigger pool would
+    make "was this actually the same recycled connection" non-deterministic.
+    """
+    admin_engine = create_engine(POSTGRES_URL)
+    with admin_engine.connect() as conn:
+        conn = conn.execution_options(isolation_level="AUTOCOMMIT")
+        _drop_test_role_if_exists(conn)
+        conn.execute(
+            text(
+                f"CREATE ROLE {_RESTRICTED_ROLE} LOGIN PASSWORD "
+                f"'{_RESTRICTED_ROLE_PASSWORD}' NOSUPERUSER NOBYPASSRLS"
+            )
+        )
+        conn.execute(text(f"GRANT USAGE ON SCHEMA reporting TO {_RESTRICTED_ROLE}"))
+        conn.execute(text(f"GRANT SELECT, INSERT ON reporting.reports TO {_RESTRICTED_ROLE}"))
+    admin_engine.dispose()
+
+    restricted_url = _with_credentials(POSTGRES_URL, _RESTRICTED_ROLE, _RESTRICTED_ROLE_PASSWORD)
+    restricted_url = f"{restricted_url}?{SEARCH_PATH_OPTION}"
+    engine = create_engine(restricted_url, pool_size=1, max_overflow=0)
+    yield engine
+    engine.dispose()
+
+    admin_engine = create_engine(POSTGRES_URL)
+    with admin_engine.connect() as conn:
+        conn = conn.execution_options(isolation_level="AUTOCOMMIT")
+        _drop_test_role_if_exists(conn)
+    admin_engine.dispose()
+
+
+def test_set_local_scope_does_not_leak_across_pooled_connection_reuse(
+    restricted_role_engine,
+) -> None:
+    """THE core test: proves `_tenant_scoped_session`'s `set_config(...,
+    true)` hook is genuinely per-transaction, not a one-time value that
+    survives a connection's return to (and reuse from) the pool. Mirrors
+    gateway-api's test of the same name exactly -- a real bug of this class
+    was found and fixed once already (VS-021, validation-service's
+    `create_run`). Uses `restricted_role_engine` (see its docstring): the
+    "tenant B must not see tenant A's data" assertions below only mean
+    something under a real non-superuser/non-BYPASSRLS role.
+
+    Deliberately non-tautological: the middle block below does NOT call
+    `_tenant_scoped_session` at all. It just checks, on the SAME physical
+    connection (forced via `restricted_role_engine`'s pool_size=1) tenant
+    A's transaction just used, whether `current_setting('app.tenant_id')`
+    is still readable. If the hook were wired at engine-creation/startup
+    time, or used plain `SET` instead of `set_config(..., true)`, this would
+    still return tenant A's id here -- this test would fail. Since the real
+    implementation scopes it to the transaction, it must come back empty.
+    """
+    report_repo = PostgresReportRepository(ENGINE_URL, engine=restricted_role_engine)
+
+    tenant_a = _unique_tenant("pool-a")
+    tenant_b = _unique_tenant("pool-b")
+    report_a = report_repo.create_report(
+        tenant_id=tenant_a,
+        run_id="run-a",
+        report_kind="audit",
+        content="<html>a</html>",
+        status="generated",
+    )
+    report_b = report_repo.create_report(
+        tenant_id=tenant_b,
+        run_id="run-b",
+        report_kind="audit",
+        content="<html>b</html>",
+        status="generated",
+    )
+
+    # Acquire + release a connection scoped to tenant A.
+    with _tenant_scoped_session(restricted_role_engine, tenant_a) as session:
+        backend_pid_a = session.execute(text("SELECT pg_backend_pid()")).scalar_one()
+        session.commit()
+
+    # Immediately after: open a NEW transaction, on what pool_size=1
+    # guarantees is the SAME recycled physical connection, and check the
+    # leftover state BEFORE this test itself sets anything.
+    with Session(restricted_role_engine) as session:
+        backend_pid_check = session.execute(text("SELECT pg_backend_pid()")).scalar_one()
+        assert backend_pid_check == backend_pid_a, (
+            "test setup invariant violated: expected the exact same "
+            "physical connection to be recycled from the pool -- if this "
+            "assertion fails, the leak check below no longer proves "
+            "anything about pooled-connection reuse"
+        )
+
+        leaked_value = session.execute(
+            text("SELECT current_setting('app.tenant_id', true)")
+        ).scalar_one()
+        session.rollback()
+
+    # Not `is None`: Postgres reverts a custom GUC's per-transaction
+    # `set_config(..., true)` value to `''` (empty string), not NULL, once
+    # that GUC's placeholder has been referenced at all on a
+    # session/connection -- `''`/falsy is the correctly-reverted state here,
+    # an actual leak would be the literal `tenant_a` string.
+    assert not leaked_value, (
+        f"app.tenant_id leaked across pooled-connection reuse: {leaked_value!r} "
+        "-- set_config(..., true) must revert at transaction end, not "
+        "persist on the physical connection"
+    )
+    assert leaked_value != tenant_a
+
+    # Now prove the actual tenant-B-scoped behavior on that same recycled
+    # connection: sees tenant B's report, not tenant A's.
+    fetched_b = report_repo.get_report(tenant_b, report_b.id)
+    fetched_a_as_b = report_repo.get_report(tenant_b, report_a.id)
+
+    assert fetched_b is not None
+    assert fetched_b.id == report_b.id
+    assert fetched_a_as_b is None

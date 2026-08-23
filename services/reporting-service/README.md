@@ -4,9 +4,13 @@
 **scaffolding, `reporting.reports` Postgres schema/Repository with real RLS, Factory/**
 **`ValidationAuditRenderer`, `POST /reports/generate`, `GET /reports/{id}` retrieval, a Redis**
 **Streams `run.completed` subscriber reusing the same generation code path, `GET /health`, a**
-**route-existence doc-sync check, and CI wiring. Full test suite: 36 passed, 0 failed, 88% coverage**
-**(independently re-confirmed by the Tech Lead against real Postgres and Redis, not taken on any**
-**single dev agent's report alone).** Built ahead of
+**route-existence doc-sync check, and CI wiring, plus a pooled-connection-reuse RLS regression test**
+**(`test_set_local_scope_does_not_leak_across_pooled_connection_reuse`, mirroring gateway-api's own**
+**test of the same name -- proves `set_config('app.tenant_id', ..., true)` reverts at transaction**
+**end and does not leak across a recycled pooled connection, the exact bug class VS-021 found and**
+**fixed once already in validation-service). Full test suite: 37 passed, 0 failed**
+**(independently re-confirmed against real Postgres, not taken on any single dev agent's report**
+**alone).** Built ahead of
 trigger #7 (implementation-plan.md section 6: "as soon as a validation run needs to produce a
 client-facing artifact instead of raw JSON -- i.e. right after the first pilot audit is requested")
 -- no pilot client/audit request exists yet. Built anyway at explicit user request, the same
@@ -44,7 +48,14 @@ full mechanism, mirroring `validation-service`'s VS-013 and `gateway-api`'s GW-0
 collision. The RLS cross-tenant proof (`tests/test_postgres_repository.py::
 test_rls_blocks_cross_tenant_reads_at_the_database_level`) runs as the real, already-provisioned
 non-superuser `naive_first_app` role (INF-014), not a superuser/`BYPASSRLS` connection, so it is a
-genuine proof rather than a vacuous pass.
+genuine proof rather than a vacuous pass. A second regression test,
+`test_set_local_scope_does_not_leak_across_pooled_connection_reuse` (mirroring gateway-api's test of
+the same name exactly), proves the same `set_config(..., true)` scoping is genuinely per-transaction
+-- not a value that survives a connection's return to (and reuse from) a connection pool -- via a
+dedicated ephemeral `NOSUPERUSER NOBYPASSRLS` test role (`restricted_role_engine`,
+`pool_size=1, max_overflow=0` to force physical-connection reuse) and `pg_backend_pid()`/
+`current_setting('app.tenant_id', true)` checks; this is the exact bug class VS-021 found and fixed
+once already in validation-service's `create_run`.
 
 **Does not own**: computing metrics or DM results — those come from `validation-service` via its
 API; this service only renders and stores what it's given. Also does not own object storage this
