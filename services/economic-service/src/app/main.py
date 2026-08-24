@@ -27,6 +27,11 @@ Wired here the same way `/health`'s dependency is: mounted directly on `app`,
 no separate `APIRouter` prefix module needed yet at this service's current
 size (mirrors validation-service's own early-stage `main.py` shape before it
 grew multiple routers).
+
+`POST /backtests` (ECON-012) is a batch/UX wrapper over the same gate,
+looping `check_economic_eligibility` per caller-supplied run id -- see
+`app.routers.backtests`. Mounted alongside `simulations_router` the same
+way.
 """
 
 from __future__ import annotations
@@ -36,6 +41,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from app.dependencies.repositories import HealthCheckEngineDep
+from app.routers.backtests import router as backtests_router
 from app.routers.simulations import router as simulations_router
 
 app = FastAPI(
@@ -50,6 +56,7 @@ app = FastAPI(
 )
 
 app.include_router(simulations_router)
+app.include_router(backtests_router)
 
 
 @app.get("/health", response_model=None)

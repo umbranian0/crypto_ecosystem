@@ -243,3 +243,89 @@ applied here to this extension's own hard constraints.
     scratchpad-write collision with a parallel PM task, resolved per the coordinator's explicit
     instruction. No scope, dependency, or sequencing content changed as a result — only the number and
     self-references to it.
+
+## Outcome
+
+All 3 in-scope stories (`ECON-012`, `ECON-013`, `ECON-014`) done. `services/economic-service`'s full
+suite: `.venv\Scripts\python.exe -m pytest -q` -> **66 passed, 0 failed** (50 Sprint-13 baseline + 6
+ECON-012 + 5 ECON-013 + 5 ECON-014 -- independently re-run by the Tech Lead multiple times across the
+sprint, most recently after all three tickets landed). Sequencing executed exactly as planned:
+`ECON-012` ran solo first and was Tech-Lead-verified before `ECON-013`/`ECON-014` started; those two then
+ran genuinely in parallel and landed with zero file-collision (confirmed via `git diff --stat` -- disjoint
+file sets exactly as predicted by the sprint's own file-overlap check).
+
+**What shipped**: `POST /backtests` (`src/app/routers/backtests.py`, ECON-012) -- a bounded
+(`run_ids: list[str]`, `max_length=50`) batch wrapper that resolves an `UpstreamValidationResult` per run
+id via the existing `Depends(get_upstream_client)` seam and calls `check_economic_eligibility` (imported
+from `app.eligibility`, never reimplemented) once per run id inside a plain loop, with one run's refusal
+never blocking another's evaluation; a new `economic.backtest_results` table (`src/app/models.py`,
+`src/app/repositories/{interfaces.py,sqlite_repository.py}`, `migrations/versions/0003_add_backtest_results.py`,
+ECON-013) persisting exactly and only the eligible-branch rows from that endpoint, tagged
+`result_kind="retrospective_backtest"`, with the insert path structurally proven reachable only from
+inside `routers/backtests.py`'s eligible branch; and a new "Backtesting (ECON-012/013)" README section
+plus doc-sync extensions (`scripts/check_profitability_language.py`'s one new allowlist entry,
+`tests/test_openapi_language.py` verifying the actual generated `/openapi.json` output, a live
+drift-detection demonstration, ECON-014) stating plainly the feature is inert today for the same two
+reasons as the rest of the service.
+
+**Two real, disclosed process notes, not silently absorbed**:
+- `ECON-013`'s dev agent was interrupted mid-task by a session usage limit before completing its own
+  ticket-file checkboxes/Outcome section, even though its actual code and tests were already complete and
+  correct. The Tech Lead independently verified the shipped code/tests directly (not merely trusting a
+  partial self-report) and completed that ticket's documentation, mirroring `ECON-004`'s own Sprint-13
+  precedent for an interrupted dev agent.
+- `ECON-013`'s own ticket file contained an internal inconsistency: its Design section's binding
+  requirement ("the insert path is reachable exclusively from inside ECON-012's eligible branch in
+  `src/app/routers/backtests.py`") is structurally impossible to satisfy without editing that file, but
+  the ticket's Review acceptance criteria file list said "zero changes to `src/app/routers/`" and omitted
+  `src/app/dependencies/repositories.py` (needed for the new repository's DI provider) entirely. The Tech
+  Lead ruled in favor of the Design section's binding requirement (the ticket's actual intent, reinforced
+  by its own required structural-reachability test) and confirmed both edits were minimal, additive, and
+  correctly scoped by reading the actual diff directly -- `routers/backtests.py` gained exactly one new
+  `Depends()` parameter and one call inside the pre-existing eligible branch, no eligibility or refusal
+  logic touched. Recorded in `docs/tickets/ECON-013.md`'s own Outcome section as the authoritative account.
+
+Zero changes to any file under `libs/naive_first_engine`, `libs/common`, `services/validation-service`,
+`services/gateway-api`, `services/ingestion-service`, `services/reporting-service`, or
+`services/dashboard-web` -- confirmed via `git status` scoped to those paths. `ECON-015` through `ECON-018`
+remain unscheduled/unbuilt, as planned.
+
+## Non-negotiable verification -- performed personally by the Tech Lead, stated explicitly per this
+sprint's own requirement, not folded into a generic "tests passed" line
+
+1. **No exchange integration of any kind was added.** Grepped the entire `services/economic-service/`
+   tree (`src/`, `scripts/`, `migrations/`, `tests/`, `README.md`) for any Binance/crypto.com/venue-API-
+   client import, order-placement logic, or wallet-connection code, mocked or real, plus a separate check
+   for any `httpx` import anywhere in `src/`. Zero real hits: the only `binance`/`coinbase` matches are
+   pre-existing (Sprint 13) test-fixture string labels for `FeeSchedule.venue` (a plain string column) and
+   the README's own Won't-list prose naming `ECON-015` explicitly as declined. Zero `httpx` imports
+   anywhere in `src/`. Zero `def place_*`/`submit_order`/`buy_*`/`sell_*`/`execute_trade`-shaped function
+   definitions anywhere.
+2. **`ECON-005`'s gate is unmodified.** `git diff HEAD -- src/app/eligibility.py` returns zero output --
+   the file is byte-for-byte identical to its Sprint-13-close commit (`d7b556a`), confirmed against the
+   exact text captured earlier in this same session. `ECON-012`'s batch handler imports
+   `check_economic_eligibility` from `app.eligibility` by name and calls it once per run id (confirmed by
+   direct reading of `routers/backtests.py` and by the passing AST-based test
+   `test_backtests_router_imports_check_economic_eligibility_by_name`) -- never a parallel
+   reimplementation.
+3. **No automation language anywhere.** Re-ran `scripts/check_profitability_language.py` directly
+   (`.venv\Scripts\python.exe scripts/check_profitability_language.py`) against the actual shipped files
+   -- output: "No forbidden profitability-claim language found outside src/app/eligibility.py." The one
+   new `_ALLOWED_EXCEPTIONS` entry (ECON-014) was read directly and confirmed to excuse exactly one
+   legitimate concept-discussion line in `models.py`'s docstring, not a real claim.
+4. **Correct framing preserved.** Read the new "Backtesting (ECON-012/013)" README section directly (all
+   five required elements present, none soften the "inert today" framing) and read `app.openapi()`'s
+   actual generated output directly via a live `TestClient(app).get("/openapi.json")` call -- confirmed
+   `POST /backtests`'s generated `summary`/`description` contain "retrospective," "hypothetical," and
+   "research purposes only," and contain no forward-looking "profit"/"win"/promotional "returns" language.
+5. **No fund custody.** Grepped every new/modified file in this sprint's scope for
+   balance/position/custody/wallet/holdings-shaped names -- zero hits. `BacktestResult`'s 14 columns are
+   exactly `id`/`tenant_id`/`backtest_id`/`run_id`/`fee_schedule_id`/`slippage_model_id`/
+   `cost_adjusted_return`/`slippage_adjusted_return`/`total_cost_bps`/`upstream_dm_statistic`/
+   `upstream_dm_pvalue`/`upstream_dm_verdict`/`computed_at`/`result_kind` -- no balance/position/wallet-
+   shaped field under any name. `ECON-018` (the explicitly-considered-and-declined mocked-wallet
+   bookkeeping structure) was not quietly introduced under a different name anywhere in this sprint.
+
+All five checks independently confirm this sprint's own central claim, unchanged from Sprint 13: this
+scaffold cannot return a profitability number through the real running service today, structurally, not
+merely by policy -- extended, not weakened, by the batch endpoint and its eligible-only persistence table.

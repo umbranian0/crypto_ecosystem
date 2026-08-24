@@ -162,3 +162,84 @@ it draws between discussing the concept of profitability in order to gate
 it, and asserting the service currently has that property.
 
 See `docs/tickets/ECON-006.md` for full acceptance criteria and outcome.
+
+## Batch backtest endpoint (ECON-012) -- pointer only, fuller section is ECON-014's job
+
+`POST /backtests` (`src/app/routers/backtests.py`) exists: a batch/UX wrapper
+over ECON-005's existing `check_economic_eligibility` gate that loops over a
+caller-supplied, `Field(max_length=50)`-bounded list of run ids and returns
+an ordered `list[EligibleSimulationResult | NotEligibleForSimulation]`, one
+entry per run id, each tagged with its own `run_id`. It adds zero new
+eligibility logic -- one run id's refusal never blocks another's evaluation
+in the same batch. As this service is currently wired (ECON-004's mock-only
+upstream client), every real call today returns an all-refused batch, same
+as `POST /simulations`. See `docs/tickets/ECON-012.md` for full acceptance
+criteria and outcome; the "Backtesting (ECON-012/013)" section below is
+`ECON-014`'s fuller framing this pointer stood in for.
+
+## Backtesting (ECON-012/013)
+
+**Statistical accuracy != economic value** applies to this feature exactly as
+much as it applies to `POST /simulations` above -- batch backtesting is not a
+second, looser gate; it is the identical gate, applied to more than one run
+id per call.
+
+**(a) Single-run, on-demand, never automated.** `POST /backtests` evaluates
+exactly the fixed, caller-supplied list of run ids present in that one
+request body, once. There is no scheduler, no background job, no daemon, and
+no concept anywhere in this codebase of "run this backtest automatically" --
+a caller must submit the exact set of run ids they want inspected, every
+time, and the response only ever reflects that one call.
+
+**(b) Gated by ECON-005's exact, unmodified guard, reused per run id.**
+`create_backtest_batch` (`src/app/routers/backtests.py`) calls the same
+`check_economic_eligibility` function described in "The structural
+eligibility gate (ECON-005)" above, once per run id, inside a plain loop --
+it never reimplements, copies, or loosens that function's two-condition
+logic. See `docs/tickets/ECON-012.md` for the full acceptance criteria this
+reuse was built and verified against.
+
+**(c) Inert today, for the same two reasons as the rest of this service --
+restated here, not just cross-referenced.** First, no model has ever beaten
+naive on this platform: every real run to date in `validation-service`
+compares Naive0 against NaiveLast, never a real client-supplied predictive
+model. Second, `VS-017` ("client-supplied prediction baseline") is itself
+deferred and unbuilt in `validation-service` -- until it ships, there is no
+code path anywhere on this platform that could produce a real client-model
+DM verdict for a batch of run ids to inspect. Because `MockValidationResultClient`
+is this service's only real DI-wired upstream client this sprint and always
+returns `source="mock_fixture"` (ECON-004), fact 1 of ECON-005's gate can
+never hold through the real running service today -- every real `POST
+/backtests` call, as actually deployed, returns an all-refused batch.
+
+**(d) No exchange integration, no custody, no investment product -- named
+Won'ts, not silent omissions.** This feature deliberately stays clear of, and
+this backlog will not be quietly extended into, any of: real exchange
+integration (`ECON-015` -- no Binance/crypto.com/any-venue API client, no
+order-placement logic, no wallet-connection code, mocked or real); automated
+or "robo" execution (`ECON-016` -- every backtest here is a single,
+on-demand, manually-triggered call, never a scheduler or daemon); risk
+tiering or user-facing "investment" framing (`ECON-017` -- no risk-tier
+concept, no "invest and win" copy, no signup flow through which a retail
+user could hand this platform money or a wallet connection; developer/
+analyst tooling only); or a mocked-wallet bookkeeping data structure
+(`ECON-018` -- explicitly considered and declined, because even a pure,
+no-I/O bookkeeping record risks reading as the first piece of exchange-
+integration scaffolding once it sits alongside this endpoint's run-id-driven
+batch iteration). See `docs/product/backlog-economic-service.md`'s
+"Backtesting / historical simulation (new)" section for the full reasoning
+behind each of these four boundaries.
+
+**(e) `economic.backtest_results` (ECON-013) can, and today does, contain
+zero rows.** ECON-013 adds a table that persists exactly and only the rows
+produced by this endpoint's eligible branch, tagged `result_kind
+="retrospective_backtest"` -- refused entries are never persisted, because
+there is nothing legitimate to persist for them (mirrors `ECON-002`'s own
+"never store a fabricated or premature profitability number" principle).
+Because fact (c) above holds unconditionally today, the insert path this
+table's repository exposes is unreachable through any real request this
+service currently serves -- the table's mere existence is schema readiness,
+not evidence of any stored finding, and it will continue to hold zero rows
+for as long as `ECON-004`'s mock-only rule holds.
+
+See `docs/tickets/ECON-014.md` for full acceptance criteria and outcome.

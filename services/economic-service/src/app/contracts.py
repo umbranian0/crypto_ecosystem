@@ -51,6 +51,27 @@ class SimulationRequest(BaseModel):
     slippage_model_id: str
 
 
+class BacktestRequest(BaseModel):
+    """Request shape for `POST /backtests` (ECON-012) -- a batch/UX layer
+    over `SimulationRequest`/`check_economic_eligibility`, not a new
+    eligibility concept. `run_ids` is bounded via `Field(max_length=50)`,
+    mirroring `validation-service`'s own `GET /runs` (VS-022) "hard
+    server-side ceiling, 422 on out-of-range, never clamped" precedent --
+    reused here, not reinvented. `fee_schedule_id`/`slippage_model_id` are
+    shared across the whole batch (no per-run override this ticket,
+    ECON-012.md's own documented choice) -- this mirrors `SimulationRequest`'s
+    two fields of the same name and purpose, just applied once for the whole
+    set rather than once per run. Duplicate `run_id` values are not
+    deduplicated (ECON-012.md's own documented choice): each is independently
+    resolved and returned, since nothing about the gate is idempotent-only or
+    expensive enough to justify collapsing them.
+    """
+
+    run_ids: list[str] = Field(max_length=50)
+    fee_schedule_id: str
+    slippage_model_id: str
+
+
 class UpstreamValidationResult(BaseModel):
     """The DM-test verdict shape this service reads from `validation-service`
     (via ECON-004's mock client today -- see README's trigger-#11 override
@@ -103,8 +124,19 @@ class NotEligibleForSimulation(BaseModel):
     so a serialization bug can never make a refusal look like a "no profit"
     numeric result. Only a reason code/message and, where available, the
     upstream verdict that caused the refusal.
+
+    `run_id` (ECON-012, additive): tags a refusal with the run id it
+    originated from -- needed once refusals can appear inside an ordered
+    batch response (`POST /backtests`) alongside other run ids' entries, not
+    only as a single-request response where the caller already knows which
+    run id it submitted. Defaults to `""` so `POST /simulations`'s existing
+    single-run construction sites (`routers/simulations.py`, unmodified by
+    this ticket) do not need to change. This is a purely additive field: the
+    class still carries zero numeric fields of any kind, so the disjoint
+    field-set guarantee against `EligibleSimulationResult` is unchanged.
     """
 
     reason_code: str
     message: str
     upstream_verdict: UpstreamValidationResult | None = None
+    run_id: str = ""

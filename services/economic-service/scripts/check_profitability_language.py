@@ -114,6 +114,14 @@ _ALLOWED_EXCEPTIONS: list[str] = [
     # 'no profit' result") -- not a claim that the service has ever produced
     # such a figure.
     '"no profit"',
+    # ECON-014: models.py's BacktestResult docstring (ECON-013, landed the
+    # same sprint) names the forbidden-substring list
+    # test_no_profitability_columns.py itself enforces against column names
+    # -- a concept-discussion use of the word "profit" (naming the pattern a
+    # column name must NOT match), not a claim this service has computed or
+    # stored one. Mirrors the "no profit" contracts.py exception immediately
+    # above in kind, not mechanism.
+    "still rejecting `pnl`/`profit`/`net_return`/`revenue`/`forecast_*`/`win`/",
 ]
 
 

@@ -1,5 +1,6 @@
 """Repository interfaces (implementation-plan.md section 7) for ECON-002's
-inputs-only `economic` schema: `EconomicInputRepository`.
+inputs-only `economic` schema: `EconomicInputRepository`, plus ECON-013's
+separate, guard-gated write path: `BacktestResultRepository`.
 
 Single Protocol, one method group per table (design decision, documented per
 this ticket's own "one Protocol per table, or one umbrella Protocol --
@@ -29,6 +30,14 @@ is needed, matching `validation-service`'s own binding decision.
 Every method's first parameter after `self` is `tenant_id` (ticket Design
 section, no exceptions): tenant-scoped at the method-signature level, not
 just by convention at the implementation.
+
+`BacktestResultRepository` (ECON-013) is a deliberately SEPARATE Protocol,
+not folded into `EconomicInputRepository` above: `backtest_results` is not a
+simulation *input* record like the other three tables -- it is an eligible-
+branch-only, guard-gated write path (see `app.models.BacktestResult`'s own
+docstring), and mixing that into the unconditional input-record writes above
+would blur that distinction. Write-once: only a `create_*` and a `get_*`
+method, no update/delete.
 """
 
 from __future__ import annotations
@@ -113,3 +122,53 @@ class EconomicInputRepository(typing.Protocol):
     def get_simulation_config(
         self, tenant_id: str, simulation_config_id: str
     ) -> SimulationConfigRecord | None: ...
+
+
+@dataclass(frozen=True)
+class BacktestResultRecord:
+    """Mirrors `app.models.BacktestResult`'s columns exactly."""
+
+    id: str
+    tenant_id: str
+    backtest_id: str
+    run_id: str
+    fee_schedule_id: str
+    slippage_model_id: str
+    cost_adjusted_return: float
+    slippage_adjusted_return: float
+    total_cost_bps: float
+    upstream_dm_statistic: float
+    upstream_dm_pvalue: float
+    upstream_dm_verdict: str
+    computed_at: datetime
+    result_kind: str
+
+
+@typing.runtime_checkable
+class BacktestResultRepository(typing.Protocol):
+    """Repository for the one guard-gated `economic.backtest_results` table
+    (ECON-013). A SEPARATE Protocol from `EconomicInputRepository` above --
+    see module docstring for why. `create_backtest_result` has no
+    `result_kind` parameter: the fixed tag is always applied internally by
+    the implementation (mirrors `app.models.RESULT_KIND_RETROSPECTIVE_BACKTEST`),
+    never settable by a caller.
+    """
+
+    def create_backtest_result(
+        self,
+        tenant_id: str,
+        backtest_id: str,
+        run_id: str,
+        fee_schedule_id: str,
+        slippage_model_id: str,
+        cost_adjusted_return: float,
+        slippage_adjusted_return: float,
+        total_cost_bps: float,
+        upstream_dm_statistic: float,
+        upstream_dm_pvalue: float,
+        upstream_dm_verdict: str,
+    ) -> BacktestResultRecord: ...
+
+    def get_backtest_results(
+        self, tenant_id: str, backtest_id: str
+    ) -> list[BacktestResultRecord]: ...
