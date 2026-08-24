@@ -110,7 +110,9 @@ Acceptance criteria:
 - [ ] `docker compose up minio` starts successfully and the MinIO console/API is reachable on its documented port.
 - [ ] `infra/README.md` states plainly that no service currently reads or writes to it — `ingestion-service` (trigger #6) is the first real consumer and hasn't been built yet — so this story stands the container up without inventing bucket/prefix policy ahead of a real consumer defining its own needs.
 
-Rationale for priority: named in solution-design.md section 5's table and cheap to add alongside INF-001/INF-002, but — unlike Postgres/Redis — nothing in this debt sprint's stated trigger (`VS-013`/`VS-014`/`GW-012`) actually depends on it; downgraded from Must because no current story is blocked without it.
+**Explicit trigger override (2026-08-24)**: pulled forward now, at explicit user request, per `docs/adr/0003-disclosed-trigger-override-pattern.md` and the assessment in `docs/product/backlog-hardening-wave-review.md`. Pure infra scaffolding (empty container, credentials via env vars, same pattern as the already-built `postgres`/`redis` services); no bucket/prefix policy is invented ahead of a real consumer. Care condition: apply the same `127.0.0.1`-only host port binding already used for `postgres`/`redis`/`validation-service` (`docs/product/backlog-operability.md`'s "Areas checked with no real gap found" section), so this doesn't reopen a port-exposure gap the platform already closed elsewhere.
+
+Rationale for priority: named in solution-design.md section 5's table and cheap to add alongside INF-001/INF-002; originally downgraded from Must because no current story was blocked without it — pulled forward per the override note above, still not claimed as unblocking anything new.
 Depends on: none
 
 ### INF-009 — Compose healthchecks and startup ordering [Should]
@@ -131,7 +133,7 @@ Acceptance criteria:
 - [ ] A migration or setup script converts the relevant table(s) to hypertables, with the partitioning column chosen and documented.
 - [ ] Existing repository/query behavior is unaffected (hypertables remain queryable via plain SQL).
 
-Rationale for priority: solution-design.md section 3.2 names this as conditional ("if queried directly rather than via Parquet") — no current story queries `split_results` as a time series directly (the dashboard that would do this is trigger #8, not fired); doing this now would be speculative, per implementation-plan.md's own "don't scaffold before something concrete needs it" principle.
+**Explicit trigger override (2026-08-24)**: pulled forward now, at explicit user request, per `docs/adr/0003-disclosed-trigger-override-pattern.md` and the assessment in `docs/product/backlog-hardening-wave-review.md`. Note: trigger #8 (`dashboard-web`) has since fired as its own disclosed override, but `dashboard-web`'s `DASH-004` still routes all reads through `validation-service`'s existing `GET /runs/{id}/splits` API, not a direct time-series query — so the *original* named blocker (a direct-query consumer) still doesn't exist. Pulled forward anyway on independent grounds: this is a schema-level performance change that touches neither tenant isolation, auth, nor the leakage-aware protocol, and existing query behavior must remain unaffected per this story's own AC. Care condition: scope narrowly to the conversion itself (proven not to break existing queries) — do not build any new time-series query surface, since there is still no real caller for one.
 Depends on: INF-005
 
 ### INF-011 — `ingestion-service` / `reporting-service` / `dashboard-web` Compose wiring [Won't]

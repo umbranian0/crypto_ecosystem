@@ -144,7 +144,9 @@ Acceptance criteria:
 - [ ] An endpoint or operator path sets `api_keys.revoked_at`, using GW-004's already-tested revocation semantics.
 - [ ] A revoked key fails GW-006's auth check on the very next request (no caching window that would keep a revoked key valid).
 
-Rationale for priority: important operational hygiene, but not required to prove the core auth/routing path works end-to-end for the first (still-hypothetical) pilot client — deferred behind the Musts above.
+**Explicit trigger override (2026-08-24)**: pulled forward now, at explicit user request, per `docs/adr/0003-disclosed-trigger-override-pattern.md` and the assessment in `docs/product/backlog-hardening-wave-review.md`. GW-005's operator-only provisioning is already in real use, and GW-004's revocation flag/GW-006's revoked-key rejection are already built and tested — this story only adds the missing path to set the flag. Care condition carried over from the review: keep this an operator-only path (CLI script or operator-gated endpoint, mirroring GW-005's "not a public sign-up flow" framing), never a tenant self-service revocation endpoint, and add no caching layer that could reintroduce a window where a revoked key stays valid.
+
+Rationale for priority: important operational hygiene, but not required to prove the core auth/routing path works end-to-end for the first (still-hypothetical) pilot client — originally deferred behind the Musts above; pulled forward per the override note above.
 Depends on: GW-006
 
 ### GW-011 — JWT-based session auth [Should]
@@ -186,8 +188,10 @@ Acceptance criteria:
 - [ ] Key issuance, revocation, and failed-auth attempts are logged with tenant_id, timestamp, and outcome — no raw keys or secrets in the log line.
 - [ ] Logging uses whatever structured-logging convention the rest of the platform already uses (matching `validation-service`'s `InProcessLogEventPublisher` precedent for "structured line, interim, not yet durable/shipped anywhere").
 
-Rationale for priority: valuable for the eventual audit/compliance positioning (da-tese-ao-produto.md section 2.3.4/2.4) but not required for the core auth/routing path to function or be tested — genuinely nice-to-have at this stage, no real pilot or auditor is asking for it yet.
-Depends on: GW-006
+**Explicit trigger override (2026-08-24)**: pulled forward now, at explicit user request, per `docs/adr/0003-disclosed-trigger-override-pattern.md` and the assessment in `docs/product/backlog-hardening-wave-review.md`. Scope is narrow (append-only structured log line: tenant_id, timestamp, outcome, never raw keys/secrets) and thematically aligned with this platform's own audit/validation positioning. Care condition: build on top of OPS-006's structured-logging convention (`docs/product/backlog-operability.md`, also pulled forward this wave) rather than a second parallel logging shape, and do not add log retention/shipping to any external system as part of this story — stays "structured local log line," not "compliance-grade retained audit trail," until a real auditor/compliance conversation defines retention requirements.
+
+Rationale for priority: valuable for the eventual audit/compliance positioning (da-tese-ao-produto.md section 2.3.4/2.4) but not required for the core auth/routing path to function or be tested — originally deferred as nice-to-have; pulled forward per the override note above.
+Depends on: GW-006, OPS-006 (structured logging convention this story should build on)
 
 ### GW-015 — Signed/verified internal tenant-identity propagation (LC-009 hardening handoff) [Won't (this backlog)]
 **As** `validation-service` (or any future internal service) **I want** to require cryptographic proof that an `X-Tenant-Id` header actually came from `gateway-api`, not just trust it because it's present **so that** the header-forwarding interim built in GW-007 stops being a spoofable trust-by-network-topology assumption.
@@ -209,7 +213,7 @@ Acceptance criteria:
 - [ ] POST /runs's own synchronous, potentially-long-running execution (validation-service's documented behavior, VS-006) is called out explicitly in the README as a known factor affecting this specific endpoint's load-test numbers differently from the two GET endpoints — not silently averaged together as if all three had equivalent latency profiles.
 - [ ] Cross-referenced (one line, not duplicated) from `docs/product/backlog-validation-service.md`'s own text, noting that `POST /runs`'s real compute cost is validation-service's, even though the load is driven through gateway-api as the public entry point.
 
-Rationale for priority: valuable tooling to have available ahead of the first real pilot's traffic pattern, but nothing in flight depends on it and no trigger from implementation-plan.md fires it yet — Should, not Must.
+Rationale for priority: valuable tooling to have available ahead of the first real pilot's traffic pattern, but nothing in flight depends on it and no trigger from implementation-plan.md fires it yet — Should, not Must. Re-confirmed as safe to pull forward in the 2026-08-24 hardening-wave review (`docs/product/backlog-hardening-wave-review.md`) — pure tooling, no new risk surface.
 Depends on: GW-008, GW-009 (the routing/failure-handling paths being load-tested)
 
 ### GW-018 — Proxy routes for reporting-service's `POST /reports/generate` and `GET /reports/{id}` [Must]

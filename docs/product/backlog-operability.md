@@ -246,7 +246,9 @@ Acceptance criteria:
 - [ ] The existing single log call in `events.py` is migrated to the new convention as the first real usage, not left as the one pre-existing exception
 - [ ] This story does not require standing up a log-aggregation backend (ELK/Loki/CloudWatch) — that is a separate, larger infrastructure decision; this story's scope ends at "logs are structured and correlatable," not "logs are centrally searchable"
 
-Rationale for priority: Could, not Should/Must — there is no live pilot client and no incident on record that better logging would have shortened; this is a real gap named directly in CONTEXT.md's Operability definition ("logs"), and worth doing before the platform has enough concurrent traffic that reconstructing a request's path by timestamp alone stops being practical, but nothing currently in flight is blocked by its absence.
+**Explicit trigger override (2026-08-24)**: pulled forward now, at explicit user request, per `docs/adr/0003-disclosed-trigger-override-pattern.md` and the assessment in `docs/product/backlog-hardening-wave-review.md`. Pure observability/maintainability tooling — adopts a logging convention and a correlation id, does not stand up a log-aggregation backend (still correctly deferred, see OPS-007). Care condition: this is a precondition for GW-014 (auth event audit logging, also pulled forward this wave, `docs/product/backlog-gateway-api.md`) — sequence this story first or alongside GW-014 so that story builds on this convention rather than inventing a second one.
+
+Rationale for priority: Could, not Should/Must — there is no live pilot client and no incident on record that better logging would have shortened; this is a real gap named directly in CONTEXT.md's Operability definition ("logs") — pulled forward per the override note above despite that.
 Depends on: none
 
 ### OPS-007 — Stand up a metrics/alerting stack (Prometheus/Grafana, Sentry, or equivalent) [Won't, for now]

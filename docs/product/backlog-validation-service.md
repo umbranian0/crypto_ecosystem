@@ -189,8 +189,10 @@ Acceptance criteria:
 - [ ] Swapping VS-005's interim implementation for this one requires no change to `POST /runs`'s handler code.
 - [ ] Still does not write to or own any part of the object-storage prefix — read-only, consistent with this service's "does not own dataset storage" boundary.
 
-Rationale for priority: correct per the design, but blocked on `ingestion-service`'s upload API and processed-zone writes (trigger #6), not yet fired.
-Depends on: VS-005; blocked on trigger #6 (`services/ingestion-service`, not yet built)
+**Explicit trigger override (2026-08-24)**: pulled forward now, at explicit user request, per `docs/adr/0003-disclosed-trigger-override-pattern.md` and the assessment in `docs/product/backlog-hardening-wave-review.md`. `ingestion-service`'s connectors and `infra`'s MinIO service (INF-008) have themselves already been pulled forward — this is the same "build the interface's second implementation now, swap via DI" pattern already used successfully for VS-004 -> VS-013. Care condition, stated so it isn't overclaimed: pulling this forward makes the read-side *adapter* real; it does not mean a real, tenant-scoped `processed/{tenant_id}/...` zone is actually populated with real pilot data yet — that still depends on `ingestion-service` actually writing there, a separate, not-yet-confirmed fact this story must not assume into existence. State that distinction plainly in this service's README update.
+
+Rationale for priority: correct per the design; originally blocked on `ingestion-service`'s upload API and processed-zone writes (trigger #6) — pulled forward per the override note above, with the adapter/real-data distinction stated explicitly.
+Depends on: VS-005
 
 ### VS-016 — OpenAPI contract / README sync check [Should]
 **As a** future contributor to `validation-service` **I want** confirmation that the FastAPI-generated OpenAPI schema and this service's README stay in sync **so that** implementation-plan.md section 8's documentation-for-scaling convention ("OpenAPI schema is the source of truth ... don't hand-maintain a duplicate") is actually true here, not just stated.
@@ -205,12 +207,15 @@ Depends on: VS-006, VS-007, VS-008
 ### VS-017 — Client-supplied prediction column as a `Baseline`-interface Strategy [Could]
 **As** `validation-service` **I want** the ability to accept a client-supplied prediction column and run it through the same protocol as the naive baselines, via a Strategy implementation of `naive_first_engine`'s `Baseline` interface **so that** a client model can eventually be scored against Naive0/NaiveLast without a special-cased code path, per this service's own README design note.
 
+**Explicit trigger override (2026-08-24)**: pulled forward now, at explicit user request, per `docs/adr/0003-disclosed-trigger-override-pattern.md` and the assessment in `docs/product/backlog-hardening-wave-review.md`. This is a genuinely new capability, not hygiene — reviewed with extra scrutiny accordingly, not rubber-stamped. It does not touch the leakage-aware split/purge-gap protocol (client predictions apply only to already-defined test windows), the naive baselines stay mandatory (VS-019), and no arbitrary client code execution is introduced (VS-018). The one added acceptance criterion below closes the one real gap the review found: this platform audits the *comparison*, not the *provenance*, of a client's predictions — a client's own submitted series could itself have been produced with knowledge of test-period outcomes, and that is the client's leakage, not this platform's, but nothing said so explicitly before this override.
+
 Acceptance criteria:
 - [ ] A wrapper class implements the same `Baseline` interface (`predict(train, test) -> Series`) `naive_first_engine.baselines.Naive0`/`NaiveLast` already implement, backed by a client-supplied prediction series instead of a computed forecast.
 - [ ] `POST /runs` optionally accepts a client-prediction reference alongside the mandatory naive baselines — the naive baselines are never optional or skippable, per naive_first_engine's own structural rule (solution-design.md section 1 principle 1).
 - [ ] No new execution path is introduced that runs arbitrary client code — this remains "client submits predictions," not "client submits a model," per solution-design.md section 1 principle 2.
+- [ ] Any report/response surface built on top of a client-supplied prediction run states explicitly that the platform validates the comparison (client series vs. naive baselines, honestly computed), not the provenance of the client's predictions — so "beat Naive0 in this audit" is never presented or read as "this platform certifies your model didn't leak."
 
-Rationale for priority: valuable (it's the "bring your own model" flow's real starting point) but not required for the trigger condition that created this service (running `naive_first_engine` against a dataset via an API call) — Could, deferrable without blocking anything else in this backlog.
+Rationale for priority: valuable (it's the "bring your own model" flow's real starting point) but not required for the trigger condition that created this service (running `naive_first_engine` against a dataset via an API call) — originally Could/deferrable; pulled forward per the override note above, with the added positioning acceptance criterion.
 Depends on: VS-006
 
 ### VS-018 — Won't: execute arbitrary client model code [Won't]
