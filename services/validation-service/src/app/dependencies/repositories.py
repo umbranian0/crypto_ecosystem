@@ -45,7 +45,14 @@ from sqlalchemy import Engine
 
 import redis as redis_lib
 
-from app.dataset_source import DatasetSource, InlineOrLocalFileDatasetSource
+import boto3
+
+from app.dataset_source import (
+    CompositeDatasetSource,
+    DatasetSource,
+    InlineOrLocalFileDatasetSource,
+    ObjectStorageDatasetSource,
+)
 from app.events import EventPublisher, InProcessLogEventPublisher, RedisStreamsEventPublisher
 from app.models import Base
 from app.repositories.interfaces import SplitResultRepository, ValidationRunRepository
@@ -137,10 +144,42 @@ def get_health_check_engine() -> Engine:
     return _get_engine(f"sqlite:///{db_path}")
 
 
+_OBJECT_STORAGE_ENDPOINT_URL_ENV_VAR = "OBJECT_STORAGE_ENDPOINT_URL"
+_OBJECT_STORAGE_ACCESS_KEY_ENV_VAR = "OBJECT_STORAGE_ACCESS_KEY"
+_OBJECT_STORAGE_SECRET_KEY_ENV_VAR = "OBJECT_STORAGE_SECRET_KEY"
+_OBJECT_STORAGE_BUCKET_ENV_VAR = "OBJECT_STORAGE_BUCKET"
+_DEFAULT_OBJECT_STORAGE_BUCKET = "naive-first"
+
+
+@functools.lru_cache(maxsize=None)
+def _get_s3_client(endpoint_url: str | None, access_key: str | None, secret_key: str | None):
+    # Keyed on the connection params (not zero-arg), same rationale as
+    # `_get_engine`/`_get_redis_publisher`: a monkeypatch.setenv of any
+    # OBJECT_STORAGE_* var mid-suite must not silently reuse a stale client.
+    return boto3.client(
+        "s3",
+        endpoint_url=endpoint_url,
+        aws_access_key_id=access_key,
+        aws_secret_access_key=secret_key,
+    )
+
+
 def get_dataset_source() -> DatasetSource:
-    # Interim implementation (VS-005); a durable, remotely-backed source
-    # (VS-015) replaces this provider body only, same DI seam.
-    return InlineOrLocalFileDatasetSource()
+    # VS-015: always returns a CompositeDatasetSource wrapping both the
+    # interim (VS-005) and object-storage (VS-015) implementations -- AC2's
+    # "no change to POST /runs's handler code" is satisfied by this provider
+    # dispatching internally, not by one implementation replacing the other.
+    # Unset OBJECT_STORAGE_* env vars still construct a client (fail loudly on
+    # the first real `load()` call against it, not a silent no-op here).
+    endpoint_url = os.environ.get(_OBJECT_STORAGE_ENDPOINT_URL_ENV_VAR)
+    access_key = os.environ.get(_OBJECT_STORAGE_ACCESS_KEY_ENV_VAR)
+    secret_key = os.environ.get(_OBJECT_STORAGE_SECRET_KEY_ENV_VAR)
+    bucket = os.environ.get(_OBJECT_STORAGE_BUCKET_ENV_VAR, _DEFAULT_OBJECT_STORAGE_BUCKET)
+    s3_client = _get_s3_client(endpoint_url, access_key, secret_key)
+    return CompositeDatasetSource(
+        InlineOrLocalFileDatasetSource(),
+        ObjectStorageDatasetSource(s3_client, bucket),
+    )
 
 
 # Module-level singleton (VS-009): unlike the other providers, this one must
