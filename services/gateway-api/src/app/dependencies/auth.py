@@ -36,11 +36,23 @@ stored value, because no raw key is ever stored (GW-002/GW-004).
 The presented raw key is never logged, printed, or included in any exception
 message anywhere in this module -- only the resulting `tenant_id`
 (post-authentication) may appear in any log/error path.
+
+GW-014: every one of the four `401` paths below logs one structured
+`auth_failed` audit event via `logging.getLogger(__name__)` immediately
+before the `raise`, reusing OPS-006's already-configured JSON formatter/
+correlation-id filter (no new `Formatter`/`basicConfig` call here). Three of
+the four paths (missing both headers, malformed `Authorization`/`X-Api-Key`,
+unknown key) never resolve a key record at all, so their `extra=` payload
+omits `tenant_id` (`None`) -- there is nothing non-secret to attribute the
+attempt to yet. The fourth (a revoked key) *did* resolve a real
+`ApiKeyRecord`, so its `extra=` carries `tenant_id=record.tenant_id`. No path
+ever logs the raw presented key or its hash.
 """
 
 from __future__ import annotations
 
 import hashlib
+import logging
 
 from fastapi import HTTPException, Security
 from fastapi.security import APIKeyHeader
@@ -48,10 +60,23 @@ from naive_first_common.tenant_context import TenantContext
 
 from app.dependencies.repositories import ApiKeyRepositoryDep
 
+logger = logging.getLogger(__name__)
+
 _UNAUTHORIZED = HTTPException(status_code=401, detail="missing or invalid API key")
 
 _authorization_scheme = APIKeyHeader(name="Authorization", auto_error=False)
 _x_api_key_scheme = APIKeyHeader(name="X-Api-Key", auto_error=False)
+
+
+def _log_auth_failed(tenant_id: str | None) -> None:
+    logger.warning(
+        "auth failed",
+        extra={
+            "event_type": "auth_failed",
+            "outcome": "failure",
+            "tenant_id": tenant_id,
+        },
+    )
 
 
 def _extract_raw_key(
@@ -65,14 +90,17 @@ def _extract_raw_key(
     if authorization is not None:
         scheme, _, key = authorization.partition(" ")
         if scheme != "Bearer" or not key:
+            _log_auth_failed(tenant_id=None)
             raise _UNAUTHORIZED
         return key
 
     if x_api_key is not None:
         if not x_api_key:
+            _log_auth_failed(tenant_id=None)
             raise _UNAUTHORIZED
         return x_api_key
 
+    _log_auth_failed(tenant_id=None)
     raise _UNAUTHORIZED
 
 
@@ -89,7 +117,11 @@ def get_authenticated_tenant(
     key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
 
     record = api_key_repo.get_by_hash(key_hash)
-    if record is None or record.revoked_at is not None:
+    if record is None:
+        _log_auth_failed(tenant_id=None)
+        raise _UNAUTHORIZED
+    if record.revoked_at is not None:
+        _log_auth_failed(tenant_id=record.tenant_id)
         raise _UNAUTHORIZED
 
     return TenantContext(tenant_id=record.tenant_id)

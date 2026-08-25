@@ -29,15 +29,27 @@ consistent with `revoke_key`'s own no-error behavior at the repository layer.
 
 The raw key is never printed, logged, or included in any exception message
 anywhere in this script -- matching `provision_tenant.py`'s own discipline.
+
+GW-014: after `revoke_key` succeeds, this function logs one structured
+`api_key_revoked` audit event via `logging.getLogger(__name__)`, reusing
+OPS-006's already-configured JSON formatter/correlation-id filter (no new
+`Formatter`/`basicConfig` call here) -- `extra=` carries only
+`record.tenant_id`, never the raw key. The already-revoked no-op path does
+not log a second event -- there is no new revocation outcome to record.
 """
 
 from __future__ import annotations
 
 import argparse
 import hashlib
+import logging
+
+from naive_first_common import configure_structured_logging
 
 from app.dependencies.repositories import get_api_key_repository
 from app.repositories.interfaces import ApiKeyRecord, ApiKeyRepository
+
+logger = logging.getLogger(__name__)
 
 
 class UnknownApiKeyError(Exception):
@@ -69,10 +81,28 @@ def revoke(raw_key: str, api_key_repo: ApiKeyRepository) -> ApiKeyRecord:
 
     revoked_record = api_key_repo.get_by_hash(key_hash)
     assert revoked_record is not None  # revoke_key only sets a column, never deletes the row
+
+    logger.info(
+        "api key revoked",
+        extra={
+            "event_type": "api_key_revoked",
+            "outcome": "success",
+            "tenant_id": revoked_record.tenant_id,
+        },
+    )
+
     return revoked_record
 
 
 def main() -> None:
+    # GW-014 follow-up (found live during Sprint 17 verification): this CLI
+    # script runs as its own standalone process, never importing app.main --
+    # so unless it configures logging itself, the api_key_revoked audit event
+    # this module logs is silently dropped (no handler is attached to the
+    # root logger by default). Reuses OPS-006's exact convention -- no second
+    # logging shape.
+    configure_structured_logging()
+
     parser = argparse.ArgumentParser(
         description=(
             "Revoke an API key (operator/test-fixture tool -- not a "

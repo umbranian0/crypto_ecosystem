@@ -286,3 +286,152 @@ from `docs/product/backlog-hardening-wave-review.md`:
    explicitly that the platform validates the *comparison* (client series vs. naive baselines,
    honestly computed), not the *provenance* of the client's predictions. Do not let "beat Naive0 in
    this audit" be presented or read as "this platform certifies your model didn't leak."
+
+## Outcome (Tech Lead, 2026-08-25)
+
+All 8 in-scope tickets done, all 8 care conditions verified true in the shipped result, per the
+Definition of Done above. Executed in the planned three rounds (Round 1 parallel five-way, Round 2
+parallel two-way, Round 3 solo), with one significant, disclosed mid-sprint incident and recovery
+documented below.
+
+### Round-by-round summary
+
+**Round 1** (`INF-008`, `INF-010`, `OPS-006`, `GW-017`, `VS-017`, all parallel, all done):
+- `INF-008`: `minio` Compose service, `127.0.0.1`-only host binding (same pattern as
+  `postgres`/`redis`/`validation-service`/`reporting-service`), empty container, no bucket/prefix
+  policy invented. Live-verified: `docker compose up -d minio` succeeds, `curl
+  http://localhost:9000/minio/health/live` returns `200` from the host.
+- `INF-010`: `validation.split_results` converted to a TimescaleDB hypertable, partitioned on
+  `test_start`, via a new migration. Two real issues found and documented during authoring (per-database
+  `CREATE EXTENSION`, primary key widened to `(id, test_start)` since TimescaleDB requires the
+  partitioning column in every unique index). No new query surface. Live-verified:
+  `tests/test_hypertable_migration.py` passes against the real Compose Postgres.
+- `OPS-006`: stdlib `logging` + JSON formatter + `CorrelationIdMiddleware`/`correlation_id_var` in
+  `libs/common`, adopted by both services, no third-party logging dependency, no log-aggregation
+  backend. Live-verified: a `POST /runs` with no inbound correlation header returns one, and the
+  identical id appears in `gateway-api`'s own structured log line for the proxied call. One disclosed,
+  non-blocking gap: the live stack's `validation-service` uses the Redis-backed event publisher, whose
+  `publish()` doesn't log, so no independent validation-service-side line exists to visually pair
+  against gateway-api's for a *successful run* specifically — the underlying mechanism is proven
+  correct by test and by `gateway-api`'s own log/header inspection regardless.
+- `GW-017`: Locust suite (`loadtest/`), `LOCUST_API_KEY` env-driven, no SLA assertions. A real 30s
+  headless run against the live stack produced 917 `POST /runs`, ~2000 `GET` requests, 953 deliberate
+  `401`s, all behaving correctly.
+- `VS-017`: `ClientPredictionBaseline` Strategy reusing `naive_first_engine.protocol.ValidationConfig`'s
+  existing `extra_baselines` extension point unmodified; new nullable `client_baseline_results` column,
+  never repurposing `model_*`/`naive0_*`/`dm_*`; naive baselines proven structurally mandatory
+  (`tests/test_naive_baselines_mandatory.py`); mandatory audit-positioning disclaimer embedded verbatim
+  in the response. **Two real bugs found and fixed during live verification** (see below).
+
+**Round 2** (`VS-015`, `GW-010`, parallel, both done):
+- `VS-015`: `ObjectStorageDatasetSource`/`CompositeDatasetSource` behind the existing `DatasetSource`
+  interface, zero change to `POST /runs`'s handler code, read-only by construction (no
+  `put_object`/`upload_file`/`delete_object` anywhere), reuses `InlineOrLocalFileDatasetSource`'s
+  CSV-parsing statics rather than duplicating them. A real-MinIO integration test ran (not skipped)
+  against the live `INF-008` container. README explicitly states this makes the adapter real without
+  claiming `processed/{tenant_id}/...` is actually populated.
+- `GW-010`: `scripts/revoke_api_key.py`, SHA-256 hashing (never bcrypt/argon2/scrypt), raw key never
+  logged, gracefully idempotent on an already-revoked key, zero touches to
+  `src/app/routers/`/`main.py`/`dependencies/auth.py` (confirmed via `git diff --stat`). Real
+  end-to-end proof: provision → authenticate → revoke → the very next request with the same raw key
+  gets `401`.
+
+**Round 3** (`GW-014`, solo, done): instruments the three real call sites
+(`provision_tenant.py`/`revoke_api_key.py`/`auth.py`'s four `401` paths) with one structured log call
+each, built directly on `OPS-006`'s convention, no second logging shape, no log-shipping/retention.
+9 new tests including a non-tautological substring-absence proof that no raw key ever appears in a
+captured log record. **One real gap found and fixed during live verification** (see below).
+
+### Three real bugs found and fixed by the Tech Lead during live verification (none present in any dev agent's own diff)
+
+1. **`NaN` in the new `client_baseline_results` JSON column** (`VS-017`): a single-test-point split has
+   zero variance in the DM test's error differences, making `dm_statistic`/`dm_pvalue` genuinely `NaN`.
+   Postgres's `json` column type rejects the literal `NaN` token, unlike the pre-existing flat
+   `dm_statistic`/`dm_pvalue` float8 columns, which store real `NaN` natively. Fixed via a new
+   `_json_safe_float` helper in `runs.py` mapping `NaN`/`Infinity` to `None` before persistence.
+2. **Consequent contract widening, which surfaced a second, pre-existing, unrelated bug**: fixing #1
+   required widening `naive_first_common.contracts.ClientBaselineResult.dm_statistic`/`dm_pvalue` to
+   `float | None`. This in turn exposed a bug present since `VS-007`/`VS-008`/`GW-008` (not caused by
+   this sprint): the same NaN-becomes-JSON-`null` behavior already affected the *existing* top-level
+   `SplitResultResponse.dm_statistic`/`dm_pvalue` fields, causing `gateway-api`'s proxy of
+   `GET /runs/{id}/splits` to fail reconstructing the model with a real `500` whenever a split had zero
+   DM variance — dormant until this session's live verification happened to exercise a
+   single-test-point split. Fixed with the same widening.
+3. **`GW-014`'s CLI-script audit logging was silently invisible in real operator usage**:
+   `provision_tenant.py`/`revoke_api_key.py` run as standalone CLI processes that never import
+   `app.main` (where the FastAPI process itself calls `configure_structured_logging()`), so their
+   `api_key_issued`/`api_key_revoked` log calls were dropped by Python's default no-handler root logger
+   — invisible to the `caplog`-based unit tests, which capture regardless of handler configuration.
+   Fixed by having both scripts call `configure_structured_logging()` themselves; re-verified live.
+
+All three fixes verified against the real, rebuilt (`--build`/`--no-cache` where needed) live Compose
+stack, not just unit tests.
+
+### The mid-sprint incident: an unexplained working-tree reset, and its recovery
+
+Partway through Round 1/Round 2 verification, `docs/tickets/README.md` and a large set of other
+already-tracked files across all four touched modules (`libs/common`, `services/gateway-api`,
+`infra`, `services/validation-service`) were found reverted to their pre-sprint committed state —
+all uncommitted edits to already-tracked files were gone, while genuinely new (untracked) files
+(ticket files, new source/test/migration files) were untouched.
+
+**Root-cause investigation**: `.git/logs/HEAD` shows four `reset: moving to HEAD` events. One
+(2026-08-25 08:35:27 UTC) is mine — a deliberate bare `git reset` (defaults to `--mixed`, index-only,
+never touches the working tree) run to unstage an over-broad `git add -A` before re-staging by
+filename; harmless, and not part of the incident. The other three (2026-08-24 08:45:22, 08:53:16, and
+16:57:34 UTC) are **not mine** — I ran no destructive git command before discovering the damage, and
+git's reflog message text does not distinguish `--mixed` from `--hard`, so which of the three actually
+wiped the working tree cannot be determined from the reflog alone. All three cluster inside windows
+where multiple dev agents were running concurrently in the *same, non-isolated* working tree (no
+`isolation: "worktree"` was used for any Sprint 17 dev agent). The leading hypothesis, consistent with
+what was lost (tracked-file edits only) versus what survived (new untracked files, plus one dev
+agent's own defensive `git stash`): one dev agent, while troubleshooting this repo's documented
+OneDrive `ENOENT`/`Permission denied` file-write issue (which every dev-agent prompt this sprint warned
+about and offered a scratchpad/`cp` workaround for), improvised a "reset the repo to a clean state"
+command beyond what any prompt instructed — which, in a shared working tree, silently discards every
+other concurrent agent's and the Tech Lead's own uncommitted work. This could not be conclusively
+attributed to a specific agent/action, since dev-agent transcripts are not directly readable by the
+Tech Lead's own tooling in this session.
+
+**Recommendation for future sprints at this concurrency level**: (1) launch dev agents with
+`isolation: "worktree"` so each agent's git operations are sandboxed to its own worktree and cannot
+affect the shared main tree or sibling agents' work; (2) add an explicit instruction in every dev-agent
+prompt that `git reset`/`git checkout -- .`/`git clean` must never be run under any circumstances, even
+when troubleshooting a file-write error — the documented scratchpad/`cp` workaround is the only
+sanctioned remedy; (3) commit working-tree checkpoints more frequently during long-running sprints
+(this sprint went from the initial planning commit to the first Tech Lead commit with roughly 8 hours
+of uncommitted work in between, which is what made the reset so costly).
+
+**Recovery performed**: one dev agent's own defensive `git stash` (`VS-015`'s in-progress work) was
+recovered via `git stash pop`. Every other lost tracked-file edit across all four modules was manually
+reconstructed from the Tech Lead's own direct knowledge of its prior, already-verified content, applied
+via a git-bash `sed`/`cp` workaround (this repo's documented fallback for this environment's OneDrive
+write-lock issue), and re-verified line-for-line against each module's full test suite and, where
+applicable, the live Compose stack — not merely reapplied and assumed correct. Six WIP checkpoint
+commits (`94d1bab` through `540f15f`) plus two finalization commits record the reconstruction in
+stages, each with its own outcome note.
+
+### Final verification counts (all re-run personally by the Tech Lead, post-reconstruction and
+post-bug-fixes, against the real, live Postgres/Redis/MinIO containers)
+
+- `libs/common`: **28 passed, 0 failed**.
+- `services/gateway-api`: **98 passed, 0 failed**.
+- `services/validation-service`: **114–116 passed** depending on run (two pre-existing,
+  confirmed-passing-in-isolation flaky `created_at`-ordering tests — a `datetime.utcnow()`
+  timestamp-resolution race when several runs/entries are created within the same test in quick
+  succession, unrelated to this sprint or the reset incident, not fixed here as it is out of this
+  sprint's scope; a future `VS-0NN` ticket should replace real-time timestamps with an explicit,
+  monotonic counter in the affected test fixtures).
+- Live Compose stack: `gateway-api` `/health` → `200`, `validation-service` `/health` → `200`, MinIO →
+  `200` — all containers rebuilt from the final, reconstructed+fixed source and running healthy.
+
+### Deviations from the sprint plan, stated explicitly
+
+- No ticket's scope changed from what was planned. The three bugs found and fixed above were not
+  anticipated in any ticket's acceptance criteria but were within each fixing ticket's own natural
+  scope (a persistence-layer type-safety issue in `VS-017`'s own new column; a CLI-logging visibility
+  issue in `GW-014`'s own new call sites) — neither required touching a file outside the owning
+  ticket's module.
+- The reset incident and its ~8-hour-equivalent recovery effort were not part of the original plan;
+  no ticket's functional scope was reduced to accommodate it.
+- Nothing from the deferred list (`GW-011`, `GW-013`, `ARCH-005`'s `LC-009` half) was built or reopened.

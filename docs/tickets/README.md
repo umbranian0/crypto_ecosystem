@@ -309,7 +309,7 @@ See docs/sprints/sprint-14.md. `GW-016` closes the second, symmetric half of `DA
 |---|---|---|---|
 | [GW-017](GW-017.md) | Locust load-test suite against key endpoints | GW-008, GW-009 (done) | done |
 | [GW-010](GW-010.md) | API-key revocation (operator-only CLI script) | GW-006 (done) | done |
-| [GW-014](GW-014.md) | Auth event audit logging | GW-006 (done), OPS-006 (this sprint), GW-010 (this sprint, practical) | todo |
+| [GW-014](GW-014.md) | Auth event audit logging | GW-006 (done), OPS-006 (this sprint), GW-010 (this sprint, practical) | done |
 
 See docs/sprints/sprint-17.md, docs/product/backlog-hardening-wave-review.md. Part of the eight-item
 hardening wave. `GW-017` ran in Round 1 (new `loadtest/` directory only, zero overlap with anything
@@ -319,10 +319,33 @@ ran in Round 2, after Round 1 (including `OPS-006`) fully landed and was verifie
 `gateway-api` edits -- a new standalone `scripts/revoke_api_key.py` (mirroring `scripts/provision_tenant.py`'s
 GW-005 precedent exactly), zero changes to `src/app/routers/`, `src/app/main.py`, or
 `dependencies/auth.py` (confirmed via `git diff --stat`), a real end-to-end proof (provision ->
-authenticate -> revoke -> the very next request with the same raw key gets `401`). `GW-014` is queued
-for Round 3, **solo**, strictly after `OPS-006` (formal dependency) and `GW-010` (practical dependency
--- instruments the revocation script `GW-010` creates) are both done and personally verified -- same
+authenticate -> revoke -> the very next request with the same raw key gets `401`). `GW-014` ran in
+Round 3, **solo**, strictly after `OPS-006` (formal dependency) and `GW-010` (practical dependency --
+instruments the revocation script `GW-010` creates) were both done and personally verified -- same
 same-file-collision-avoidance discipline this repo already applied to `GW-016`/`GW-018` in Sprint 14.
+`GW-014` instruments the three real call sites named in its own ticket (`scripts/provision_tenant.py`'s
+`provision()`, `scripts/revoke_api_key.py`'s `revoke()`, `dependencies/auth.py`'s
+`get_authenticated_tenant`'s four `401` paths) with one structured `logging.getLogger(__name__)` call
+each, built directly on `OPS-006`'s `configure_structured_logging` convention -- no second logging
+shape, no new `Formatter`/`basicConfig` call, no log-shipping/retention code added anywhere in the
+diff. New `tests/test_audit_logging.py` (9 tests, real SQLite-backed repositories + `caplog`, including
+a non-tautological substring-absence proof that the raw key used in each failure case never appears in
+the captured log record's rendered output) brought the suite to 98/98 passing (89 baseline + 9 new,
+zero regressions). `services/gateway-api/README.md` gained an "Auth event audit logging (GW-014)"
+section. **Personally re-verified by the Tech Lead** against the real, rebuilt live Compose stack (not
+just the dev agent's own report): read all three diffs directly (every log call traced back to a
+non-secret source field); confirmed zero new `Formatter`/`logging.config`/`basicConfig` calls and zero
+log-shipping code anywhere in the diff; provisioned a real tenant, revoked its key, and attempted auth
+with the revoked key against the live stack, confirming all three event types (`api_key_issued`,
+`api_key_revoked`, `auth_failed`) appear as real, correctly structured JSON log lines with no raw key
+material. **One real, disclosed gap found and fixed during this live verification, not present in the
+dev agent's own diff**: `provision_tenant.py`/`revoke_api_key.py` run as standalone CLI processes that
+never import `app.main` (where the FastAPI process calls `configure_structured_logging()`), so their
+`api_key_issued`/`api_key_revoked` log calls were silently dropped in real operator usage -- invisible
+to the `caplog`-based unit tests, which capture regardless of handler configuration. Fixed by having
+both scripts call `configure_structured_logging()` themselves, at the top of their own `main()`, reusing
+OPS-006's exact convention (no second logging shape); re-verified live after the fix, both event types
+now appear correctly. Full suite re-confirmed clean after the fix: **98 passed, 0 failed**.
 
 # infra (INF-*)
 
