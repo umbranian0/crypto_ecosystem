@@ -3,33 +3,42 @@
    Positioning constraint (CLAUDE.md): this is validation/audit infrastructure,
    not a trading surface. No green/red "market up/down" pairing anywhere --
    status badges and the .error class below use color for state, never for a
-   directional/market signal.
+   directional/market signal. The "futuristic" pass below leans on a dark,
+   instrument-panel look (cyan/violet accent, monospace data, subtle grid) --
+   still status-neutral, never bull/bear coded.
 */
 
 :root {
-  /* Palette: muted navy/slate/charcoal text on a near-white background, one
-     restrained accent for interactive elements. */
-  --color-bg: #f7f8fa;
-  --color-surface: #ffffff;
-  --color-border: #d9dde3;
-  --color-text: #1f2a37;
-  --color-text-muted: #5b6675;
-  --color-heading: #16202c;
+  /* Palette: dark instrument-panel background, two restrained accents
+     (cyan for primary actions/links, violet for secondary emphasis). */
+  --color-bg: #090c12;
+  --color-bg-grid: #0d111a;
+  --color-surface: #10151f;
+  --color-surface-raised: #141b28;
+  --color-border: #232d3d;
+  --color-border-strong: #34435a;
+  --color-text: #dbe4f0;
+  --color-text-muted: #8694a8;
+  --color-heading: #f2f6fb;
 
-  --color-accent: #2f5d8a;
-  --color-accent-hover: #24476a;
-  --color-accent-contrast: #ffffff;
+  --color-accent: #35d0e8;
+  --color-accent-hover: #5adcef;
+  --color-accent-contrast: #04141a;
+  --color-accent-glow: rgba(53, 208, 232, 0.35);
 
-  --color-error-bg: #fbeaea;
-  --color-error-border: #d99a9a;
-  --color-error-text: #8a3232;
+  --color-accent-2: #8b7bff;
+  --color-accent-2-glow: rgba(139, 123, 255, 0.3);
 
-  --color-status-running-bg: #e7e9ee;
-  --color-status-running-text: #4a5568;
-  --color-status-completed-bg: #e3ece6;
-  --color-status-completed-text: #3f6b4e;
-  --color-status-failed-bg: #f3e3e0;
-  --color-status-failed-text: #8a4a32;
+  --color-error-bg: #2a1418;
+  --color-error-border: #6b3038;
+  --color-error-text: #ef9a9a;
+
+  --color-status-running-bg: #1b2436;
+  --color-status-running-text: #8fa3c9;
+  --color-status-completed-bg: #12312f;
+  --color-status-completed-text: #5fd3c4;
+  --color-status-failed-bg: #33221a;
+  --color-status-failed-text: #e0a06a;
 
   --space-1: 0.25rem;
   --space-2: 0.5rem;
@@ -44,7 +53,7 @@
   --font-mono: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono",
     Menlo, monospace;
 
-  --radius: 6px;
+  --radius: 8px;
   --max-width: 1120px;
 }
 
@@ -64,21 +73,45 @@ body {
   line-height: 1.5;
   color: var(--color-text);
   background-color: var(--color-bg);
+  background-image:
+    linear-gradient(var(--color-bg-grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--color-bg-grid) 1px, transparent 1px);
+  background-size: 42px 42px;
+  background-position: center top;
+  min-height: 100vh;
 }
 
 header {
-  background-color: var(--color-surface);
+  background-color: rgba(16, 21, 31, 0.85);
+  backdrop-filter: blur(6px);
   border-bottom: 1px solid var(--color-border);
   padding: var(--space-5) var(--space-6);
+  position: sticky;
+  top: 0;
+  z-index: 10;
 }
 
 header h1 {
   max-width: var(--max-width);
   margin: 0 auto;
-  font-size: 1.25rem;
+  font-family: var(--font-mono);
+  font-size: 1.1rem;
   font-weight: 600;
   color: var(--color-heading);
-  letter-spacing: 0.01em;
+  letter-spacing: 0.03em;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+header h1::before {
+  content: "";
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  box-shadow: 0 0 8px 2px var(--color-accent-glow);
 }
 
 main {
@@ -98,6 +131,8 @@ h3 {
 h2 {
   font-size: 1.375rem;
   margin: 0 0 var(--space-4);
+  font-family: var(--font-mono);
+  letter-spacing: 0.01em;
 }
 
 h3 {
@@ -136,18 +171,91 @@ form {
   border-radius: var(--radius);
   padding: var(--space-5);
   max-width: 560px;
+  box-shadow: 0 0 0 1px rgba(53, 208, 232, 0.04), 0 20px 60px -30px rgba(0, 0, 0, 0.7);
 }
 
 label {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
   font-weight: 600;
   font-size: 0.85rem;
   color: var(--color-text-muted);
   margin: var(--space-4) 0 var(--space-1);
+  font-family: var(--font-mono);
+  letter-spacing: 0.02em;
 }
 
 label:first-of-type {
   margin-top: 0;
+}
+
+.field-hint {
+  display: block;
+  margin: 0 0 var(--space-1);
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+  opacity: 0.85;
+}
+
+/* Tooltip: a small "?" affordance next to a label. Hover/focus reveals the
+   suggestion text -- pure CSS, no JS dependency, keyboard-reachable via
+   tabindex so it isn't hover-only. */
+.field-tooltip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1px solid var(--color-border-strong);
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  font-weight: 700;
+  cursor: help;
+  background: var(--color-surface-raised);
+}
+
+.field-tooltip:hover,
+.field-tooltip:focus-visible {
+  color: var(--color-accent-contrast);
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  outline: none;
+}
+
+.field-tooltip::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%) translateY(4px);
+  width: max-content;
+  max-width: 280px;
+  padding: var(--space-2) var(--space-3);
+  font-family: var(--font-sans);
+  font-size: 0.8rem;
+  font-weight: 400;
+  line-height: 1.4;
+  color: var(--color-text);
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius);
+  box-shadow: 0 12px 30px -10px rgba(0, 0, 0, 0.8);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.12s ease, transform 0.12s ease;
+  z-index: 20;
+  white-space: normal;
+}
+
+.field-tooltip:hover::after,
+.field-tooltip:focus-visible::after {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(-50%) translateY(0);
 }
 
 input[type="text"],
@@ -159,9 +267,23 @@ textarea {
   font-family: inherit;
   font-size: 0.95rem;
   color: var(--color-text);
-  background-color: var(--color-surface);
+  background-color: var(--color-bg);
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+
+input[type="text"]:focus,
+input[type="password"]:focus,
+input[type="number"]:focus,
+textarea:focus {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px var(--color-accent-glow);
+}
+
+input.field-invalid,
+textarea.field-invalid {
+  border-color: var(--color-error-border);
 }
 
 textarea {
@@ -170,12 +292,17 @@ textarea {
   resize: vertical;
 }
 
+input::placeholder,
+textarea::placeholder {
+  color: #4a5568;
+}
+
 fieldset {
   margin: var(--space-5) 0;
   padding: var(--space-4) var(--space-4) var(--space-2);
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
-  background-color: var(--color-bg);
+  background-color: rgba(139, 123, 255, 0.03);
 }
 
 fieldset label:first-of-type {
@@ -186,26 +313,56 @@ legend {
   padding: 0 var(--space-2);
   font-weight: 600;
   font-size: 0.85rem;
+  color: var(--color-accent-2);
+  font-family: var(--font-mono);
+}
+
+.form-status {
+  margin-top: var(--space-2);
+  font-size: 0.8rem;
   color: var(--color-text-muted);
+  min-height: 1.1em;
+}
+
+.form-status.form-status-ok {
+  color: var(--color-status-completed-text);
+}
+
+.form-status.form-status-warn {
+  color: var(--color-status-failed-text);
 }
 
 button {
   display: inline-block;
   margin-top: var(--space-5);
   padding: var(--space-2) var(--space-5);
-  font-family: inherit;
+  font-family: var(--font-mono);
   font-size: 0.95rem;
   font-weight: 600;
+  letter-spacing: 0.02em;
   color: var(--color-accent-contrast);
   background-color: var(--color-accent);
   border: 1px solid var(--color-accent);
   border-radius: var(--radius);
   cursor: pointer;
+  box-shadow: 0 0 20px -4px var(--color-accent-glow);
+  transition: background-color 0.12s ease, box-shadow 0.12s ease, transform 0.05s ease;
 }
 
 button:hover {
   background-color: var(--color-accent-hover);
   border-color: var(--color-accent-hover);
+  box-shadow: 0 0 28px -2px var(--color-accent-glow);
+}
+
+button:active {
+  transform: translateY(1px);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  box-shadow: none;
 }
 
 .error {
@@ -242,21 +399,31 @@ td {
 }
 
 thead th {
-  background-color: var(--color-bg);
+  background-color: var(--color-surface-raised);
   font-weight: 600;
   color: var(--color-text-muted);
   font-size: 0.8rem;
   text-transform: uppercase;
   letter-spacing: 0.03em;
   border-bottom: 1px solid var(--color-border);
+  font-family: var(--font-mono);
 }
 
 tbody tr:nth-child(even) {
-  background-color: #fbfbfc;
+  background-color: rgba(255, 255, 255, 0.015);
+}
+
+tbody tr:hover {
+  background-color: rgba(53, 208, 232, 0.04);
 }
 
 tbody tr:last-child td {
   border-bottom: none;
+}
+
+td {
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
 }
 
 /* A key-value details table (run_detail.html's summary block) doesn't need
@@ -270,7 +437,8 @@ main > table th {
   width: 220px;
   color: var(--color-text-muted);
   font-weight: 600;
-  background-color: var(--color-bg);
+  background-color: var(--color-surface-raised);
+  font-family: var(--font-mono);
 }
 
 /* Status badge */
@@ -282,21 +450,26 @@ main > table th {
   font-size: 0.8rem;
   font-weight: 600;
   white-space: nowrap;
+  font-family: var(--font-mono);
+  border: 1px solid transparent;
 }
 
 .status-running {
   background-color: var(--color-status-running-bg);
   color: var(--color-status-running-text);
+  border-color: rgba(143, 163, 201, 0.25);
 }
 
 .status-completed {
   background-color: var(--color-status-completed-bg);
   color: var(--color-status-completed-text);
+  border-color: rgba(95, 211, 196, 0.3);
 }
 
 .status-failed {
   background-color: var(--color-status-failed-bg);
   color: var(--color-status-failed-text);
+  border-color: rgba(224, 160, 106, 0.3);
 }
 
 /* Error / not-found pages */
