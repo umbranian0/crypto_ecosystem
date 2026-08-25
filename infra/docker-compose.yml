@@ -139,6 +139,31 @@ services:
       redis:
         condition: service_healthy
 
+  minio:
+    image: minio/minio
+    container_name: naive-first-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    ports:
+      # Bound to localhost only, same rationale as postgres/redis above
+      # (operability finding, 2026-08-09 review): no service reads or writes
+      # to this container yet -- ingestion-service (trigger #6) is the first
+      # real consumer and hasn't been built yet -- so there's no need to
+      # expose it beyond the host.
+      - "127.0.0.1:${MINIO_API_PORT:-9000}:9000"
+      - "127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-naive_first}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-naive_first_dev_password}
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9000/minio/health/live || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
 volumes:
   postgres-data:
   redis-data:
+  minio-data:

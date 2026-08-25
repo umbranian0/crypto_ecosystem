@@ -22,8 +22,10 @@ RLS). This README does not claim the trigger fired on time — it didn't.
 **Not yet wired into compose, and this is deliberate, not an oversight:** `ingestion-service` and
 `dashboard-web` are not Compose services here. Per implementation-plan.md section 6, each has its
 own not-yet-true trigger — `ingestion-service` is trigger #6, `dashboard-web` is trigger #8 —
-neither of which this debt sprint's scope changes. `minio`/object storage is likewise absent
-(tracked separately as INF-008, not part of this sprint). `reporting-service` (trigger #7) was
+neither of which this debt sprint's scope changes. `minio`/object storage (INF-008,
+Sprint 17) is now a real Compose service too -- see the "MinIO (INF-008)" section below --
+though still with no real consumer reading/writing to it yet.
+`reporting-service` (trigger #7) was
 also built ahead of its trigger, at explicit user request (see its own README) — it **is** now a
 real Compose service (`reporting-service (INF-018)` section below) as of this ticket, closing the
 infra half of the `RS-GAP` capability gap; it is still not reachable from outside the Docker
@@ -491,3 +493,61 @@ Redis, ran `docker compose -f infra/docker-compose.yml down` (no `-v`), then
 `docker compose -f infra/docker-compose.yml up -d postgres redis`, and confirmed both the probe
 row and probe key were still present after the restart. Probe data was deleted afterward; the
 containers were left running.
+
+## MinIO (INF-008)
+
+`minio` service, image `minio/minio` (`command: server /data --console-address ":9001"`), exposing
+both the S3 API (9000) and web console (9001). Bound to `127.0.0.1` only, same rationale as
+`postgres`/`redis`/`validation-service`/`reporting-service` above. Credentials via
+`MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD` env vars (see `.env.example`), a named volume (`minio-data`)
+for persistence, and a `curl`-based healthcheck matching the shape already used elsewhere in this
+file.
+
+**No service currently reads or writes to this bucket store.** `ingestion-service` (trigger #6, per
+implementation-plan.md section 6) is the first real consumer and hasn't been built yet -- this story
+stands the container up ahead of that trigger, without inventing bucket/prefix policy a real
+consumer hasn't defined yet. As of Sprint 17, `validation-service`'s `ObjectStorageDatasetSource`
+(VS-015) is a real *reader* of this container, though still with no real tenant data actually
+populating it -- see `services/validation-service/README.md`'s own VS-015 section for the explicit
+"adapter is real, zone population is not" distinction.
+
+Start it:
+
+```
+docker compose -f infra/docker-compose.yml up -d minio
+```
+
+Verify:
+
+```
+curl http://localhost:9000/minio/health/live
+```
+
+Expected: an empty `200` response, proving the `127.0.0.1` binding works and the container is
+healthy. The web console is reachable at `http://localhost:9001` in a browser using the
+`MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD` credentials above, for manual inspection only -- no
+application code talks to the console port.
+
+## TimescaleDB hypertable (INF-010)
+
+`validation.split_results` is a TimescaleDB hypertable as of migration `0004_convert_split_results_to_hypertable.py`
+(`services/validation-service/migrations/`), partitioned on `test_start` (the start of each split's
+out-of-sample test window -- a real timestamp column already on that table, not `split_index`, which
+is an ordinal, not a point in time). This is a performance-only, schema-level change: existing
+repository/query behavior (`PostgresSplitResultRepository.add_splits`/`get_splits`) is unaffected --
+a hypertable remains queryable via plain SQL exactly like an ordinary table -- and **no new
+time-series query surface is introduced anywhere in this platform as part of this ticket**. No
+current caller queries `split_results` as a time series directly; `dashboard-web`'s `DASH-004` still
+routes every read through `validation-service`'s existing `GET /runs/{id}/splits` API. This was
+pulled forward on cheap/reversible/zero-tenant-isolation-risk grounds (see
+`docs/product/backlog-hardening-wave-review.md`), not because a real consumer exists yet.
+
+Verified against the real, live Compose Postgres container, not just a migration-file review:
+`CREATE EXTENSION IF NOT EXISTS timescaledb` was required per-database even though the
+`timescale/timescaledb:latest-pg16` image ships the extension's shared library; converting a table
+with a single-column surrogate `id` primary key to a hypertable required widening that primary key to
+`(id, test_start)` first (TimescaleDB requires the partitioning column in every unique
+index/primary key on a hypertable). `services/validation-service/tests/test_hypertable_migration.py`
+runs `alembic upgrade head` against the real Compose Postgres and queries
+`timescaledb_information.hypertables`/`.dimensions` directly to confirm the conversion -- re-run
+personally by the Tech Lead, passing (`1 passed`, real container).
