@@ -112,6 +112,10 @@ class SplitResultRecord:
     dm_pvalue: float
     dm_verdict: str
 
+    # VS-017: optional third (client-supplied) baseline's full result,
+    # None whenever no client_prediction_reference was supplied.
+    client_baseline_results: dict | None = None
+
 
 @typing.runtime_checkable
 class ValidationRunRepository(typing.Protocol):

@@ -78,10 +78,25 @@ precedent `POST /runs`' field constraints already established.
 empty tenant returns `200` with an empty `items` list, never a `404` -- an
 empty list is a valid, successful answer to "what are this tenant's runs",
 not an error.
+
+VS-017: `POST /runs` optionally accepts `client_prediction_reference`
+(same `DatasetSource`-compatible shape as `dataset_reference`). When present,
+the handler loads it via the same `DatasetSourceDep` seam (no second
+dataset-loading mechanism), wraps the resulting series in
+`app.client_baseline.ClientPredictionBaseline` (a Strategy implementation of
+`naive_first_engine.baselines.Baseline`), and passes it as
+`ValidationConfig.extra_baselines=[...]` -- a third, strictly additive entry.
+The two mandatory naive baselines (Naive0/NaiveLast) are never conditional on
+this: `run_validation_protocol` always computes them the same way regardless
+of `extra_baselines`'s contents (VS-019; `tests/test_naive_baselines_mandatory.py`
+proves this structurally). When `client_prediction_reference` is absent (the
+default), behavior is byte-identical to before this ticket (`extra_baselines=[]`,
+`client_baseline_results=None` on every persisted split).
 """
 
 from __future__ import annotations
 
+import dataclasses
 from datetime import datetime
 from uuid import uuid4
 
@@ -102,6 +117,7 @@ from naive_first_engine.protocol import (
     run_validation_protocol,
 )
 
+from app.client_baseline import ClientPredictionBaseline
 from app.dependencies.repositories import (
     DatasetSourceDep,
     EventPublisherDep,
@@ -111,6 +127,28 @@ from app.dependencies.repositories import (
 from app.repositories.interfaces import SplitResultRecord
 
 router = APIRouter()
+
+
+def _json_safe_float(value: float) -> float | None:
+    """`client_baseline_results` is persisted as a Postgres `JSON` column
+    (0003_add_client_baseline_results.py), and Postgres's `json`/`jsonb`
+    types reject the literal `NaN`/`Infinity` tokens Python's default JSON
+    serialization emits for `float("nan")`/`float("inf")` -- unlike this
+    table's existing flat `dm_statistic`/`dm_pvalue` float8 columns, which
+    store `NaN` natively without issue (real, found live: a single-test-point
+    split's zero-variance DM statistic is `NaN`, and persisting it inside the
+    nested `client_baseline_results` JSON blob raised
+    `psycopg.errors.InvalidTextRepresentation: Token "NaN" is invalid`).
+    Mapped to `None` here, the same "unrepresentable -> null, not a crash"
+    convention `RedisStreamsEventPublisher`'s own `None -> ""` field handling
+    already uses in `events.py`, applied to the JSON-incompatible-float case
+    instead of the missing-value case.
+    """
+    import math
+
+    if value is None or math.isnan(value) or math.isinf(value):
+        return None
+    return value
 
 
 class RunListResponse(BaseModel):
@@ -139,6 +177,14 @@ def create_run(
     event_publisher: EventPublisherDep,
     tenant: TenantContext = Depends(get_tenant_context),
 ) -> RunResponse:
+    # VS-017: config.extra_baselines only ever gains a third, optional entry
+    # here -- the two mandatory naive baselines (NAIVE0_KEY/NAIVE_LAST_KEY)
+    # are always computed by run_validation_protocol itself, unconditionally,
+    # regardless of this list's contents (see naive_first_engine.protocol).
+    # When request.client_prediction_reference is None (the default), this
+    # is extra_baselines=[], byte-identical to before this ticket -- the
+    # client series is loaded, if at all, inside the try block below,
+    # alongside the primary dataset load it mirrors.
     config = ValidationConfig(
         train_window=request.train_window,
         test_window=request.test_window,
@@ -164,13 +210,50 @@ def create_run(
 
     try:
         series = dataset_source.load(request.dataset_reference)
-        results = run_validation_protocol(series, config)
+
+        # VS-017: an optional third baseline, loaded the same way as the
+        # primary dataset (same DatasetSourceDep, no second loading
+        # mechanism) and passed as config.extra_baselines. This is the ONLY
+        # place extra_baselines is ever set to something other than [] --
+        # when request.client_prediction_reference is None, run_config below
+        # is `config` itself, unchanged, so this whole branch is provably
+        # inert for every pre-ticket request shape.
+        run_config = config
+        client_baseline_key: str | None = None
+        if request.client_prediction_reference is not None:
+            client_series = dataset_source.load(request.client_prediction_reference)
+            client_baseline = ClientPredictionBaseline(client_series)
+            client_baseline_key = type(client_baseline).__name__
+            run_config = dataclasses.replace(config, extra_baselines=[client_baseline])
+
+        results = run_validation_protocol(series, run_config)
 
         split_records = []
         for split in results:
             model = split.baseline_results[NAIVE_LAST_KEY]
             naive0 = split.baseline_results[NAIVE0_KEY]
             dm_result = model.dm_result
+
+            client_baseline_results = None
+            if client_baseline_key is not None:
+                client_result = split.baseline_results[client_baseline_key]
+                client_dm = client_result.dm_result
+                client_baseline_results = {
+                    "key": client_baseline_key,
+                    "metrics": {
+                        "mae": _json_safe_float(client_result.metrics.mae),
+                        "rmse": _json_safe_float(client_result.metrics.rmse),
+                        "smape": _json_safe_float(client_result.metrics.smape),
+                        "mase": _json_safe_float(client_result.metrics.mase),
+                        "da": _json_safe_float(client_result.metrics.da),
+                        "f1": _json_safe_float(client_result.metrics.f1),
+                        "oos_r2": _json_safe_float(client_result.metrics.oos_r2),
+                    },
+                    "dm_statistic": _json_safe_float(client_dm.statistic),
+                    "dm_pvalue": _json_safe_float(client_dm.p_value),
+                    "dm_verdict": client_dm.verdict,
+                }
+
             split_records.append(
                 SplitResultRecord(
                     id=uuid4().hex,
@@ -200,6 +283,7 @@ def create_run(
                     dm_statistic=dm_result.statistic,
                     dm_pvalue=dm_result.p_value,
                     dm_verdict=dm_result.verdict,
+                    client_baseline_results=client_baseline_results,
                 )
             )
 

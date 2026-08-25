@@ -13,14 +13,27 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
+from naive_first_common import CorrelationIdMiddleware, configure_structured_logging
+
 from app.dependencies.repositories import HealthCheckEngineDep
 from app.routers import runs, splits
+
+# OPS-006: configure the shared JSON logging convention before the app is
+# constructed -- every log line this process emits (including events.py's
+# InProcessLogEventPublisher.publish call) picks up the JSON formatter and
+# correlation-id filter automatically, no per-call-site change needed.
+configure_structured_logging()
 
 app = FastAPI(
     title="validation-service",
     description="Wraps naive_first_engine as a REST service (see README.md).",
     version="0.1.0",
 )
+
+# OPS-006: reads an inbound X-Correlation-Id (forwarded by gateway-api's
+# build_downstream_headers) or generates one, attaches it to every log line
+# for this request, and echoes it on the response.
+app.add_middleware(CorrelationIdMiddleware)
 
 app.include_router(runs.router)
 app.include_router(splits.router)

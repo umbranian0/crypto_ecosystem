@@ -15,10 +15,8 @@ this ticket's Design section rather than altering the schema later).
 Baseline-to-column mapping (binding design decision, VS-002):
 `naive_first_engine.protocol.run_validation_protocol` returns
 `SplitResult.baseline_results`, a dict keyed by baseline name ("naive0",
-"naive_last", plus any `extra_baselines`). This sprint only ever produces
-"naive0" and "naive_last" (VS-006's `POST /runs` never passes
-`extra_baselines`; VS-017's client-supplied prediction baseline is
-deferred). This schema designates a single "the model" baseline:
+"naive_last", plus any `extra_baselines`). This schema designates a single
+"the model" baseline:
 
     model_*  columns <- baseline_results["naive_last"].metrics
                          (the persistence-floor benchmark, paired with
@@ -29,9 +27,16 @@ deferred). This schema designates a single "the model" baseline:
                          against itself)
     naive0_* columns <- baseline_results["naive0"].metrics directly
 
-When VS-017 adds a client-model Strategy, `model_*`/`dm_*` stop meaning
-"naive_last" and start meaning "the client model" -- update this docstring
-and README.md's Data model note at that point.
+VS-017 update: `model_*`/`naive0_*`/`dm_*` above are NEVER repurposed for a
+client-supplied prediction baseline -- they always mean naive_last/naive0,
+unconditionally, regardless of whether a client_prediction_reference was
+supplied for a run. The optional third (client-supplied) baseline's result
+lives in its own, separate column: `client_baseline_results` (nullable
+JSON), storing `{"key", "metrics": {...7 MetricSet fields...}, "dm_statistic",
+"dm_pvalue", "dm_verdict"}` per split, NULL whenever no client prediction was
+supplied. This corrects an earlier, stale version of this docstring (and of
+README.md's Data model note) that said VS-017 would repurpose model_*/dm_* --
+that is not what shipped.
 
 `naive_first_engine.report_schema.MetricSet` has seven fields (mae, rmse,
 smape, mase, da, f1, oos_r2). solution-design.md section 4's sketch only
@@ -121,3 +126,13 @@ class SplitResult(Base):
     dm_pvalue: Mapped[float] = mapped_column(Float, nullable=False)
     # One of dm_test.Verdict: "better" | "worse" | "no significant difference"
     dm_verdict: Mapped[str] = mapped_column(String, nullable=False)
+
+    # VS-017: optional third (client-supplied) baseline's full result for
+    # this split, NULL whenever no client_prediction_reference was supplied
+    # for the run -- a separate column, never a repurposing of model_*/dm_*
+    # (see module docstring). NaN-valued dm_statistic/dm_pvalue are mapped to
+    # None before being placed in this dict (app.routers.runs._json_safe_float)
+    # since Postgres's json column type rejects the literal NaN token, unlike
+    # this table's own dm_statistic/dm_pvalue float columns above, which
+    # store real NaN natively.
+    client_baseline_results: Mapped[dict | None] = mapped_column(JSON, nullable=True)

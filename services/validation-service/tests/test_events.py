@@ -64,3 +64,44 @@ def test_successful_run_publishes_run_completed_exactly_once(tmp_path, monkeypat
     assert payload_out["tenant_id"] == "tenant-1"
     assert payload_out["status"] == "completed"
     assert payload_out["completed_at"] is not None
+
+
+def test_publish_log_call_carries_request_correlation_id(tmp_path, monkeypatch, caplog):
+    """OPS-006: InProcessLogEventPublisher.publish's log call must pick up
+    the requesting client's correlation id automatically (via
+    naive_first_common.logging's root-logger filter), not because events.py
+    itself was taught anything about correlation ids.
+    """
+    import logging
+
+    db_path = str(tmp_path / "test.db")
+    monkeypatch.setenv("VALIDATION_SERVICE_DB_PATH", db_path)
+    from app.dependencies.repositories import EventPublisherDep, get_event_publisher
+    from app.events import InProcessLogEventPublisher
+    from app.main import app
+
+    test_publisher = InProcessLogEventPublisher()
+    app.dependency_overrides[get_event_publisher] = lambda: test_publisher
+
+    client = TestClient(app)
+    payload = {
+        "dataset_id": "dataset-1",
+        "dataset_reference": _inline_dataset(),
+        **VALID_CONFIG,
+    }
+
+    try:
+        with caplog.at_level(logging.INFO):
+            response = client.post(
+                "/runs",
+                json=payload,
+                headers={"X-Tenant-Id": "tenant-1", "X-Correlation-Id": "caplog-correlation-id"},
+            )
+    finally:
+        app.dependency_overrides.pop(get_event_publisher, None)
+
+    assert response.status_code == 201, response.text
+
+    publish_records = [r for r in caplog.records if "event published" in r.getMessage()]
+    assert len(publish_records) == 1
+    assert publish_records[0].correlation_id == "caplog-correlation-id"

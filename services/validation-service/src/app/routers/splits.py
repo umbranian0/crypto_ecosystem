@@ -22,6 +22,13 @@ does not re-sort.
 (ARCH-003) -- this router is the canonical source that shape was copied
 from, and now imports the shared definition like `gateway-api`'s router
 does, so there is exactly one definition instead of two hand-synced copies.
+
+VS-017: `client_baseline` is `None` whenever the persisted
+`client_baseline_results` column is `None` (no client prediction was
+supplied for this run); otherwise `_client_baseline_response` builds the
+nested `ClientBaselineResult`, embedding the mandatory positioning
+disclaimer verbatim so it is present in the actual response body, not only
+defined as an unused Python constant.
 """
 
 from __future__ import annotations
@@ -29,14 +36,42 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 
 from naive_first_common import TenantContext, get_tenant_context
-from naive_first_common.contracts import SplitResultResponse
+from naive_first_common.contracts import ClientBaselineResult, SplitResultResponse
 
+from app.client_baseline import CLIENT_PREDICTION_AUDIT_DISCLAIMER
 from app.dependencies.repositories import (
     SplitResultRepositoryDep,
     ValidationRunRepositoryDep,
 )
 
 router = APIRouter()
+
+
+def _client_baseline_response(client_baseline_results: dict | None) -> ClientBaselineResult | None:
+    """VS-017: `None` whenever the persisted column is `None` (no client
+    prediction was supplied for this run); otherwise builds the nested
+    `ClientBaselineResult`, embedding the mandatory positioning disclaimer
+    verbatim so it is present in the actual response body, not only defined
+    as an unused Python constant.
+    """
+    if client_baseline_results is None:
+        return None
+
+    metrics = client_baseline_results["metrics"]
+    return ClientBaselineResult(
+        key=client_baseline_results["key"],
+        mae=metrics["mae"],
+        rmse=metrics["rmse"],
+        smape=metrics["smape"],
+        mase=metrics["mase"],
+        da=metrics["da"],
+        f1=metrics["f1"],
+        oos_r2=metrics["oos_r2"],
+        dm_statistic=client_baseline_results["dm_statistic"],
+        dm_pvalue=client_baseline_results["dm_pvalue"],
+        dm_verdict=client_baseline_results["dm_verdict"],
+        disclaimer=CLIENT_PREDICTION_AUDIT_DISCLAIMER,
+    )
 
 
 @router.get("/runs/{run_id}/splits", response_model=list[SplitResultResponse])
@@ -80,6 +115,7 @@ def get_splits(
             dm_statistic=split.dm_statistic,
             dm_pvalue=split.dm_pvalue,
             dm_verdict=split.dm_verdict,
+            client_baseline=_client_baseline_response(split.client_baseline_results),
         )
         for split in splits
     ]

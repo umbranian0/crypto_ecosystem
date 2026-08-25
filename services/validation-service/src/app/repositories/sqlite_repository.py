@@ -86,6 +86,7 @@ def _split_result_to_record(split: SplitResult) -> SplitResultRecord:
         dm_statistic=split.dm_statistic,
         dm_pvalue=split.dm_pvalue,
         dm_verdict=split.dm_verdict,
+        client_baseline_results=split.client_baseline_results,
     )
 
 
@@ -123,6 +124,7 @@ def _record_to_split_result(tenant_id: str, run_id: str, s: SplitResultRecord) -
         dm_statistic=s.dm_statistic,
         dm_pvalue=s.dm_pvalue,
         dm_verdict=s.dm_verdict,
+        client_baseline_results=s.client_baseline_results,
     )
 
 

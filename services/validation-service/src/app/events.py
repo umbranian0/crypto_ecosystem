@@ -46,6 +46,12 @@ class InProcessLogEventPublisher:
         self.published: list[dict] = []
 
     def publish(self, event_name: str, payload: dict) -> None:
+        # OPS-006: no code change needed beyond app.main's
+        # configure_structured_logging() call at startup -- this plain
+        # logger.info(...) call is picked up by the root logger's JSON
+        # formatter + correlation-id filter automatically, since neither
+        # attaches anything at this call site (see naive_first_common.logging
+        # module docstring).
         logger.info("event published: %s", event_name, extra={"event_name": event_name, "payload": payload})
         self.published.append({"event_name": event_name, "payload": payload})
 
