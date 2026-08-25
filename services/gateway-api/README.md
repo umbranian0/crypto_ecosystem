@@ -37,6 +37,20 @@ It creates one `tenants` row (`TenantRepository.create_tenant`) and one `api_key
 
 **Revocation (GW-010)**: `scripts/revoke_api_key.py` is an **operator/test-fixture tool, not a tenant-self-service mechanism** -- there is no HTTP path to reach this functionality at all (no new FastAPI router/endpoint/route is added anywhere by this ticket), the same "operator-only" framing `scripts/provision_tenant.py` (GW-005) established. It exists so a leaked or rotated key can be revoked immediately, without deleting/recreating the tenant.
 
+**Structured logging / correlation id (OPS-006)**: `src/app/main.py` calls
+`naive_first_common.configure_structured_logging()` at import time and
+registers `naive_first_common.CorrelationIdMiddleware` -- every log line this
+service emits is a JSON object (`timestamp`/`level`/`logger`/`message`/
+`correlation_id`); the middleware reads an inbound `X-Correlation-Id` header
+if present, otherwise generates `uuid4().hex`, attaches it to every log line
+emitted during that request (via a context var, not passed explicitly
+through every function call), and sets it on the response too.
+`app.dependencies.routing.build_downstream_headers` forwards the same id to
+`validation-service` as a header, so one logical request's logs can be
+joined across both services by that one id. This does not stand up a
+log-aggregation backend (still declined, see `docs/product/backlog-operability.md`
+OPS-007) -- it ends at "logs are structured and correlatable."
+
 Run it from `services/gateway-api`:
 ```
 .venv\Scripts\python.exe scripts\revoke_api_key.py --key "<the raw API key>"
@@ -114,6 +128,11 @@ only one of the three below is actually built today.
   `ingestion-service` once that service exists) must carry `tags=["<service-name>"]` following this
   exact convention as part of that router's own ticket's acceptance criteria -- this is process
   guidance for ticket-writing, not something enforced in code.
+**Load testing (GW-017)**: `loadtest/locustfile.py` + `loadtest/README.md` drive this service's
+key endpoints against a real running Compose stack -- observability tooling, not a CI gate (no
+hard SLA/threshold is asserted or gated on anywhere in it). See `loadtest/README.md` for how to run
+it, including the `POST /runs`-is-synchronous-and-not-comparable-to-the-GETs caveat.
+
 **CI**: `.github/workflows/ci.yml` runs this module's test suite on every push/PR.
 
 **Coverage**: run tests with coverage locally via `uv run pytest -q --cov=app --cov-report=term-missing` (no coverage threshold is enforced — CI prints the report, it never fails the build on a percentage).

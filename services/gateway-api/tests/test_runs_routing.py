@@ -30,6 +30,7 @@ from app.dependencies.auth import get_authenticated_tenant
 from app.dependencies.http_client import get_validation_service_client
 from app.dependencies.repositories import get_api_key_repository
 from app.repositories.interfaces import ApiKeyRecord
+from naive_first_common.logging import CorrelationIdMiddleware
 from app.routers import runs
 
 RAW_KEY_A = "tenant-a-raw-key"
@@ -94,6 +95,7 @@ _SPLIT_RECORD = {
     "dm_statistic": 3.1,
     "dm_pvalue": 0.02,
     "dm_verdict": "model_better",
+    "client_baseline": None,
 }
 
 _SEED_SPLITS: dict[str, list[dict]] = {RUN_OWNED_BY_A: [_SPLIT_RECORD]}
@@ -237,6 +239,7 @@ def fake_validation_service() -> FakeValidationService:
 def client(fake_validation_service: FakeValidationService) -> TestClient:
     app = FastAPI()
     app.include_router(runs.router)
+    app.add_middleware(CorrelationIdMiddleware)
 
     key_repo = FakeApiKeyRepository(
         {
@@ -425,3 +428,40 @@ def test_get_runs_downstream_422_passes_through_unmodified(client: TestClient) -
     )
 
     assert response.status_code == 422
+
+
+def test_correlation_id_on_inbound_request_is_forwarded_downstream(
+    client: TestClient, fake_validation_service: FakeValidationService
+) -> None:
+    """OPS-006: the correlation id CorrelationIdMiddleware assigns to the
+    inbound gateway-api request must be the exact same id forwarded to
+    validation-service via build_downstream_headers -- proven end to end
+    through the real proxying path, not asserted against a mocked constant.
+    """
+    response = client.get(
+        f"/runs/{RUN_OWNED_BY_A}",
+        headers={"Authorization": f"Bearer {RAW_KEY_A}", "X-Correlation-Id": "caller-supplied-id"},
+    )
+
+    assert response.status_code == 200
+    assert response.headers["X-Correlation-Id"] == "caller-supplied-id"
+
+    assert len(fake_validation_service.seen_requests) == 1
+    forwarded = fake_validation_service.seen_requests[0].headers["x-correlation-id"]
+    assert forwarded == "caller-supplied-id"
+
+
+def test_correlation_id_generated_when_absent_is_forwarded_downstream(
+    client: TestClient, fake_validation_service: FakeValidationService
+) -> None:
+    response = client.get(
+        f"/runs/{RUN_OWNED_BY_A}", headers={"Authorization": f"Bearer {RAW_KEY_A}"}
+    )
+
+    assert response.status_code == 200
+    inbound_generated = response.headers["X-Correlation-Id"]
+    assert inbound_generated
+
+    assert len(fake_validation_service.seen_requests) == 1
+    forwarded = fake_validation_service.seen_requests[0].headers["x-correlation-id"]
+    assert forwarded == inbound_generated

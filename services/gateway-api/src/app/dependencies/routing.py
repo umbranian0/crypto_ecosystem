@@ -17,11 +17,16 @@ construction, not by convention repeated per call site.
 
 from __future__ import annotations
 
+from naive_first_common.logging import correlation_id_var
 from naive_first_common.tenant_context import TenantContext
 
 
 def build_downstream_headers(tenant: TenantContext) -> dict[str, str]:
     """Returns the exact header set gateway-api forwards to internal
-    services: `X-Tenant-Id` sourced only from the verified `TenantContext`.
+    services: `X-Tenant-Id` sourced only from the verified `TenantContext`,
+    plus `X-Correlation-Id` (OPS-006) sourced from the current request's
+    `correlation_id_var` -- set by `CorrelationIdMiddleware` before any
+    route handler runs, so validation-service's logs for the proxied call can
+    be joined back to this request's own logs.
     """
-    return {"X-Tenant-Id": tenant.tenant_id}
+    return {"X-Tenant-Id": tenant.tenant_id, "X-Correlation-Id": correlation_id_var.get()}

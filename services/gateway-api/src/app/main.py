@@ -13,14 +13,27 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
+from naive_first_common import CorrelationIdMiddleware, configure_structured_logging
+
 from app.dependencies.repositories import HealthCheckEngineDep
 from app.routers import reports, runs
+
+# OPS-006: configure the shared JSON logging convention before the app is
+# constructed, so every log line emitted from import time onward (including
+# uvicorn's own startup lines that go through the standard `logging` module)
+# uses the same JSON formatter/correlation-id filter as validation-service.
+configure_structured_logging()
 
 app = FastAPI(
     title="gateway-api",
     description="The only internet-facing service (see README.md).",
     version="0.1.0",
 )
+
+# OPS-006: assigns/reads X-Correlation-Id for every request; build_downstream_
+# headers (dependencies/routing.py) reads the same correlation_id_var this
+# middleware sets, so the id threads through to validation-service too.
+app.add_middleware(CorrelationIdMiddleware)
 
 app.include_router(runs.router, tags=["validation-service"])
 app.include_router(reports.router, tags=["reporting-service"])

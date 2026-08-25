@@ -5,6 +5,11 @@ expected header dict from a directly-constructed `TenantContext`; (2) in a
 real request/dependency scenario, a client-supplied `X-Tenant-Id` header
 cannot influence the outbound header at all -- only GW-006's authenticated
 tenant_id can, even when the two differ.
+
+OPS-006 addition: `build_downstream_headers` also carries `X-Correlation-Id`,
+sourced from `naive_first_common.logging.correlation_id_var` (set by
+`CorrelationIdMiddleware` before any route handler runs) -- never a
+hardcoded/mocked constant.
 """
 
 from __future__ import annotations
@@ -18,6 +23,7 @@ from pathlib import Path
 import pytest
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
+from naive_first_common.logging import CorrelationIdMiddleware
 from naive_first_common.tenant_context import TenantContext
 
 from app.dependencies.auth import get_authenticated_tenant
@@ -33,7 +39,11 @@ SPOOFED_TENANT_ID = "tenant-attacker-claims"
 def test_build_downstream_headers_returns_exact_expected_dict() -> None:
     tenant = TenantContext(tenant_id=AUTHENTICATED_TENANT_ID)
 
-    assert build_downstream_headers(tenant) == {"X-Tenant-Id": AUTHENTICATED_TENANT_ID}
+    # Outside any request context, correlation_id_var is at its default ("").
+    assert build_downstream_headers(tenant) == {
+        "X-Tenant-Id": AUTHENTICATED_TENANT_ID,
+        "X-Correlation-Id": "",
+    }
 
 
 @dataclass
@@ -85,8 +95,42 @@ def test_spoofed_inbound_x_tenant_id_header_never_reaches_outbound_header() -> N
     )
 
     assert response.status_code == 200
-    assert response.json() == {"X-Tenant-Id": AUTHENTICATED_TENANT_ID}
+    assert response.json()["X-Tenant-Id"] == AUTHENTICATED_TENANT_ID
     assert response.json()["X-Tenant-Id"] != SPOOFED_TENANT_ID
+
+
+def test_build_downstream_headers_carries_the_request_correlation_id() -> None:
+    """OPS-006: X-Correlation-Id on the outbound header dict is the exact
+    same id CorrelationIdMiddleware assigned to this request -- not a
+    hardcoded/mocked constant.
+    """
+    record = ApiKeyRecord(
+        id="key-1",
+        tenant_id=AUTHENTICATED_TENANT_ID,
+        key_hash=hashlib.sha256(RAW_KEY.encode()).hexdigest(),
+        created_at=datetime.now(timezone.utc),
+        revoked_at=None,
+    )
+    repo = FakeApiKeyRepository({record.key_hash: record})
+
+    app = FastAPI()
+    app.add_middleware(CorrelationIdMiddleware)
+
+    @app.get("/downstream-headers")
+    def downstream_headers(tenant=Depends(get_authenticated_tenant)):
+        return build_downstream_headers(tenant)
+
+    app.dependency_overrides[get_api_key_repository] = lambda: repo
+    client = TestClient(app)
+
+    response = client.get(
+        "/downstream-headers",
+        headers={"Authorization": f"Bearer {RAW_KEY}", "X-Correlation-Id": "caller-id-123"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["X-Correlation-Id"] == "caller-id-123"
+    assert response.headers["X-Correlation-Id"] == "caller-id-123"
 
 
 def test_diff_touches_only_services_gateway_api() -> None:
