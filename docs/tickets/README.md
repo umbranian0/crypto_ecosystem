@@ -147,6 +147,50 @@ verification pass) was restarted.
 See docs/sprints/sprint-14.md. Closes `DASH-005-GAP` (open since Sprint 11) -- the first half of the sprint's `VS-022 -> GW-016` chain, run in parallel with `INF-018` (infra). Adds `RunSummaryResponse` to `libs/common/src/naive_first_common/contracts.py` (the single canonical definition, reused by `GW-016`, not redefined) and a new `list_runs` method on `ValidationRunRepository`, implemented by both the SQLite (VS-004) and Postgres (VS-013) backends without changing either's existing `create_run`/`get_run`/`update_run_status` call sites. The hard server-side `limit` ceiling (max 100, `422` on out-of-range, never clamped) and the non-tautological cross-tenant test (asserts by id, not just count) received the sprint's own flagged extra review scrutiny. `services/validation-service/README.md`'s Routes section gains `GET /runs`; VS-016's doc-sync check re-run and confirmed still passing.
 **Sprint 14 outcome (validation-service)**: `87 passed`, 0 failed, `1833.57s` (0:30:33), personally re-run by the Tech Lead against the real Postgres/Redis containers -- zero regressions.
 
+## Sprint 17
+
+| Ticket | Story | Depends on | Status |
+|---|---|---|---|
+| [VS-017](VS-017.md) | Client-supplied prediction column as a `Baseline`-interface Strategy | VS-006 (done) | done |
+| [VS-015](VS-015.md) | Object-storage-backed `DatasetSource` implementation | VS-005 (done); practically wants INF-008 (this sprint) | done |
+
+See docs/sprints/sprint-17.md, docs/product/backlog-hardening-wave-review.md. Part of the eight-item
+hardening wave (also touching `gateway-api`, `infra`, cross-cutting Operability, tracked under those
+modules' own Sprint 17 sections below). `VS-017` ran in Round 1 (parallel with `OPS-006`/`GW-017`,
+disjoint files: `runs.py` + a new `client_baseline.py`, vs. `OPS-006`'s `main.py`/`events.py`/
+`dependencies/routing.py`). `VS-015` ran in Round 2, after Round 1 fully landed, since it practically
+wanted `INF-008`'s MinIO container up for realistic (not just mocked-client) testing -- a real MinIO
+integration test actually ran (not skipped) against the live container. `VS-017` reuses
+`naive_first_engine.protocol.ValidationConfig`'s existing `extra_baselines` extension point unmodified
+(zero changes to `libs/naive_first_engine`) and adds a new nullable `split_results.client_baseline_results`
+column, never repurposing the existing `model_*`/`naive0_*`/`dm_*` columns -- naive baselines (VS-019)
+stay structurally mandatory throughout, proven by `tests/test_naive_baselines_mandatory.py`. `VS-015`
+adds `ObjectStorageDatasetSource`/`CompositeDatasetSource` behind the existing `DatasetSource` interface
+with zero change to `POST /runs`'s handler code, explicitly documented as making the read-side adapter
+real without claiming `processed/{tenant_id}/...` is actually populated.
+
+**Two real bugs found and fixed by the Tech Lead during live verification of `VS-017`** (neither in any
+dev agent's own diff): (1) a single-test-point split's zero-variance DM statistic is `NaN`, which broke
+the new `client_baseline_results` JSON column at persistence time (Postgres's `json` type rejects the
+literal `NaN` token) -- fixed via a new `_json_safe_float` helper in `runs.py` mapping `NaN`/`Infinity`
+to `None`; (2) that fix required widening `naive_first_common.contracts.ClientBaselineResult.dm_statistic`/
+`dm_pvalue` to `float | None`, which in turn surfaced a related, pre-existing, disclosed bug (present
+since VS-007/VS-008/GW-008, not caused by this sprint): the same NaN-becomes-JSON-`null` behavior already
+affected the top-level `SplitResultResponse.dm_statistic`/`dm_pvalue` fields, breaking `gateway-api`'s
+proxy of `GET /runs/{id}/splits` with a real `500` whenever a split had zero DM variance -- fixed with
+the same widening. All three fixes verified against the real, rebuilt live Compose stack (a real
+client-prediction `POST /runs` run completes, `GET /runs/{id}/splits` returns the disclaimer text
+verbatim through both `validation-service` directly and `gateway-api`'s proxy).
+
+**Separately, this sprint's own working tree suffered an unexplained mid-sprint `git reset` incident**
+(two `reset: moving to HEAD` operations in the reflog, cause not conclusively identified -- see the
+Tech Lead's final sprint report) that silently discarded every uncommitted edit to already-tracked
+files across all four modules touched this sprint. Recovered via a `git stash` one dev agent (VS-015)
+had defensively created plus full manual reconstruction of every other lost tracked-file edit, verified
+line-for-line against each module's re-run test suite. `services/validation-service` full suite
+re-verified clean: 114-116 passed depending on run (two confirmed-pre-existing, confirmed-passing-in-
+isolation flaky `created_at`-ordering tests, a timestamp-resolution race unrelated to this sprint).
+
 # libs/common (LC-*)
 
 Source: docs/sprints/sprint-04.md, docs/product/backlog-libs-common.md.
@@ -259,6 +303,27 @@ See docs/sprints/sprint-06.md Phase 4. Sprint 06's second extra-sensitive ticket
 See docs/sprints/sprint-14.md. `GW-016` closes the second, symmetric half of `DASH-005-GAP` (`VS-022` is the first) -- runs after `VS-022` lands. `GW-018` closes the `gateway-api` half of `RS-GAP` (paired with `INF-018`) -- run strictly after `GW-016` completes and its diff is personally verified by the Tech Lead, not in parallel, per the sprint's own binding same-file-collision-avoidance instruction (both tickets touch the router layer and README Contract section). `GW-016` reuses `VS-022`'s new `RunSummaryResponse` from `naive_first_common.contracts`; `GW-018` adds a new `REPORTING_SERVICE_URL` env var and a new `reports.py` router module (disjoint from `runs.py`, zero file overlap with `GW-016`). Both reuse GW-009's existing timeout/failure handling unmodified. `GW-018`'s own documentation restates the sprint's disclosed caveat: only the manual `POST /reports/generate` -> `GET /reports/{id}` flow is reachable end-to-end through `gateway-api` after this sprint -- the automatic `run.completed`-triggered flow (`RS-006`) remains `todo` in Sprint 12, a gap in `RS-006`, not a `GW-018` defect.
 **Sprint 14 outcome (gateway-api)**: `GW-016` personally re-run by the Tech Lead -- `72 passed`, 0 failed, `393.26s`. `GW-018` personally re-run by the Tech Lead after `GW-016` -- `80 passed`, 0 failed, `393.04s`. Both confirmed zero file overlap in `runs.py` (byte-for-byte identical diff before/after `GW-018`).
 
+## Sprint 17
+
+| Ticket | Story | Depends on | Status |
+|---|---|---|---|
+| [GW-017](GW-017.md) | Locust load-test suite against key endpoints | GW-008, GW-009 (done) | done |
+| [GW-010](GW-010.md) | API-key revocation (operator-only CLI script) | GW-006 (done) | done |
+| [GW-014](GW-014.md) | Auth event audit logging | GW-006 (done), OPS-006 (this sprint), GW-010 (this sprint, practical) | todo |
+
+See docs/sprints/sprint-17.md, docs/product/backlog-hardening-wave-review.md. Part of the eight-item
+hardening wave. `GW-017` ran in Round 1 (new `loadtest/` directory only, zero overlap with anything
+else this sprint) -- a real 30s headless Locust run against the live Compose stack produced 917
+`POST /runs`, 1022+994 `GET` requests, and 953 deliberate-401 requests, all behaving correctly. `GW-010`
+ran in Round 2, after Round 1 (including `OPS-006`) fully landed and was verified, to avoid concurrent
+`gateway-api` edits -- a new standalone `scripts/revoke_api_key.py` (mirroring `scripts/provision_tenant.py`'s
+GW-005 precedent exactly), zero changes to `src/app/routers/`, `src/app/main.py`, or
+`dependencies/auth.py` (confirmed via `git diff --stat`), a real end-to-end proof (provision ->
+authenticate -> revoke -> the very next request with the same raw key gets `401`). `GW-014` is queued
+for Round 3, **solo**, strictly after `OPS-006` (formal dependency) and `GW-010` (practical dependency
+-- instruments the revocation script `GW-010` creates) are both done and personally verified -- same
+same-file-collision-avoidance discipline this repo already applied to `GW-016`/`GW-018` in Sprint 14.
+
 # infra (INF-*)
 
 Source: docs/sprints/sprint-06.md, docs/product/backlog-infra.md.
@@ -364,6 +429,25 @@ scoped to those paths after each ticket).
 
 See docs/sprints/sprint-14.md. Closes the infra half of `RS-GAP` (paired with `GW-018`), run in parallel with `VS-022` from the start of the sprint -- genuinely independent, disjoint files (`infra/docker-compose.yml` + `services/reporting-service/Dockerfile` vs. `services/validation-service/`). Packaging/wiring only -- zero changes under `services/reporting-service/src/`, confirmed via `git status` scoped to that path before and after. `DATABASE_URL` uses the existing non-superuser `naive_first_app` role (INF-014), not `naive_first` -- does not reintroduce the RLS-bypass gap that role was created to close. Verified against the real, live Compose stack, not merely a config-file review: `docker compose up reporting-service` succeeds, `POST /reports/generate`/`GET /reports/{id}` respond over the container's exposed port. `infra/README.md`'s "not yet wired into compose" statement updated to remove `reporting-service`, cross-referencing `GW-018` as the other `RS-GAP` half needed for actual reachability from outside the Docker network.
 **Sprint 14 outcome (infra)**: live-stack verification personally performed by the Tech Lead (not merely re-read from the dev agent's report) -- `docker compose build/up reporting-service` succeeded, `GET /health` returned `200`, a real `POST /reports/generate` -> `GET /reports/{id}` round trip was independently reproduced with real HTTP responses, and `naive_first_app` (not `naive_first`) was confirmed as the live runtime role via `pg_stat_activity`. One real, disclosed gap found and fixed: the `reporting` Postgres schema/grants, previously only hand-applied to the long-lived Sprint 06+ container, are now in `infra/postgres-init/` so a fresh volume gets them automatically too.
+
+## Sprint 17
+
+| Ticket | Story | Depends on | Status |
+|---|---|---|---|
+| [INF-008](INF-008.md) | `minio` service in Docker Compose | none | done |
+| [INF-010](INF-010.md) | `split_results` converted to a TimescaleDB hypertable | INF-005 (done) | done |
+
+See docs/sprints/sprint-17.md, docs/product/backlog-hardening-wave-review.md. Part of the eight-item
+hardening wave. Both ran in Round 1, independent of each other and of everything else this sprint by
+file. `INF-008` applies the same `127.0.0.1`-only host port binding already used for
+`postgres`/`redis`/`validation-service`/`reporting-service`, stands up an empty container, and states
+plainly in `infra/README.md` that no service reads/writes to it yet -- `ingestion-service` (trigger #6)
+is the first real consumer. Live-verified by the Tech Lead: `docker compose up -d minio` succeeds,
+`curl http://localhost:9000/minio/health/live` returns `200` from the host. `INF-010` is scoped
+narrowly to the hypertable conversion itself (`split_results`, partitioned on `test_start`), proven
+not to break existing repository/query behavior, with no new time-series query surface built --
+`tests/test_hypertable_migration.py` re-run personally by the Tech Lead against the real Compose
+Postgres, `1 passed`.
 
 # Operability (OPS-*)
 
@@ -479,6 +563,29 @@ full test suites re-run in full and matched the Sprint 08 baseline exactly with 
 `test_postgres_repository.py`, which required working around a pre-existing, unrelated local-machine
 IPv6-loopback DNS-resolution quirk via the standard `PGCONNECT_TIMEOUT` libpq environment variable --
 no code or test-file change -- to get a real, complete pass count instead of leaving it unverified).
+
+## Sprint 17
+
+| Ticket | Story | Module(s) | Depends on | Status |
+|---|---|---|---|---|
+| [OPS-006](OPS-006.md) | Structured logging + request/tenant-correlation id, platform-wide convention | services/gateway-api, services/validation-service, libs/common | none | done |
+
+See docs/sprints/sprint-17.md, docs/product/backlog-hardening-wave-review.md. Part of the eight-item
+hardening wave. Ran in Round 1, parallel with `INF-008`/`INF-010`/`GW-017`/`VS-017` -- disjoint files
+from all four. This was the **precondition for `GW-014`** (gateway-api Sprint 17 section above,
+Round 3) -- fully landed and personally verified done before `GW-010`/`GW-014` touched `gateway-api`
+again. Adopts stdlib `logging` + a JSON formatter (no new third-party logging dependency) plus a
+`CorrelationIdMiddleware`/`correlation_id_var` context var in `libs/common`, reused (not duplicated) by
+both services; does not stand up a log-aggregation backend (still `OPS-007`'s own declined scope).
+Live-verified by the Tech Lead against the real, rebuilt Compose stack: a `POST /runs` through
+`gateway-api` with no inbound `X-Correlation-Id` returns a response carrying a generated id, and the
+identical id appears in `gateway-api`'s own structured JSON log line for its outbound proxy call. One
+disclosed, non-blocking finding: the live stack's `validation-service` uses the Redis-backed event
+publisher, whose `publish()` doesn't log anything -- only the interim `InProcessLogEventPublisher`
+does (the one this story's AC requires migrating, done correctly) -- so a live successful run produces
+no independent validation-service-side log line to visually pair against gateway-api's, though the
+underlying correlation-id mechanism is proven correct end-to-end by both unit test and live header/log
+inspection. Flagged as a small future-polish item, not blocking.
 
 # services/ingestion-service (INGEST-*)
 
