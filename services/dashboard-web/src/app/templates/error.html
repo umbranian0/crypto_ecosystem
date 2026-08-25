@@ -1,6 +1,8 @@
 {% extends "base.html" %}
 {% block title %}Unavailable -- dashboard-web{% endblock %}
 {% block content %}
+<div class="state-page">
 <h2>Unavailable</h2>
 <p>{{ message | default("results currently unavailable") }}</p>
+</div>
 {% endblock %}

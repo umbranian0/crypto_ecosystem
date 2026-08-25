@@ -1,0 +1,333 @@
+/* dashboard-web design system.
+
+   Positioning constraint (CLAUDE.md): this is validation/audit infrastructure,
+   not a trading surface. No green/red "market up/down" pairing anywhere --
+   status badges and the .error class below use color for state, never for a
+   directional/market signal.
+*/
+
+:root {
+  /* Palette: muted navy/slate/charcoal text on a near-white background, one
+     restrained accent for interactive elements. */
+  --color-bg: #f7f8fa;
+  --color-surface: #ffffff;
+  --color-border: #d9dde3;
+  --color-text: #1f2a37;
+  --color-text-muted: #5b6675;
+  --color-heading: #16202c;
+
+  --color-accent: #2f5d8a;
+  --color-accent-hover: #24476a;
+  --color-accent-contrast: #ffffff;
+
+  --color-error-bg: #fbeaea;
+  --color-error-border: #d99a9a;
+  --color-error-text: #8a3232;
+
+  --color-status-running-bg: #e7e9ee;
+  --color-status-running-text: #4a5568;
+  --color-status-completed-bg: #e3ece6;
+  --color-status-completed-text: #3f6b4e;
+  --color-status-failed-bg: #f3e3e0;
+  --color-status-failed-text: #8a4a32;
+
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica,
+    Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+  --font-mono: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono",
+    Menlo, monospace;
+
+  --radius: 6px;
+  --max-width: 1120px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--color-text);
+  background-color: var(--color-bg);
+}
+
+header {
+  background-color: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+  padding: var(--space-5) var(--space-6);
+}
+
+header h1 {
+  max-width: var(--max-width);
+  margin: 0 auto;
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--color-heading);
+  letter-spacing: 0.01em;
+}
+
+main {
+  max-width: var(--max-width);
+  margin: 0 auto;
+  padding: var(--space-6);
+}
+
+h1,
+h2,
+h3 {
+  color: var(--color-heading);
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+h2 {
+  font-size: 1.375rem;
+  margin: 0 0 var(--space-4);
+}
+
+h3 {
+  font-size: 1.05rem;
+  margin: var(--space-6) 0 var(--space-3);
+}
+
+p {
+  color: var(--color-text);
+  margin: 0 0 var(--space-4);
+}
+
+a {
+  color: var(--color-accent);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+  color: var(--color-accent-hover);
+}
+
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+/* Forms */
+
+form {
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: var(--space-5);
+  max-width: 560px;
+}
+
+label {
+  display: block;
+  font-weight: 600;
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+  margin: var(--space-4) 0 var(--space-1);
+}
+
+label:first-of-type {
+  margin-top: 0;
+}
+
+input[type="text"],
+input[type="password"],
+input[type="number"],
+textarea {
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  font-family: inherit;
+  font-size: 0.95rem;
+  color: var(--color-text);
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+}
+
+textarea {
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  resize: vertical;
+}
+
+fieldset {
+  margin: var(--space-5) 0;
+  padding: var(--space-4) var(--space-4) var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background-color: var(--color-bg);
+}
+
+fieldset label:first-of-type {
+  margin-top: 0;
+}
+
+legend {
+  padding: 0 var(--space-2);
+  font-weight: 600;
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+}
+
+button {
+  display: inline-block;
+  margin-top: var(--space-5);
+  padding: var(--space-2) var(--space-5);
+  font-family: inherit;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--color-accent-contrast);
+  background-color: var(--color-accent);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+button:hover {
+  background-color: var(--color-accent-hover);
+  border-color: var(--color-accent-hover);
+}
+
+.error {
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-4);
+  color: var(--color-error-text);
+  background-color: var(--color-error-bg);
+  border: 1px solid var(--color-error-border);
+  border-radius: var(--radius);
+  font-size: 0.9rem;
+}
+
+/* Tables */
+
+.table-scroll {
+  overflow-x: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background-color: var(--color-surface);
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+th,
+td {
+  padding: var(--space-2) var(--space-3);
+  text-align: left;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--color-border);
+}
+
+thead th {
+  background-color: var(--color-bg);
+  font-weight: 600;
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  border-bottom: 1px solid var(--color-border);
+}
+
+tbody tr:nth-child(even) {
+  background-color: #fbfbfc;
+}
+
+tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* A key-value details table (run_detail.html's summary block) doesn't need
+   the zebra/scroll treatment meant for the wide per-split table. */
+main > table {
+  max-width: 640px;
+  margin-bottom: var(--space-4);
+}
+
+main > table th {
+  width: 220px;
+  color: var(--color-text-muted);
+  font-weight: 600;
+  background-color: var(--color-bg);
+}
+
+/* Status badge */
+
+.status {
+  display: inline-block;
+  padding: var(--space-1) var(--space-3);
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.status-running {
+  background-color: var(--color-status-running-bg);
+  color: var(--color-status-running-text);
+}
+
+.status-completed {
+  background-color: var(--color-status-completed-bg);
+  color: var(--color-status-completed-text);
+}
+
+.status-failed {
+  background-color: var(--color-status-failed-bg);
+  color: var(--color-status-failed-text);
+}
+
+/* Error / not-found pages */
+
+.state-page {
+  max-width: 480px;
+  margin: var(--space-7) auto;
+  padding: var(--space-6);
+  text-align: center;
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+}
+
+.state-page h2 {
+  margin-bottom: var(--space-3);
+}
+
+.state-page p {
+  color: var(--color-text-muted);
+  margin-bottom: 0;
+}
+
+@media (max-width: 800px) {
+  header,
+  main {
+    padding-left: var(--space-4);
+    padding-right: var(--space-4);
+  }
+
+  form {
+    max-width: 100%;
+  }
+}

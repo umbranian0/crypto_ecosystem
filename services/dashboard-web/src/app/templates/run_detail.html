@@ -5,7 +5,7 @@
 
 <table>
     <tbody>
-        <tr><th>Status</th><td>{{ run.status }}</td></tr>
+        <tr><th>Status</th><td><span class="status status-{{ run.status }}">{{ run.status }}</span></td></tr>
         <tr><th>Dataset</th><td>{{ run.dataset_id }}</td></tr>
         <tr><th>Horizon</th><td>{{ run.horizon }}</td></tr>
         <tr><th>Purge gap (hours)</th><td>{{ run.purge_gap_hours }}</td></tr>
@@ -19,6 +19,7 @@
 {% if splits %}
 <p>Benchmark comparison of the model against the Naive0 baseline for each walk-forward split.
 These are validation/audit metrics only.</p>
+<div class="table-scroll">
 <table>
     <thead>
         <tr>
@@ -73,6 +74,7 @@ These are validation/audit metrics only.</p>
         {% endfor %}
     </tbody>
 </table>
+</div>
 {% else %}
 <p>No per-split validation results yet for this run.</p>
 {% endif %}

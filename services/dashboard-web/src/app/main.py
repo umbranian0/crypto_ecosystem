@@ -18,11 +18,13 @@ from pathlib import Path
 import httpx
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from app.dependencies.downstream import get_gateway_api_url
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
+STATIC_DIR = Path(__file__).parent / "static"
 
 app = FastAPI(
     title="dashboard-web",
@@ -35,6 +37,10 @@ app = FastAPI(
 )
 
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+
+# Presentation-layer-only static assets (CSS); no route logic here, so this is
+# mounted directly rather than via a router module.
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 # Imported after `templates` is defined: `app.routers.auth` (DASH-002) and
 # `app.routers.runs` (DASH-004) both read `templates` back from this module,
