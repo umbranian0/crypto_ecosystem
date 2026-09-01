@@ -886,3 +886,95 @@ Source: `docs/sprints/sprint-13.md`, `docs/product/backlog-economic-service.md`.
 | [ECON-014](ECON-014.md) | Documentation/doc-sync extension: "Backtesting (ECON-012/013)" README section, `check_profitability_language.py` scanned-file-set extension, OpenAPI-output framing check | ECON-006 (done, Sprint 13), ECON-012 (this sprint) | done |
 
 See `docs/sprints/sprint-16.md` — extends Sprint 13's disclosed trigger-#11 override, unchanged framing: no eligible input exists anywhere on this platform today (`VS-017` unbuilt), so nothing built this sprint can return a real number through the real running service either. All 3 in-scope stories done: `ECON-012` ran solo first — `POST /backtests` (`src/app/routers/backtests.py`), reusing `check_economic_eligibility` unmodified per run id via the existing `Depends(get_upstream_client)` seam, 6 new tests (the four required batched-equivalent tests plus a call-count proof and an AST import-site check); `ECON-013` and `ECON-014` then ran genuinely in parallel and landed with zero file collision (confirmed via `git diff --stat` — disjoint file sets exactly as predicted) — `ECON-013` added `economic.backtest_results` (`src/app/models.py`, `src/app/repositories/`, a new migration), eligible-branch-only, structurally proven via an AST-based exclusive-call-site test, with a documented, narrowly-scoped carve-out added to `test_no_profitability_columns.py` for the two legitimately-earned `return`-suffixed columns on that one table; `ECON-014` added the "Backtesting (ECON-012/013)" README section (all five required elements), confirmed `check_profitability_language.py`'s existing glob already covered the new files with zero code change (one new allowlist entry for a legitimate docstring mention), and added `tests/test_openapi_language.py` verifying the actual generated `/openapi.json` output. Full suite `.venv\Scripts\python.exe -m pytest -q` → **66 passed, 0 failed** (50 Sprint-13 baseline + 6 ECON-012 + 5 ECON-013 + 5 ECON-014), zero regressions, independently re-run by the Tech Lead multiple times. Sprint's own non-negotiable verification requirement (mirrors ECON-005's Sprint-13 precedent exactly) performed and passed in full: (1) grepped the entire service tree, zero exchange-API-client/order-placement/wallet-connection hits; (2) `git diff HEAD -- eligibility.py` shows zero changes, byte-identical to its Sprint-13-close commit; (3) `check_profitability_language.py` re-run directly against the shipped files, exits clean; (4) the new README section and the real generated `/openapi.json` output both read directly, correct retrospective/hypothetical/research-purposes framing confirmed, no forward-looking profitability language found; (5) grepped every new file for balance/position/wallet/custody-shaped names, zero hits — `BacktestResult`'s 14 columns confirmed clean, `ECON-018`'s declined mocked-wallet structure was not quietly reintroduced under a different name. See `docs/sprints/sprint-16.md`'s own Outcome section for the full five-part verification writeup and the two disclosed process notes (an interrupted dev agent's documentation completed by the Tech Lead; a ticket-internal Design-vs-Review-AC inconsistency resolved in favor of the Design section's binding requirement).
+
+
+# Sprint 18 — Per-tenant TimescaleDB ingestion pipeline, ingestion-service API, dataset picker, ops dashboard (INGEST-*, LC-010, VS-023/024, GW-019/020, DASH-108/109/110/111/112)
+
+Source: `docs/sprints/sprint-18.md`, `docs/product/backlog-ingestion-pipeline-integration.md`,
+`docs/solution-design.md` section 8, `docs/adr/0004-tenant-credential-encryption-at-rest.md`,
+`docs/adr/0005-dataset-is-a-continuous-tenant-source-table.md`. Spans five modules
+(`services/ingestion-service`, `libs/common`, `services/validation-service`, `services/gateway-api`,
+`services/dashboard-web`) plus `infra` (Compose wiring, inside `INGEST-007`). Full dependency-chain
+table and the three "adopted by default" decisions live in `docs/sprints/sprint-18.md` — not repeated
+here.
+
+| Ticket | Story | Depends on | Status |
+|---|---|---|---|
+| [INGEST-002](INGEST-002.md) | `ingestion` schema: 5 hypertables + RLS | none | done |
+| [LC-010](LC-010.md) | Extract `tenant_scope` helper into `libs/common` | none | done |
+| [INGEST-011](INGEST-011.md) | Credential encryption primitive (Fernet) | none | done |
+| [GW-021](GW-021.md) | Minimal operator-token auth dependency (slice of sibling backlog's SETUP-010) | none | done |
+| [GW-022](GW-022.md) | Aggregate `GET /system/health` (slice of sibling backlog's SETUP-020) | INGEST-007 | done |
+| [DASH-113](DASH-113.md) | Minimal `/monitoring` page + operator-session gate (slice of SETUP-012/020) | GW-021, GW-022 | done |
+| [INGEST-003](INGEST-003.md) | Connectors write to DB instead of CSV | INGEST-002, LC-010 | done |
+| [INGEST-007](INGEST-007.md) | `ingestion-service` FastAPI scaffolding + Compose wiring | INGEST-002 | done |
+| [INGEST-004](INGEST-004.md) | Per-tenant connector credentials, encrypted at rest | INGEST-003, INGEST-011 | done |
+| [INGEST-005](INGEST-005.md) | Per-tenant crawl-run tracking | INGEST-002, INGEST-003, INGEST-004 | done |
+| [INGEST-006](INGEST-006.md) | Regression test: adapter contract unchanged | INGEST-003/004/005 | done |
+| [INGEST-008](INGEST-008.md) | `POST /connectors/{source}/run` | INGEST-003/004/005/007 | done |
+| [INGEST-009](INGEST-009.md) | `GET /datasets`, `GET /datasets/{source}/series` (revised, continuous-slice) | INGEST-002/003/007 | done |
+| [GW-019](GW-019.md) | Proxy: `POST /ingestion/connectors/{source}/run` | INGEST-008 | done |
+| [GW-020](GW-020.md) | Proxy: `GET /ingestion/datasets`, `GET /ingestion/datasets/{source}/series` | INGEST-009 | done |
+| [VS-023](VS-023.md) | `IngestionServiceDatasetSource` (revised, `{source,start,end,field}`) | INGEST-009 | done |
+| [VS-024](VS-024.md) | Tenant-identity forwarding to `IngestionServiceDatasetSource` | VS-023 | done |
+| [DASH-108](DASH-108.md) | "Pick a stored dataset" mode, date-range (revised) | GW-020, VS-024 | done (Selenium E2E extension not done, see ticket) |
+| [DASH-111](DASH-111.md) | Dataset browsing page | DASH-108, GW-020 | done |
+| [DASH-109](DASH-109.md) | Monitoring: ingestion-service 4th health row | INGEST-007, GW-022, DASH-113 | done |
+| [DASH-110](DASH-110.md) | Trigger-action UI (crawl now / generate report) | GW-019, GW-018, DASH-113 | done |
+| [DASH-112](DASH-112.md) | Settings: connector credential status (read-only phase) | INGEST-004, GW-021, DASH-113 | done |
+| [INGEST-010](INGEST-010.md) | Repeatable `seed_tenant.py` backfill CLI (revised) | INGEST-002, INGEST-003 | todo (blocked only on founder's tenant-attachment decision) |
+| [INGEST-012](INGEST-012.md) | `GET /connectors/credentials-status` (live-UAT gap fix, per-tenant lookup) | INGEST-004 | done |
+
+## Sequencing / batches
+
+See `docs/sprints/sprint-18.md`'s dependency-chain table for the full batch breakdown. **Batch 1
+(launched now, in parallel)**: `INGEST-002`, `LC-010`, `INGEST-011` — three disjoint files/modules, no
+shared dependency. Batch 2 (`INGEST-003` + `INGEST-007`, parallel) is queued to start once Batch 1 is
+verified done. Batches 3 onward follow the strict same-file sequencing already noted on each ticket
+(`INGEST-004` → `INGEST-005`; `GW-019` → `GW-020`; `VS-023` → `VS-024`).
+
+`DASH-110` remains marked **blocked**, not `todo` — it depends on
+`docs/product/backlog-first-run-setup-and-ops.md`'s `SETUP-010`/`SETUP-020`, which are not part of this
+sprint and have not been scheduled by that backlog's own Tech Lead. Flagged to the requester rather than
+silently built around (would either duplicate that backlog's Monitoring/Settings pages or invent a
+second, competing operator-auth mechanism this platform's own conventions reject). `DASH-109`/`DASH-112`
+were subsequently unblocked as minimal slices of that same sibling backlog (per the requester's own
+resolution, recorded on each ticket's file) and are now `done`.
+
+Three "adopted by default, not user-confirmed" decisions (credential-write UI deferred, single-operator-
+token auth model, setup-secret not loopback-binding) and three open founder questions (backfill
+tenant-attachment, per-source `field` defaults, encryption-key rotation/recovery) are carried from
+`docs/solution-design.md` sections 8.9/8.11 into this sprint's tickets unresolved — see
+`docs/sprints/sprint-18.md` for the full list, restated in the Tech Lead's sprint report to the
+requester.
+
+# Sprint 19 — Tenant-specified first-crawl backfill depth (INGEST-013, GW-023, DASH-114)
+
+Source: direct requester ask, 2026-09-01, immediately following Sprint 18's close — not routed through
+a PM-authored sprint plan (the requester handed the Tech Lead concrete requirements directly, per the
+Tech Lead's own standing mandate to break down and delegate implementation work). No separate
+`docs/sprints/sprint-19.md` narrative file was written; this section and each ticket's own Analysis/
+Design sections carry the full context.
+
+| Ticket | Story | Depends on | Status |
+|---|---|---|---|
+| [INGEST-013](INGEST-013.md) | Optional `since` override on `POST /connectors/{source}/run`, honored only on a tenant's first-ever crawl of a source; new, verified further-back `default_backfill_start()` per connector (Binance: 2017-08-17, verified against Binance's own klines API; on-chain: 2009-01-03 Bitcoin genesis, verified against blockchain.info's own charts API; Reddit: 5 years back, unverified convention, no real floor exists) | INGEST-008 (done, Sprint 18) | done |
+| [GW-023](GW-023.md) | Proxy: forward `since` query param on `POST /ingestion/connectors/{source}/run` unmodified | INGEST-013 | done |
+| [DASH-114](DASH-114.md) | Monitoring page: optional `since` date input on the existing per-source crawl-trigger form | GW-023 | done |
+
+## Sequencing
+
+Strictly sequential, one ticket at a time: `INGEST-013` -> `GW-023` -> `DASH-114`. Not parallelizable --
+each ticket's contract depends on the previous one's shipped shape (`GW-023` forwards the exact
+parameter `INGEST-013` defines; `DASH-114` posts to the route `GW-023` extends). No same-file collision
+risk either way (three disjoint modules), but the dependency chain itself is real, not just a
+file-collision precaution.
+
+**Sprint 19 outcome**: see the Tech Lead's final report to the requester for full verification detail
+(live API checks re-run independently, all three modules' test suites re-run directly, diffs read
+personally). Two founder-facing open items surfaced during this sprint, not resolved here: (1) arbitrary
+re-backfill of an earlier range for a source a tenant has *already* started crawling is out of scope
+(`fetch(since)`'s forward-only contract has no re-backfill mode) -- flagged as a candidate future ticket,
+not built; (2) Reddit's 5-years-back default is an explicit convention, not a verified data-availability
+boundary like the other two sources, since `praw`'s `.new()` API has no calendar-date floor to verify
+against.

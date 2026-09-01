@@ -36,6 +36,12 @@ makes the RLS policy actually scope queries to the calling tenant; the
 as the enforcement mechanism -- RLS is. VS-022's `list_runs`/`count_runs`
 follow the same "RLS is the enforcement mechanism, the `.where` clause is
 defense in depth" stance as every other method in this module.
+
+`_tenant_scoped_session` delegates the `set_config` statement itself to
+`naive_first_common.db.tenant_scope` (LC-010), which extracted this same
+statement, byte-identical, from this module and gateway-api's
+`_set_tenant_scope`. This function's own `(engine, tenant_id) -> Session`
+signature is unchanged -- callers rely on it returning a `Session`.
 """
 
 from __future__ import annotations
@@ -43,7 +49,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import uuid4
 
-from sqlalchemy import Engine, func, select, text, update
+from sqlalchemy import Engine, func, select, update
 from sqlalchemy.orm import Session
 
 from app.models import Base, Run, SplitResult
@@ -54,19 +60,12 @@ from app.repositories.sqlite_repository import (
     _split_result_to_record,
 )
 from naive_first_common.db import build_engine
+from naive_first_common.db import tenant_scope as _tenant_scope
 
 
 def _tenant_scoped_session(engine: Engine, tenant_id: str) -> Session:
     session = Session(engine)
-    # `SET LOCAL app.tenant_id = :tenant_id` is not valid Postgres syntax --
-    # SET does not accept a bind parameter, only a literal, which would mean
-    # string-formatting tenant_id directly into SQL. set_config(..., true)
-    # is SET LOCAL's parameter-bindable equivalent (third arg `true` = "for
-    # this transaction only", i.e. the exact SET LOCAL revert-at-commit
-    # semantics this docstring/the ticket's Design section call for).
-    session.execute(
-        text("SELECT set_config('app.tenant_id', :tenant_id, true)"), {"tenant_id": tenant_id}
-    )
+    _tenant_scope(session, tenant_id)
     return session
 
 

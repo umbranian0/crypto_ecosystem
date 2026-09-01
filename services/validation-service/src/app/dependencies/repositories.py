@@ -32,6 +32,20 @@ SQLite classes; otherwise they fall back to the existing
 `VALIDATION_SERVICE_DB_PATH`-driven SQLite behavior unchanged. `_get_engine`
 is reused as-is (same memoized-by-URL cache) for both backends -- the
 Postgres URL is just another key into it.
+
+VS-024: `get_dataset_source` now also depends on `get_tenant_context`
+(`naive_first_common`) so it can construct a per-request
+`IngestionServiceDatasetSource` carrying the *calling* request's own
+`tenant_id` -- this is the actual tenant-forwarding fix, not left for
+`POST /runs`'s handler to pass a second time (that handler still only ever
+calls `dataset_source.load(reference)`, unchanged). The outbound
+`httpx.Client` this provider builds is a fresh instance per resolution,
+pointed at `INGESTION_SERVICE_URL` (env var, default
+`http://localhost:8003` -- same convention as `gateway-api`'s
+`dependencies/http_client.py`), not memoized like `_get_engine`/
+`_get_s3_client`: matching the existing downstream-HTTP-client precedent in
+this codebase (`gateway-api`/`reporting-service`'s own `http_client.py`
+modules), where none of those providers cache across requests either.
 """
 
 from __future__ import annotations
@@ -46,10 +60,12 @@ from sqlalchemy import Engine
 import redis as redis_lib
 
 import boto3
+import httpx
 
 from app.dataset_source import (
     CompositeDatasetSource,
     DatasetSource,
+    IngestionServiceDatasetSource,
     InlineOrLocalFileDatasetSource,
     ObjectStorageDatasetSource,
 )
@@ -64,6 +80,7 @@ from app.repositories.sqlite_repository import (
     SQLiteSplitResultRepository,
     SQLiteValidationRunRepository,
 )
+from naive_first_common import TenantContext, get_tenant_context
 from naive_first_common.db import build_engine
 
 _DB_PATH_ENV_VAR = "VALIDATION_SERVICE_DB_PATH"
@@ -150,6 +167,14 @@ _OBJECT_STORAGE_SECRET_KEY_ENV_VAR = "OBJECT_STORAGE_SECRET_KEY"
 _OBJECT_STORAGE_BUCKET_ENV_VAR = "OBJECT_STORAGE_BUCKET"
 _DEFAULT_OBJECT_STORAGE_BUCKET = "naive-first"
 
+# VS-023/VS-024: same env var name gateway-api's own dependencies/http_client.py
+# already uses for its ingestion-service client (naming convention, not a
+# shared value -- each service resolves its own INGESTION_SERVICE_URL).
+_INGESTION_SERVICE_URL_ENV_VAR = "INGESTION_SERVICE_URL"
+_DEFAULT_INGESTION_SERVICE_URL = "http://localhost:8003"
+_DOWNSTREAM_TIMEOUT_ENV_VAR = "VALIDATION_SERVICE_DOWNSTREAM_TIMEOUT_SECONDS"
+_DEFAULT_DOWNSTREAM_TIMEOUT_SECONDS = 30.0
+
 
 @functools.lru_cache(maxsize=None)
 def _get_s3_client(endpoint_url: str | None, access_key: str | None, secret_key: str | None):
@@ -164,21 +189,46 @@ def _get_s3_client(endpoint_url: str | None, access_key: str | None, secret_key:
     )
 
 
-def get_dataset_source() -> DatasetSource:
-    # VS-015: always returns a CompositeDatasetSource wrapping both the
-    # interim (VS-005) and object-storage (VS-015) implementations -- AC2's
-    # "no change to POST /runs's handler code" is satisfied by this provider
-    # dispatching internally, not by one implementation replacing the other.
-    # Unset OBJECT_STORAGE_* env vars still construct a client (fail loudly on
-    # the first real `load()` call against it, not a silent no-op here).
+def get_dataset_source(
+    tenant: TenantContext = Depends(get_tenant_context),
+) -> DatasetSource:
+    # VS-015: always returns a CompositeDatasetSource wrapping the
+    # interim (VS-005), object-storage (VS-015), and ingestion-service
+    # (VS-023/VS-024) implementations -- AC2's "no change to POST /runs's
+    # handler code" is satisfied by this provider dispatching internally, not
+    # by one implementation replacing the other. Unset OBJECT_STORAGE_* env
+    # vars still construct a client (fail loudly on the first real `load()`
+    # call against it, not a silent no-op here).
     endpoint_url = os.environ.get(_OBJECT_STORAGE_ENDPOINT_URL_ENV_VAR)
     access_key = os.environ.get(_OBJECT_STORAGE_ACCESS_KEY_ENV_VAR)
     secret_key = os.environ.get(_OBJECT_STORAGE_SECRET_KEY_ENV_VAR)
     bucket = os.environ.get(_OBJECT_STORAGE_BUCKET_ENV_VAR, _DEFAULT_OBJECT_STORAGE_BUCKET)
     s3_client = _get_s3_client(endpoint_url, access_key, secret_key)
+
+    # VS-024: built fresh per request (this provider's `tenant` param comes
+    # from Depends(get_tenant_context), which is itself resolved per request),
+    # never memoized like _get_engine/_get_s3_client -- an
+    # IngestionServiceDatasetSource is only ever safe to reuse for the one
+    # tenant it was built for, so caching it across requests by anything less
+    # than the full (url, tenant_id) pair would risk serving one tenant's
+    # outbound calls under another tenant's already-built instance.
+    ingestion_service_base_url = os.environ.get(
+        _INGESTION_SERVICE_URL_ENV_VAR, _DEFAULT_INGESTION_SERVICE_URL
+    )
+    ingestion_service_timeout = float(
+        os.environ.get(_DOWNSTREAM_TIMEOUT_ENV_VAR, _DEFAULT_DOWNSTREAM_TIMEOUT_SECONDS)
+    )
+    ingestion_service_http_client = httpx.Client(
+        base_url=ingestion_service_base_url, timeout=ingestion_service_timeout
+    )
+    ingestion_service_source = IngestionServiceDatasetSource(
+        ingestion_service_http_client, ingestion_service_base_url, tenant.tenant_id
+    )
+
     return CompositeDatasetSource(
         InlineOrLocalFileDatasetSource(),
         ObjectStorageDatasetSource(s3_client, bucket),
+        ingestion_service_source,
     )
 
 

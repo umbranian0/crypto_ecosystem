@@ -16,7 +16,7 @@ from sqlalchemy import text
 from naive_first_common import CorrelationIdMiddleware, configure_structured_logging
 
 from app.dependencies.repositories import HealthCheckEngineDep
-from app.routers import reports, runs
+from app.routers import ingestion, operator, reports, runs, system
 
 # OPS-006: configure the shared JSON logging convention before the app is
 # constructed, so every log line emitted from import time onward (including
@@ -37,6 +37,20 @@ app.add_middleware(CorrelationIdMiddleware)
 
 app.include_router(runs.router, tags=["validation-service"])
 app.include_router(reports.router, tags=["reporting-service"])
+# GW-021: operator-gated proxy routes, tagged after the downstream service
+# they proxy to (ARCH-007), same convention as the two routers above --
+# `operator.router` proxies to `ingestion-service`.
+app.include_router(operator.router, tags=["ingestion-service"])
+# GW-019: tenant-authenticated proxy routes to ingestion-service (distinct
+# from operator.router above, which is operator-gated) -- same ARCH-007
+# tagging convention, tagged after the downstream service it proxies to,
+# not this one.
+app.include_router(ingestion.router, tags=["ingestion-service"])
+# GW-022: aggregate health-check router, not tagged after a single backing
+# downstream service (ARCH-007's tagging convention doesn't apply -- this
+# router proxies to all three downstream services plus this service's own
+# check, not one).
+app.include_router(system.router)
 
 
 @app.get("/health", response_model=None)

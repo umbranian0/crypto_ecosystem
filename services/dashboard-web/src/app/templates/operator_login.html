@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Operator log in -- dashboard-web{% endblock %}
+{% block content %}
+<h2>Operator log in</h2>
+<p>Sign in with the platform operator token to view service status.</p>
+{% if error %}
+<p class="error">{{ error }}</p>
+{% endif %}
+<form method="post" action="/operator-login">
+    <label for="operator_token">Operator token</label>
+    <input type="password" id="operator_token" name="operator_token" autocomplete="off" required>
+    <button type="submit">Log in</button>
+</form>
+{% endblock %}

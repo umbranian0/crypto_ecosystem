@@ -13,6 +13,13 @@ dependencies = [
     "redis>=5.0",
     "psycopg[binary]>=3.1",
     "boto3>=1.34",
+    # VS-023/024: IngestionServiceDatasetSource (src/app/dataset_source.py)
+    # calls ingestion-service over HTTP at runtime -- httpx was previously
+    # only a [dependency-groups] dev entry (test TestClient usage), which
+    # worked in every test run but left it absent from the production image
+    # (Dockerfile's `uv sync --frozen --no-dev`), crash-looping the
+    # container on startup (found live during Sprint 18 UAT, 2026-08-26).
+    "httpx>=0.27",
     "naive_first_engine",
     "naive_first_common",
 ]

@@ -1,0 +1,9 @@
+{# DASH-111: shared per-source rendering fragment, imported by both
+   `run_new.html`'s (DASH-108) "Stored dataset" dropdown and `datasets.html`'s
+   (DASH-111) table -- both need the same "earliest to latest" date-range
+   phrase for a `DatasetSummaryResponse` item, so it is extracted here instead
+   of two independent copies of the same string formatting (ticket's own DRY
+   check note). #}
+{% macro date_range(dataset) -%}
+{{ dataset.earliest_timestamp }} to {{ dataset.latest_timestamp }}
+{%- endmacro %}

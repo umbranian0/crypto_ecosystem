@@ -52,6 +52,27 @@ def get_session_headers(request: Request, session_store: SessionStoreDep) -> dic
     return {"Authorization": f"Bearer {api_key}"}
 
 
+def get_optional_session_headers(
+    request: Request, session_store: SessionStoreDep
+) -> dict[str, str] | None:
+    """DASH-109: non-raising counterpart to `get_session_headers` above, for a
+    route that must render for an anonymous visitor (`/monitoring`, no-auth
+    per GW-022's own design choice) but still wants gateway-api headers when
+    a tenant session happens to exist. Returns `None` instead of redirecting
+    to `/login` on a missing/unknown session -- reuses the exact same cookie
+    read/`SessionStore.get` call as `get_session_headers` rather than a second
+    copy of either (this module's own docstring: "the *only* place either of
+    those two things happens").
+    """
+    session_id = request.cookies.get(_SESSION_COOKIE_NAME)
+    api_key = session_store.get(session_id) if session_id is not None else None
+
+    if api_key is None:
+        return None
+
+    return {"Authorization": f"Bearer {api_key}"}
+
+
 def get_gateway_api_url() -> str:
     """Reads the same `GATEWAY_API_URL` env var/default DASH-002's
     `app.dependencies.http_client.get_gateway_api_client` already uses --
@@ -62,4 +83,7 @@ def get_gateway_api_url() -> str:
 
 
 DownstreamHeadersDep = Annotated[dict[str, str], Depends(get_session_headers)]
+OptionalDownstreamHeadersDep = Annotated[
+    dict[str, str] | None, Depends(get_optional_session_headers)
+]
 GatewayApiUrlDep = Annotated[str, Depends(get_gateway_api_url)]

@@ -1,5 +1,6 @@
 """Tests for `DatasetSource` / `InlineOrLocalFileDatasetSource` (VS-005), plus
-(VS-015) `ObjectStorageDatasetSource` and `CompositeDatasetSource`.
+(VS-015) `ObjectStorageDatasetSource` and `CompositeDatasetSource`, plus
+(VS-023) `IngestionServiceDatasetSource`.
 
 Confirms inline and local-file modes produce an equivalent series structure
 for the same underlying data, and that malformed input raises
@@ -13,6 +14,23 @@ actually calls. A real-MinIO integration test at the bottom of this file is
 gated the same way `test_postgres_repository.py`'s real-Postgres tests are
 gated -- skipped, not failed, when no real object storage is reachable at
 `OBJECT_STORAGE_ENDPOINT_URL`/`http://localhost:9000`.
+
+VS-023 additions: `IngestionServiceDatasetSource` is tested against
+`httpx.MockTransport` (ticket's own test acceptance criteria: never a real
+`ingestion-service` call) covering a successful load, a downstream 404, and
+a downstream timeout.
+
+VS-024 additions: `IngestionServiceDatasetSource` now takes a required
+`tenant_id` constructor argument and sends it as `X-Tenant-Id` on every
+outbound call -- `test_ingestion_service_source_sends_x_tenant_id_header`
+asserts the header is actually present and correctly valued, and
+`test_ingestion_service_source_cross_tenant_isolation_by_actual_value` is the
+non-tautological cross-tenant-leak guard (ticket's own Test acceptance
+criteria): a single `MockTransport` handler keyed on the inbound
+`X-Tenant-Id` header returns two genuinely different response bodies, and the
+test asserts on the actual loaded values differing per tenant, not just that
+"a series came back" -- it would fail if tenant forwarding were broken or
+silently dropped.
 """
 
 from __future__ import annotations
@@ -23,6 +41,7 @@ import os
 import uuid
 
 import boto3
+import httpx
 import pandas as pd
 import pytest
 from botocore.exceptions import ClientError
@@ -31,6 +50,7 @@ from app.dataset_source import (
     CompositeDatasetSource,
     DatasetSource,
     DatasetSourceError,
+    IngestionServiceDatasetSource,
     InlineOrLocalFileDatasetSource,
     ObjectStorageDatasetSource,
 )
@@ -210,13 +230,191 @@ def test_object_storage_source_has_no_write_capable_method() -> None:
         assert not hasattr(ObjectStorageDatasetSource, write_method)
 
 
-# --- CompositeDatasetSource (VS-015) -----------------------------------------
+# --- IngestionServiceDatasetSource (VS-023) ----------------------------------
 
 
-def _composite(objects: dict[tuple[str, str], bytes] | None = None) -> CompositeDatasetSource:
+def _ingestion_client(handler) -> httpx.Client:
+    return httpx.Client(
+        base_url="http://ingestion-service:8003",
+        transport=httpx.MockTransport(handler),
+    )
+
+
+def test_ingestion_service_source_loads_well_formed_response() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/datasets/binance_price/series"
+        assert dict(request.url.params) == {
+            "start": "2022-01-01T00:00:00",
+            "end": "2022-01-01T03:00:00",
+            "field": "close",
+        }
+        return httpx.Response(
+            200, json={"timestamps": _TIMESTAMPS, "values": _VALUES}
+        )
+
+    client = _ingestion_client(handler)
+    source = IngestionServiceDatasetSource(client, "http://ingestion-service:8003", "tenant-a")
+
+    series = source.load(
+        {
+            "source": "binance_price",
+            "start": "2022-01-01T00:00:00",
+            "end": "2022-01-01T03:00:00",
+            "field": "close",
+        }
+    )
+
+    assert isinstance(series, pd.Series)
+    assert isinstance(series.index, pd.DatetimeIndex)
+    assert series.index.is_monotonic_increasing
+    assert list(series.to_numpy()) == [0.1, 0.2, 0.3]
+
+
+def test_ingestion_service_source_matches_inline_source_for_equivalent_data() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"timestamps": _TIMESTAMPS, "values": _VALUES})
+
+    client = _ingestion_client(handler)
+    ingestion_series = IngestionServiceDatasetSource(
+        client, "http://ingestion-service:8003", "tenant-a"
+    ).load({"source": "binance_price"})
+    inline_series = InlineOrLocalFileDatasetSource().load(
+        {"inline": list(zip(_TIMESTAMPS, _VALUES))}
+    )
+
+    pd.testing.assert_series_equal(ingestion_series, inline_series, check_names=False)
+
+
+def test_ingestion_service_source_omits_absent_optional_params() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert dict(request.url.params) == {}
+        return httpx.Response(200, json={"timestamps": _TIMESTAMPS, "values": _VALUES})
+
+    client = _ingestion_client(handler)
+    source = IngestionServiceDatasetSource(client, "http://ingestion-service:8003", "tenant-a")
+
+    source.load({"source": "binance_price", "start": None, "end": None, "field": None})
+
+
+def test_ingestion_service_source_downstream_404_raises_dataset_source_error() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, json={"detail": "dataset not found"})
+
+    client = _ingestion_client(handler)
+    source = IngestionServiceDatasetSource(client, "http://ingestion-service:8003", "tenant-a")
+
+    with pytest.raises(DatasetSourceError):
+        source.load({"source": "does-not-exist"})
+
+
+def test_ingestion_service_source_downstream_timeout_raises_dataset_source_error() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.TimeoutException("timed out", request=request)
+
+    client = _ingestion_client(handler)
+    source = IngestionServiceDatasetSource(client, "http://ingestion-service:8003", "tenant-a")
+
+    with pytest.raises(DatasetSourceError):
+        source.load({"source": "binance_price"})
+
+
+def test_ingestion_service_source_malformed_response_raises_dataset_source_error() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"unexpected": "shape"})
+
+    client = _ingestion_client(handler)
+    source = IngestionServiceDatasetSource(client, "http://ingestion-service:8003", "tenant-a")
+
+    with pytest.raises(DatasetSourceError):
+        source.load({"source": "binance_price"})
+
+
+def test_ingestion_service_source_reference_missing_source_key_raises() -> None:
+    source = IngestionServiceDatasetSource(
+        _ingestion_client(lambda request: httpx.Response(200)),
+        "http://ingestion-service:8003",
+        "tenant-a",
+    )
+
+    with pytest.raises(DatasetSourceError):
+        source.load({"path": "irrelevant"})
+
+
+# --- Tenant forwarding (VS-024) -----------------------------------------------
+
+
+def test_ingestion_service_source_sends_x_tenant_id_header() -> None:
+    seen_headers: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_headers.append(request.headers.get("x-tenant-id"))
+        return httpx.Response(200, json={"timestamps": _TIMESTAMPS, "values": _VALUES})
+
+    client = _ingestion_client(handler)
+    source = IngestionServiceDatasetSource(client, "http://ingestion-service:8003", "tenant-a")
+
+    source.load({"source": "binance_price_btcusdt_1h"})
+
+    assert seen_headers == ["tenant-a"]
+
+
+def test_ingestion_service_source_cross_tenant_isolation_by_actual_value() -> None:
+    """Non-tautological (VS-024 Test acceptance criteria): a single
+    `MockTransport` handler returns genuinely different response bodies keyed
+    on the inbound `X-Tenant-Id` header -- the same-named `source` exists for
+    both tenants, with different actual values. This test would FAIL if
+    tenant forwarding were broken (e.g. no header sent at all, since the
+    handler below has no fallback branch and would raise on an unrecognized/
+    missing tenant id) or if the wrong tenant's header were sent (the wrong
+    tenant's values would come back, silently passing an "a series came back"
+    check but failing the exact-value assertions below).
+    """
+    # Already-ascending timestamps here (unlike the module's shared
+    # _TIMESTAMPS fixture) so each tenant's values list below is directly,
+    # unambiguously comparable to _build_series's sorted output.
+    sorted_timestamps = ["2022-01-01T00:00:00", "2022-01-01T01:00:00", "2022-01-01T02:00:00"]
+    tenant_a_values = [0.1, 0.2, 0.3]
+    tenant_b_values = [99.0, 98.0, 97.0]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/datasets/binance_price_btcusdt_1h/series"
+        tenant_id = request.headers.get("x-tenant-id")
+        if tenant_id == "tenant-a":
+            values = tenant_a_values
+        elif tenant_id == "tenant-b":
+            values = tenant_b_values
+        else:
+            raise AssertionError(f"unexpected/missing X-Tenant-Id header: {tenant_id!r}")
+        return httpx.Response(200, json={"timestamps": sorted_timestamps, "values": values})
+
+    client = _ingestion_client(handler)
+
+    tenant_a_source = IngestionServiceDatasetSource(
+        client, "http://ingestion-service:8003", "tenant-a"
+    )
+    tenant_b_source = IngestionServiceDatasetSource(
+        client, "http://ingestion-service:8003", "tenant-b"
+    )
+
+    tenant_a_series = tenant_a_source.load({"source": "binance_price_btcusdt_1h"})
+    tenant_b_series = tenant_b_source.load({"source": "binance_price_btcusdt_1h"})
+
+    assert list(tenant_a_series.to_numpy()) == [0.1, 0.2, 0.3]
+    assert list(tenant_b_series.to_numpy()) == [99.0, 98.0, 97.0]
+    assert list(tenant_a_series.to_numpy()) != list(tenant_b_series.to_numpy())
+
+
+# --- CompositeDatasetSource (VS-015 / VS-023) --------------------------------
+
+
+def _composite(
+    objects: dict[tuple[str, str], bytes] | None = None,
+    ingestion_service_source: IngestionServiceDatasetSource | None = None,
+) -> CompositeDatasetSource:
     return CompositeDatasetSource(
         InlineOrLocalFileDatasetSource(),
         ObjectStorageDatasetSource(_FakeS3Client(objects or {}), "naive-first"),
+        ingestion_service_source,
     )
 
 
@@ -274,6 +472,27 @@ def test_composite_unrecognized_reference_raises_dataset_source_error_same_as_to
         plain_inline_source.load(reference)
 
     assert str(composite_exc_info.value) == str(plain_exc_info.value)
+
+
+def test_composite_routes_source_reference_to_ingestion_service_source() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"timestamps": _TIMESTAMPS, "values": _VALUES})
+
+    ingestion_source = IngestionServiceDatasetSource(
+        _ingestion_client(handler), "http://ingestion-service:8003", "tenant-a"
+    )
+    composite = _composite(ingestion_service_source=ingestion_source)
+
+    series = composite.load({"source": "binance_price"})
+
+    assert list(series.to_numpy()) == [0.1, 0.2, 0.3]
+
+
+def test_composite_without_ingestion_service_source_raises_on_source_reference() -> None:
+    composite = _composite()
+
+    with pytest.raises(DatasetSourceError):
+        composite.load({"source": "binance_price"})
 
 
 # --- Real-MinIO integration test (VS-015) ------------------------------------

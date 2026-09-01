@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_dataset_macros.html" as dataset_macros %}
 {% block title %}Submit a validation run -- dashboard-web{% endblock %}
 {% block content %}
 <h2>Submit a validation run</h2>
@@ -39,6 +40,53 @@ signal.</p>
                   rows="4"
                   placeholder='{"timestamps": ["2026-01-01T00:00:00", "2026-01-01T01:00:00"], "values": [100.0, 101.2]}'>{{ values.dataset_reference_inline if values else '' }}</textarea>
         <small class="field-hint" id="reference-hint">Fill in exactly one of the two fields above -- not both, not neither.</small>
+    </fieldset>
+
+    <fieldset>
+        <legend>Stored dataset (or use one of the reference modes above instead)</legend>
+        {% if datasets %}
+        <label for="dataset_reference_source">
+            Source
+            <span class="field-tooltip" tabindex="0"
+                  data-tooltip="Pick from your ingested data. Leave on the placeholder option if using a local file path or inline payload above instead.">?</span>
+        </label>
+        <select id="dataset_reference_source" name="dataset_reference_source">
+            <option value="">-- select one of your ingested datasets --</option>
+            {% for dataset in datasets %}
+            <option value="{{ dataset.source }}"
+                    {{ 'selected' if values and values.dataset_reference_source == dataset.source else '' }}>
+                {{ dataset.source }} ({{ dataset_macros.date_range(dataset) }}, {{ dataset.row_count }} rows)
+            </option>
+            {% endfor %}
+        </select>
+
+        <label for="dataset_reference_start">
+            Start (optional)
+            <span class="field-tooltip" tabindex="0"
+                  data-tooltip="Leave blank to use the earliest available row for this source.">?</span>
+        </label>
+        <input type="date" id="dataset_reference_start" name="dataset_reference_start"
+               value="{{ values.dataset_reference_start if values else '' }}">
+
+        <label for="dataset_reference_end">
+            End (optional)
+            <span class="field-tooltip" tabindex="0"
+                  data-tooltip="Leave blank to use the latest available row for this source.">?</span>
+        </label>
+        <input type="date" id="dataset_reference_end" name="dataset_reference_end"
+               value="{{ values.dataset_reference_end if values else '' }}">
+
+        <label for="dataset_reference_field">
+            Field (optional)
+            <span class="field-tooltip" tabindex="0"
+                  data-tooltip="Which field/column of this source to use, if it has more than one. Leave blank to use the source's default field. Note: ingested fields today are raw levels (e.g. price, on-chain metric value), not returns -- naive-first validation is designed to compare return forecasts. Naive0 (predicts 0) is nonsensically wrong by construction on raw price levels, so a run against a raw level will produce a misleadingly favorable verdict that is an artifact of the field choice, not a real finding. Compute a returns series before validating if you want a meaningful audit.">?</span>
+        </label>
+        <input type="text" id="dataset_reference_field" name="dataset_reference_field"
+               placeholder="close"
+               value="{{ values.dataset_reference_field if values else '' }}">
+        {% else %}
+        <p>No ingested datasets yet -- run a crawl first.</p>
+        {% endif %}
     </fieldset>
 
     <label for="horizon">
@@ -94,24 +142,33 @@ signal.</p>
     var form = document.getElementById("run-form");
     var path = document.getElementById("dataset_reference_path");
     var inline = document.getElementById("dataset_reference_inline");
+    var source = document.getElementById("dataset_reference_source");
     var status = document.getElementById("run-form-status");
 
     function checkReference() {
         var hasPath = path.value.trim().length > 0;
         var hasInline = inline.value.trim().length > 0;
+        var hasSource = !!(source && source.value.trim().length > 0);
+        var modesFilled = [hasPath, hasInline, hasSource].filter(Boolean).length;
         path.classList.remove("field-invalid");
         inline.classList.remove("field-invalid");
+        if (source) {
+            source.classList.remove("field-invalid");
+        }
         status.classList.remove("form-status-ok", "form-status-warn");
 
-        if (hasPath && hasInline) {
+        if (modesFilled > 1) {
             path.classList.add("field-invalid");
             inline.classList.add("field-invalid");
-            status.textContent = "Choose only one: local file path OR inline payload, not both.";
+            if (source) {
+                source.classList.add("field-invalid");
+            }
+            status.textContent = "Choose only one dataset reference: local file path, inline payload, or stored dataset -- not more than one.";
             status.classList.add("form-status-warn");
             return false;
         }
-        if (!hasPath && !hasInline) {
-            status.textContent = "Fill in a local file path or an inline payload before submitting.";
+        if (modesFilled === 0) {
+            status.textContent = "Fill in a local file path, an inline payload, or pick a stored dataset before submitting.";
             status.classList.add("form-status-warn");
             return false;
         }
@@ -126,8 +183,11 @@ signal.</p>
                 status.classList.add("form-status-warn");
                 return false;
             }
-        } else {
+        } else if (hasPath) {
             status.textContent = "Using local file path.";
+            status.classList.add("form-status-ok");
+        } else {
+            status.textContent = "Using your ingested data for the selected source.";
             status.classList.add("form-status-ok");
         }
         return true;
@@ -135,6 +195,9 @@ signal.</p>
 
     path.addEventListener("input", checkReference);
     inline.addEventListener("input", checkReference);
+    if (source) {
+        source.addEventListener("change", checkReference);
+    }
 
     form.addEventListener("submit", function (event) {
         if (!checkReference()) {

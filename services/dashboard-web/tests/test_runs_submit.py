@@ -55,9 +55,16 @@ def _patch_transport(monkeypatch, handler) -> None:
     monkeypatch.setattr(httpx, "Client", _fake_client)
 
 
-def test_run_new_form_renders_without_downstream_call(monkeypatch) -> None:
+def test_run_new_form_renders_and_fetches_ingestion_datasets(monkeypatch) -> None:
+    """DASH-108: `GET /runs/new` now also calls `GET /ingestion/datasets`
+    (GW-020) to populate the "Stored dataset" mode's source dropdown -- see
+    `app.routers.runs.run_new_form`'s own docstring. The pre-DASH-108 form
+    fields/behavior are otherwise unchanged.
+    """
+
     def handler(request: httpx.Request) -> httpx.Response:
-        raise AssertionError("GET /runs/new must not call gateway-api")
+        assert request.url.path == "/ingestion/datasets"
+        return httpx.Response(200, json={"items": []})
 
     _patch_transport(monkeypatch, handler)
 
@@ -277,3 +284,141 @@ def test_run_new_submit_requires_session(monkeypatch) -> None:
 
     assert response.status_code == 303
     assert response.headers["location"] == "/login"
+
+
+# DASH-108: "Stored dataset" third mode.
+
+
+def test_run_new_form_populates_source_dropdown_from_ingestion_datasets(monkeypatch) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/ingestion/datasets"
+        assert request.headers["authorization"] == f"Bearer {RAW_KEY}"
+        return httpx.Response(
+            200,
+            json={
+                "items": [
+                    {
+                        "source": "binance_btcusdt_1h",
+                        "earliest_timestamp": "2024-01-01T00:00:00Z",
+                        "latest_timestamp": "2026-01-01T00:00:00Z",
+                        "row_count": 1000,
+                    },
+                    {
+                        "source": "reddit_sentiment",
+                        "earliest_timestamp": "2025-01-01T00:00:00Z",
+                        "latest_timestamp": "2026-06-01T00:00:00Z",
+                        "row_count": 42,
+                    },
+                ]
+            },
+        )
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get("/runs/new")
+
+    assert response.status_code == 200
+    assert "binance_btcusdt_1h" in response.text
+    assert "reddit_sentiment" in response.text
+    assert "No ingested datasets yet" not in response.text
+
+
+def test_run_new_form_empty_dataset_history_shows_messaging(monkeypatch) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/ingestion/datasets"
+        return httpx.Response(200, json={"items": []})
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get("/runs/new")
+
+    assert response.status_code == 200
+    assert "No ingested datasets yet -- run a crawl first" in response.text
+    assert 'name="dataset_reference_source"' not in response.text
+
+
+def test_run_new_form_dataset_fetch_transport_failure_degrades_to_empty_state(
+    monkeypatch,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused", request=request)
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get("/runs/new")
+
+    assert response.status_code == 200
+    assert "No ingested datasets yet -- run a crawl first" in response.text
+    assert "dataset_id" in response.text
+
+
+def test_run_new_submit_stored_dataset_reference(monkeypatch) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        import json
+
+        payload = json.loads(request.read())
+        assert payload["dataset_reference"] == {"source": "binance_btcusdt_1h"}
+        return httpx.Response(201, json={"id": RUN_ID, "status": "running"})
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    form = {
+        **VALID_FORM,
+        "dataset_reference_path": "",
+        "dataset_reference_inline": "",
+        "dataset_reference_source": "binance_btcusdt_1h",
+        "dataset_reference_start": "",
+        "dataset_reference_end": "",
+        "dataset_reference_field": "",
+    }
+
+    response = client.post("/runs/new", data=form, follow_redirects=False)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == f"/runs/{RUN_ID}"
+
+
+def test_run_new_submit_stored_dataset_reference_with_range_and_field(monkeypatch) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        import json
+
+        payload = json.loads(request.read())
+        assert payload["dataset_reference"] == {
+            "source": "binance_btcusdt_1h",
+            "start": "2026-01-01",
+            "end": "2026-02-01",
+            "field": "close",
+        }
+        return httpx.Response(201, json={"id": RUN_ID, "status": "running"})
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    form = {
+        **VALID_FORM,
+        "dataset_reference_path": "",
+        "dataset_reference_inline": "",
+        "dataset_reference_source": "binance_btcusdt_1h",
+        "dataset_reference_start": "2026-01-01",
+        "dataset_reference_end": "2026-02-01",
+        "dataset_reference_field": "close",
+    }
+
+    response = client.post("/runs/new", data=form, follow_redirects=False)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == f"/runs/{RUN_ID}"

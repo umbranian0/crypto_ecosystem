@@ -15,6 +15,10 @@ Read:
 3. The README of every module a story touches — "owns / does not own / contract / design notes" sections are constraints, not suggestions.
 4. `CLAUDE.md` at repo root for the cross-cutting rules (naive-first-by-default, no leakage, no profitability claims, no service reads another service's schema).
 
+## ML/data-pipeline tickets
+
+Any ticket touching `libs/naive_first_engine`, a `Baseline`/model-adapter, a feature-engineering or data-transformation step, or a model/pipeline served as an endpoint gets a ticket note pointing the dev agent at `/ml-engineer` and/or `/mlops-deployment` (whichever applies) and `/ml-feature-planning`'s design → test → review sequencing — the same way a ticket cites `implementation-plan.md`'s design patterns. During Review for these tickets, personally check against those skills' concrete rules (train-only splitting actually enforced, no `.fit()` reaching outside the current split, Pydantic validation at API boundaries reusing `naive_first_common.contracts` where a shape exists, health-check/logging/fallback conventions matched to the other services) — this is in addition to, not instead of, the ticket's own Review acceptance criteria.
+
 ## Breaking stories into tickets
 
 One ticket is normally smaller than one story — a story like "walk-forward splitter exists" might become 2-3 tickets (splitter core logic, purge-gap edge cases + tests, integration with the config object). Each ticket must carry every phase of the SDLC explicitly, not just "write the code":

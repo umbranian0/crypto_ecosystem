@@ -17,7 +17,9 @@ from fastapi.testclient import TestClient
 from app.dependencies.downstream import (
     DownstreamHeadersDep,
     GatewayApiUrlDep,
+    OptionalDownstreamHeadersDep,
     get_gateway_api_url,
+    get_optional_session_headers,
     get_session_headers,
 )
 from app.dependencies.session import get_session_store
@@ -41,6 +43,11 @@ def _probe_success_route(headers: DownstreamHeadersDep):
 @_probe_app.get("/__probe_url__")
 def _probe_url_route(url: GatewayApiUrlDep):
     return {"url": url}
+
+
+@_probe_app.get("/__probe_optional__")
+def _probe_optional_route(headers: OptionalDownstreamHeadersDep):
+    return {"headers": headers}
 
 
 @pytest.fixture(autouse=True)
@@ -106,3 +113,53 @@ def test_get_gateway_api_url_reads_env_var(monkeypatch) -> None:
     monkeypatch.setenv("GATEWAY_API_URL", "http://gateway-api:9000")
 
     assert get_gateway_api_url() == "http://gateway-api:9000"
+
+
+# DASH-109: `get_optional_session_headers`/`OptionalDownstreamHeadersDep`
+
+
+def test_optional_headers_returns_bearer_header_for_valid_session_cookie() -> None:
+    session_store = get_session_store()
+    session_id = session_store.create(RAW_KEY)
+
+    client = TestClient(_probe_app)
+    client.cookies.set("session_id", session_id)
+
+    response = client.get("/__probe_optional__")
+
+    assert response.status_code == 200
+    assert response.json() == {"headers": {"Authorization": f"Bearer {RAW_KEY}"}}
+
+
+def test_optional_headers_returns_none_and_does_not_redirect_for_missing_cookie() -> None:
+    client = TestClient(_probe_app)
+
+    response = client.get("/__probe_optional__", follow_redirects=False)
+
+    assert response.status_code == 200
+    assert response.json() == {"headers": None}
+
+
+def test_optional_headers_returns_none_and_does_not_redirect_for_unknown_session_id() -> None:
+    client = TestClient(_probe_app)
+    client.cookies.set("session_id", "not-a-real-session-id")
+
+    response = client.get("/__probe_optional__", follow_redirects=False)
+
+    assert response.status_code == 200
+    assert response.json() == {"headers": None}
+
+
+def test_get_optional_session_headers_direct_call_shape() -> None:
+    session_store = get_session_store()
+    session_id = session_store.create(RAW_KEY)
+
+    scope = {
+        "type": "http",
+        "headers": [(b"cookie", f"session_id={session_id}".encode())],
+    }
+    request = Request(scope)
+
+    headers = get_optional_session_headers(request, session_store)
+
+    assert headers == {"Authorization": f"Bearer {RAW_KEY}"}

@@ -42,14 +42,19 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 # mounted directly rather than via a router module.
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
-# Imported after `templates` is defined: `app.routers.auth` (DASH-002) and
-# `app.routers.runs` (DASH-004) both read `templates` back from this module,
-# so `templates` must already exist in this module's namespace before either
-# import runs.
-from app.routers import auth, runs  # noqa: E402
+# Imported after `templates` is defined: `app.routers.auth` (DASH-002),
+# `app.routers.runs` (DASH-004), `app.routers.operator` (DASH-113), and
+# `app.routers.settings` (DASH-112) all read `templates` back from this
+# module, so `templates` must already exist in this module's namespace
+# before any of these imports run. `operator`/`settings` are imported after
+# `runs` since both import `_call_downstream`/`_render_error_for_status`
+# from that module (DASH-113's own DRY-reuse note, extended by DASH-112).
+from app.routers import auth, operator, runs, settings  # noqa: E402
 
 app.include_router(auth.router)
 app.include_router(runs.router)
+app.include_router(operator.router)
+app.include_router(settings.router)
 
 
 @app.get("/health", response_model=None)

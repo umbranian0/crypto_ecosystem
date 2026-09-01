@@ -1,0 +1,45 @@
+[project]
+name = "ingestion-service"
+version = "0.1.0"
+description = "Subsystem 2: causal multimodal connectors (price, on-chain, sentiment) plus their per-tenant Postgres schema. This ticket (INGEST-002) adds only the `ingestion` schema's Alembic migrations and SQLAlchemy models -- the FastAPI app, upload API, and connector-to-DB write path are separate tickets (INGEST-003/INGEST-007)."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "sqlalchemy>=2.0",
+    "alembic>=1.13",
+    "psycopg[binary]>=3.1",
+    "cryptography>=42",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "httpx>=0.27",
+    "pandas>=2.0",
+    # connectors/ (base.py, binance_price.py, blockchain_onchain.py,
+    # reddit_sentiment.py) predates this pyproject.toml (it was originally
+    # run standalone via requirements.txt, see that file) -- src/app's
+    # routers/connectors.py imports from it directly, so its runtime deps
+    # belong here now too, not just in the legacy requirements.txt.
+    "requests>=2.31",
+    "praw>=7.7",
+    "vaderSentiment>=3.3.2",
+    "naive_first_common",
+]
+
+[tool.uv.sources]
+naive_first_common = { path = "../../libs/common", editable = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/app"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[dependency-groups]
+dev = [
+    "pytest>=7.4",
+    "pytest-cov>=7.1.0",
+    "naive_first_common",
+]

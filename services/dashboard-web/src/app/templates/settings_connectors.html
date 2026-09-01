@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Connector credential status -- dashboard-web{% endblock %}
+{% block content %}
+<h2>Connector credential status</h2>
+<p>Looks up, for one tenant at a time, whether an ingestion connector credential is stored (yes/no)
+and when it was last set -- never the credential value itself.</p>
+<p>Enter the tenant id to check -- no tenant directory exists yet.</p>
+{% if error %}
+<p class="error">{{ error }}</p>
+{% endif %}
+<form method="get" action="/settings/connectors">
+    <label for="tenant_id">Tenant id</label>
+    <input type="text" id="tenant_id" name="tenant_id" value="{{ tenant_id | default('') }}">
+    <button type="submit">Check status</button>
+</form>
+{% if items is defined %}
+<div class="table-scroll">
+<table>
+    <thead>
+        <tr>
+            <th>Source</th>
+            <th>Credential stored</th>
+            <th>Last set</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for item in items %}
+        <tr>
+            <td>{{ item.source }}</td>
+            <td>{{ item.credential_set }}</td>
+            <td>{{ item.last_set_at | default("never", true) }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+</div>
+{% if not items %}
+<p>No connector entries found for tenant "{{ tenant_id }}".</p>
+{% endif %}
+{% endif %}
+<p>To set a connector credential, use the
+<code>services/ingestion-service/scripts/set_connector_credentials.py</code> CLI script -- no write
+form exists on this page.</p>
+{% endblock %}

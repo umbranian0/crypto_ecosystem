@@ -99,6 +99,23 @@ def default_seed_watermark() -> datetime:
     return datetime(2025, 1, 9, 17, 0, 0, tzinfo=timezone.utc)
 
 
+def default_backfill_start() -> datetime:
+    """Default backfill depth for a brand-new tenant's first DB crawl
+    (INGEST-013) -- distinct from `default_seed_watermark()` above, which is
+    only the CSV historical-seed-file cutoff used by this module's own
+    `__main__` block, unrelated to a tenant's own per-tenant DB history.
+
+    `2017-08-17 00:00:00 UTC`, verified against Binance's own public API:
+    `GET /api/v3/klines?symbol=BTCUSDT&interval=1h&startTime=0&limit=5` returns
+    its first row at `open_time=1502942400000` ms (2017-08-17 04:00:00 UTC)
+    regardless of how early `startTime` is set -- midnight of the same day is
+    used here, safely before the first real candle, since `fetch()`'s
+    `since`-is-exclusive semantics mean Binance simply returns from its own
+    true earliest candle forward.
+    """
+    return datetime(2017, 8, 17, tzinfo=timezone.utc)
+
+
 if __name__ == "__main__":
     run_incremental(
         BinancePriceConnector(),

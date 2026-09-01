@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}Service status -- dashboard-web{% endblock %}
+{% block content %}
+<h2>Service status</h2>
+<p>Operational status of this platform's own services (self-reported health checks only).</p>
+<div class="table-scroll">
+<table>
+    <thead>
+        <tr>
+            <th>Service</th>
+            <th>Status</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for name, status in services.items() %}
+        <tr>
+            <td>{{ name }}</td>
+            <td><span class="status status-{{ status }}">{{ status }}</span></td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+</div>
+
+<h2>Last crawl status</h2>
+<p>Most recent ingestion connector run per source, for your own tenant. This is a plain
+run-status record only, not a claim about data quality or the source's usefulness.</p>
+{% if crawl_statuses is none %}
+<p>Log in to view your own ingestion status.</p>
+{% elif crawl_statuses|length == 0 %}
+<p>No ingested sources yet.</p>
+{% else %}
+<div class="table-scroll">
+<table>
+    <thead>
+        <tr>
+            <th>Source</th>
+            <th>Last crawl status</th>
+            <th>Last crawl timestamp</th>
+            <th>Row count</th>
+            <th>Trigger</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for entry in crawl_statuses %}
+        <tr>
+            <td>{{ entry.source }}</td>
+            <td>{{ entry.status }}</td>
+            <td>{{ entry.timestamp }}</td>
+            <td>{{ entry.row_count }}</td>
+            <td>
+                <form hx-post="/monitoring/connectors/{{ entry.source }}/run"
+                      hx-target="#crawl-trigger-result-{{ loop.index }}" hx-swap="innerHTML">
+                    <label for="since-{{ loop.index }}">Since (optional)</label>
+                    <input type="date" id="since-{{ loop.index }}" name="since">
+                    <p>Only takes effect on this tenant's first-ever crawl of this source; ignored otherwise.</p>
+                    <button type="submit">Run this tenant's {{ entry.source }} crawl now</button>
+                </form>
+                <div id="crawl-trigger-result-{{ loop.index }}"></div>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+</div>
+{% endif %}
+
+<h2>Generate a report</h2>
+<p>Generates a validation/audit report for one of your own existing runs. This does not run any new
+validation -- it produces a report for a run that already exists.</p>
+{% if crawl_statuses is none %}
+<p>Log in to generate a report.</p>
+{% else %}
+<form hx-post="/monitoring/reports/generate" hx-target="#report-trigger-result" hx-swap="innerHTML">
+    <label for="run_id">Run id</label>
+    <input type="text" id="run_id" name="run_id" required>
+    <button type="submit">Generate a report</button>
+</form>
+<div id="report-trigger-result"></div>
+{% endif %}
+{% endblock %}

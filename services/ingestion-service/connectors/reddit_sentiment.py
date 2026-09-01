@@ -15,15 +15,30 @@ Create credentials at https://www.reddit.com/prefs/apps (script-type app).
 
 Dependencies (add to services/ingestion-service/requirements.txt):
   praw, vaderSentiment
+
+Tenant-aware credentials (INGEST-004, ADR-0004): when both `tenant_id` and
+`credential_repository` are supplied to the constructor, `client_id`/
+`client_secret` are resolved via `CredentialRepository.get_credentials`
+(decrypted in-process, never logged) instead of `os.environ` -- mirroring
+`connectors/base.py`'s `run_incremental` "both supplied -> DB path" convention.
+`REDDIT_USER_AGENT` is not a secret and has no `connector_credentials` column,
+so it is always read from `os.environ` (with the same default), in both modes.
+The plain `os.environ` path for `client_id`/`client_secret` remains the
+standalone/no-tenant CLI fallback when either constructor argument is absent.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import os
+from typing import TYPE_CHECKING
 
 import pandas as pd
 
 from .base import FetchResult, IngestionSource, run_incremental, utcnow
+
+if TYPE_CHECKING:  # pragma: no cover - import-time only, mirrors base.py's
+    # own avoidance of a hard runtime dependency on `app`'s src layout.
+    from app.repositories.interfaces import CredentialRepository
 
 DEFAULT_SUBREDDITS = ("Bitcoin", "CryptoCurrency")
 
@@ -31,10 +46,19 @@ DEFAULT_SUBREDDITS = ("Bitcoin", "CryptoCurrency")
 class RedditSentimentConnector(IngestionSource):
     """Fetches new submissions from the configured subreddits and scores them with VADER."""
 
-    def __init__(self, subreddits: tuple[str, ...] = DEFAULT_SUBREDDITS, limit_per_subreddit: int = 500):
+    def __init__(
+        self,
+        subreddits: tuple[str, ...] = DEFAULT_SUBREDDITS,
+        limit_per_subreddit: int = 500,
+        *,
+        tenant_id: str | None = None,
+        credential_repository: "CredentialRepository | None" = None,
+    ):
         self.subreddits = subreddits
         self.limit_per_subreddit = limit_per_subreddit
         self.name = "reddit_vader_sentiment"
+        self._tenant_id = tenant_id
+        self._credential_repository = credential_repository
         self._reddit = None
         self._analyzer = None
 
@@ -42,8 +66,17 @@ class RedditSentimentConnector(IngestionSource):
         if self._reddit is None:
             import praw  # local import: keep this an optional dependency of the module
 
-            client_id = os.environ["REDDIT_CLIENT_ID"]
-            client_secret = os.environ["REDDIT_CLIENT_SECRET"]
+            if self._tenant_id is not None and self._credential_repository is not None:
+                credentials = self._credential_repository.get_credentials(self._tenant_id, self.name)
+                if credentials is None:
+                    raise RuntimeError(
+                        f"No credentials stored for tenant {self._tenant_id!r}, source {self.name!r}."
+                    )
+                client_id = credentials.client_id
+                client_secret = credentials.client_secret
+            else:
+                client_id = os.environ["REDDIT_CLIENT_ID"]
+                client_secret = os.environ["REDDIT_CLIENT_SECRET"]
             user_agent = os.environ.get("REDDIT_USER_AGENT", "naive-first-sentiment-connector/0.1")
             self._reddit = praw.Reddit(
                 client_id=client_id,
@@ -100,6 +133,22 @@ def default_seed_watermark() -> datetime:
     earliest reasonable overlap point rather than re-fetching years of history
     against Reddit's API in one run."""
     return datetime(2024, 9, 12, tzinfo=timezone.utc)
+
+
+def default_backfill_start() -> datetime:
+    """Default backfill depth for a brand-new tenant's first DB crawl
+    (INGEST-013) -- distinct from `default_seed_watermark()` above, which is
+    only the CSV historical-seed-file cutoff used by this module's own
+    `__main__` block, unrelated to a tenant's own per-tenant DB history.
+
+    Unlike `binance_price.default_backfill_start()`/
+    `blockchain_onchain.default_backfill_start()`, this is not a verified
+    real data boundary -- `praw`'s `.new()` only ever returns the most recent
+    ~1000 submissions per subreddit regardless of how far back `since` is
+    set, a platform limit, not a calendar date -- so a 5-years-back-from-now
+    convention is used instead, per the ticket's own fallback instruction.
+    """
+    return utcnow() - timedelta(days=5 * 365)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% import "_dataset_macros.html" as dataset_macros %}
+{% block title %}Ingested datasets -- dashboard-web{% endblock %}
+{% block content %}
+<h2>Ingested datasets</h2>
+<p>The raw data ingested into your tenant's storage, available as a "Stored dataset" reference when
+submitting a validation run.</p>
+{% if datasets %}
+<div class="table-scroll">
+<table>
+    <thead>
+        <tr>
+            <th>Source</th>
+            <th>Date range</th>
+            <th>Rows</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for dataset in datasets %}
+        <tr>
+            <td>{{ dataset.source }}</td>
+            <td>{{ dataset_macros.date_range(dataset) }}</td>
+            <td>{{ dataset.row_count }}</td>
+            <td>
+                <a href="/runs/new?dataset_reference_source={{ dataset.source }}">Submit a run</a>
+                | <a href="/monitoring">Trigger a crawl</a>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+</div>
+{% else %}
+<p>No ingested datasets yet -- run a crawl first.</p>
+{% endif %}
+{% endblock %}

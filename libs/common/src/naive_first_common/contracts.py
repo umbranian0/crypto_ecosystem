@@ -79,6 +79,24 @@ class RunSummaryResponse(BaseModel):
     completed_at: datetime | None
 
 
+class DatasetSummaryResponse(BaseModel):
+    """One dataset's summary row (GW-020): source, {earliest,latest}_timestamp,
+    row_count -- field-for-field mirror of `ingestion-service`'s own
+    `DatasetSummaryResponse` (`services/ingestion-service/src/app/routers/
+    datasets.py`, INGEST-009). That module defines its own local copy rather
+    than importing this one (`ingestion-service` does not currently depend on
+    `naive_first_common.contracts`, and adding that dependency is out of this
+    ticket's scope) -- this class is the single canonical definition for any
+    *new* consumer, per ARCH-003's convention; `gateway-api`'s proxy of
+    `GET /ingestion/datasets` (GW-020) is that first new consumer.
+    """
+
+    source: str
+    earliest_timestamp: datetime
+    latest_timestamp: datetime
+    row_count: int
+
+
 class ClientBaselineResult(BaseModel):
     """VS-017: the optional third (client-supplied) baseline's result for one
     split -- same 7 `MetricSet` fields as the `model_*`/`naive0_*` groups,

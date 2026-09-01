@@ -58,6 +58,25 @@ constraint). `RunRequest` construction is the only validation performed
 client-side of gateway-api itself; a `422` gateway-api itself returns is
 forwarded verbatim, not reinterpreted.
 
+DASH-108: a third `dataset_reference` mode, "Stored dataset" (`{"source":
+..., "start": ..., "end": ..., "field": ...}`, per ADR-0005's continuous-
+table semantics -- a dataset is a `{tenant, source}` table, so selecting one
+means selecting a source plus an optional time-range slice, not a discrete
+snapshot). Extends the same `if path / elif inline / elif source / else
+error` chain `run_new_submit` already used for the first two modes -- not a
+redesign, and the first two `elif` branches are untouched. `start`/`end`/
+`field` are included in the constructed `dataset_reference` dict only when
+non-blank (omitted, not sent as `None`/empty string), matching
+`GET /ingestion/datasets/{source}/series`'s own optional-both-ends semantics
+(ADR-0005, GW-020/INGEST-009). `run_new_form` (`GET /runs/new`) now also
+calls gateway-api's `GET /ingestion/datasets` (GW-020) via the same
+`_call_downstream` helper to populate this mode's source dropdown; a
+transport failure or non-200 there degrades to an empty dataset list (the
+same "no ingested datasets yet" empty state a real empty-history tenant
+sees) rather than blocking the whole page, since the pre-existing path/
+inline modes must stay usable regardless of this one endpoint's
+availability.
+
 DASH-005-01: `GET /runs` (this same file, per this ticket's own Design section
 -- no second router module) calls gateway-api's real `GET /runs` (GW-016,
 itself a pass-through proxy of validation-service's VS-022) and renders
@@ -82,6 +101,23 @@ extracted into a helper here rather than copy-pasted a third time
 (implementation-plan.md section 9's "extract on second duplication" rule,
 per this ticket's own DRY check note). Zero runs renders `runs_list.html`'s
 own plain empty-state message, not an error.
+
+DASH-111: `GET /datasets` (this same file, same "no second router module"
+precedent DASH-005-01 set) lists all of a tenant's ingested datasets via the
+same `GET /ingestion/datasets` call `run_new_form` (DASH-108) already makes.
+`_fetch_ingestion_datasets` below is `run_new_form`'s original inline
+fetch-and-degrade logic pulled out into one shared function both routes call
+-- not two near-identical implementations of the same fetch (ticket's own DRY
+check note). `run_new_form` also grew an optional `dataset_reference_source`
+query param so this new page's "Submit a run" link
+(`/runs/new?dataset_reference_source=<source>`) pre-selects that source in
+the "Stored dataset" dropdown -- reusing the exact same `values.
+dataset_reference_source == dataset.source` template comparison
+`run_new_submit`'s error-redisplay path already relies on, not a second
+selection mechanism. The "Trigger a crawl" link per row points at
+`/monitoring` -- a forward-compatible placeholder only, since DASH-110 (the
+ticket that would wire up an actual per-source crawl trigger from this page)
+is not yet built; this ticket does not build that functionality itself.
 """
 
 from __future__ import annotations
@@ -92,6 +128,7 @@ import httpx
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import RedirectResponse
 from naive_first_common.contracts import (
+    DatasetSummaryResponse,
     RunDetailResponse,
     RunRequest,
     RunResponse,
@@ -107,7 +144,8 @@ router = APIRouter()
 
 _UNAVAILABLE_ERROR = "results currently unavailable"
 _MISSING_DATASET_REFERENCE_ERROR = (
-    "Provide either a local file path or an inline payload for the dataset reference."
+    "Provide either a local file path, an inline payload, or a stored dataset "
+    "for the dataset reference."
 )
 _INVALID_INLINE_JSON_ERROR = "Inline payload must be valid JSON."
 
@@ -127,6 +165,26 @@ def _call_downstream(fn, *args, **kwargs) -> tuple[httpx.Response | None, int | 
         return None, 502
     except httpx.TimeoutException:
         return None, 504
+
+
+def _fetch_ingestion_datasets(
+    client: httpx.Client, headers: dict[str, str]
+) -> list[DatasetSummaryResponse]:
+    """DASH-111: extracted from `run_new_form`'s (DASH-108) original inline
+    fetch so both that route and the new `datasets_list` route below share one
+    "call `GET /ingestion/datasets` and get the list of items back"
+    implementation instead of two near-identical copies (ticket's own DRY
+    check note). A transport failure or non-200 response degrades to an empty
+    list -- the same "no ingested datasets yet" empty state a real
+    empty-history tenant sees -- rather than raising, matching DASH-108's
+    original design note.
+    """
+    response, transport_status = _call_downstream(
+        client.get, "/ingestion/datasets", headers=headers
+    )
+    if transport_status is None and response.status_code == 200:
+        return [DatasetSummaryResponse(**item) for item in response.json()["items"]]
+    return []
 
 
 def _render_error_for_status(request: Request, status_code: int):
@@ -181,14 +239,60 @@ def runs_list(
     return templates.TemplateResponse(request, "runs_list.html", {"runs": runs})
 
 
-@router.get("/runs/new")
-def run_new_form(request: Request, headers: DownstreamHeadersDep):
-    """`headers` is unused beyond enforcing DASH-003's session check -- this
-    route makes no downstream call (pure static form render), but a run
-    submission form is only reachable once logged in, matching `POST /login`'s
-    own redirect target (DASH-002).
+@router.get("/datasets")
+def datasets_list(request: Request, headers: DownstreamHeadersDep, base_url: GatewayApiUrlDep):
+    """DASH-111: lists all of a tenant's ingested datasets (source,
+    earliest/latest timestamp, row_count) via `_fetch_ingestion_datasets`
+    above -- the same shared fetch `run_new_form` (DASH-108) uses, not a
+    second near-identical implementation. Renders `datasets.html`, which
+    links each row into `run_new_form`'s "Stored dataset" mode (pre-selecting
+    that source) and toward `/monitoring` as a forward-compatible crawl
+    placeholder (DASH-110's own territory, not built here). Registered near
+    `runs_list`/before `run_new_form` for readability; its own path does not
+    collide with any `/runs/*` pattern either way.
     """
-    return templates.TemplateResponse(request, "run_new.html", {})
+    with httpx.Client(base_url=base_url) as client:
+        datasets = _fetch_ingestion_datasets(client, headers)
+
+    return templates.TemplateResponse(request, "datasets.html", {"datasets": datasets})
+
+
+@router.get("/runs/new")
+def run_new_form(
+    request: Request,
+    headers: DownstreamHeadersDep,
+    base_url: GatewayApiUrlDep,
+    dataset_reference_source: str = "",
+):
+    """DASH-006's original pure static render now also fetches gateway-api's
+    `GET /ingestion/datasets` (GW-020, DASH-108) to populate the "Stored
+    dataset" mode's source dropdown, via the shared `_fetch_ingestion_datasets`
+    helper above (DASH-111 extracted it out of this function so `datasets_list`
+    can reuse it too). A transport failure or non-200 response degrades to an
+    empty dataset list -- rendered as the same "no ingested datasets yet"
+    empty state a real empty-history tenant sees -- rather than blocking the
+    whole page, since the pre-existing path/inline modes remain usable
+    regardless of this one endpoint's availability.
+
+    DASH-111: an optional `dataset_reference_source` query param (only ever
+    set by `datasets_list`'s per-row "Submit a run" link) pre-selects that
+    source in the dropdown by populating `values.dataset_reference_source`,
+    the same template field `run_new_submit`'s own error-redisplay path
+    already uses for this -- no second selection mechanism invented. A GET
+    with no such param behaves exactly as before (`values` stays `None`).
+    """
+    with httpx.Client(base_url=base_url) as client:
+        datasets = _fetch_ingestion_datasets(client, headers)
+
+    values = (
+        {"dataset_reference_source": dataset_reference_source}
+        if dataset_reference_source.strip()
+        else None
+    )
+
+    return templates.TemplateResponse(
+        request, "run_new.html", {"datasets": datasets, "values": values}
+    )
 
 
 def _extract_detail(response: httpx.Response) -> str:
@@ -210,6 +314,10 @@ def run_new_submit(
     dataset_id: str = Form(""),
     dataset_reference_path: str = Form(""),
     dataset_reference_inline: str = Form(""),
+    dataset_reference_source: str = Form(""),
+    dataset_reference_start: str = Form(""),
+    dataset_reference_end: str = Form(""),
+    dataset_reference_field: str = Form(""),
     horizon: str = Form(""),
     purge_gap_hours: str = Form(""),
     train_window: str = Form(""),
@@ -220,6 +328,10 @@ def run_new_submit(
         "dataset_id": dataset_id,
         "dataset_reference_path": dataset_reference_path,
         "dataset_reference_inline": dataset_reference_inline,
+        "dataset_reference_source": dataset_reference_source,
+        "dataset_reference_start": dataset_reference_start,
+        "dataset_reference_end": dataset_reference_end,
+        "dataset_reference_field": dataset_reference_field,
         "horizon": horizon,
         "purge_gap_hours": purge_gap_hours,
         "train_window": train_window,
@@ -236,14 +348,22 @@ def run_new_submit(
             return templates.TemplateResponse(
                 request,
                 "run_new.html",
-                {"error": _INVALID_INLINE_JSON_ERROR, "values": values},
+                {"error": _INVALID_INLINE_JSON_ERROR, "values": values, "datasets": []},
                 status_code=422,
             )
+    elif dataset_reference_source.strip():
+        dataset_reference = {"source": dataset_reference_source.strip()}
+        if dataset_reference_start.strip():
+            dataset_reference["start"] = dataset_reference_start.strip()
+        if dataset_reference_end.strip():
+            dataset_reference["end"] = dataset_reference_end.strip()
+        if dataset_reference_field.strip():
+            dataset_reference["field"] = dataset_reference_field.strip()
     else:
         return templates.TemplateResponse(
             request,
             "run_new.html",
-            {"error": _MISSING_DATASET_REFERENCE_ERROR, "values": values},
+            {"error": _MISSING_DATASET_REFERENCE_ERROR, "values": values, "datasets": []},
             status_code=422,
         )
 
@@ -261,7 +381,7 @@ def run_new_submit(
         return templates.TemplateResponse(
             request,
             "run_new.html",
-            {"error": str(exc), "values": values},
+            {"error": str(exc), "values": values, "datasets": []},
             status_code=422,
         )
 
@@ -277,7 +397,7 @@ def run_new_submit(
             return templates.TemplateResponse(
                 request,
                 "run_new.html",
-                {"error": _extract_detail(response), "values": values},
+                {"error": _extract_detail(response), "values": values, "datasets": []},
                 status_code=422,
             )
 

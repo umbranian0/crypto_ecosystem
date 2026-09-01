@@ -70,6 +70,24 @@ SEED_WATERMARKS = {
     "n-unique-addresses": datetime(2025, 7, 19, tzinfo=timezone.utc),
 }
 
+# Bitcoin genesis block date -- verified as the real earliest-available
+# `values` entry (`x=1230940800`) for both `hash-rate` and `n-unique-addresses`
+# via `GET https://api.blockchain.info/charts/{chart_name}?start=2009-01-01
+# &format=json&sampled=false&timespan=6000days` (INGEST-013). Chart-name
+# independent -- confirmed true for both charts this connector serves.
+BITCOIN_GENESIS_DATE = datetime(2009, 1, 3, tzinfo=timezone.utc)
+
+
+def default_backfill_start() -> datetime:
+    """Default backfill depth for a brand-new tenant's first DB crawl
+    (INGEST-013) -- distinct from `SEED_WATERMARKS` above, which is only the
+    CSV historical-seed-file cutoff used by this module's own `__main__`
+    block, unrelated to a tenant's own per-tenant DB history. Returns the
+    verified Bitcoin genesis block date (see `BITCOIN_GENESIS_DATE`), not a
+    per-chart value, since it holds for both charts this connector serves.
+    """
+    return BITCOIN_GENESIS_DATE
+
 
 if __name__ == "__main__":
     for chart_name, seed_watermark in SEED_WATERMARKS.items():

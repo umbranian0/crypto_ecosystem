@@ -9,7 +9,9 @@ from datetime import datetime, timezone
 
 import pytest
 
+from connectors.base import run_incremental
 from connectors.binance_price import MAX_KLINES_PER_REQUEST, BinancePriceConnector
+from fake_repository import FakeConnectorRecordRepository
 
 
 class _FakeResponse:
@@ -83,3 +85,31 @@ def test_fetch_returns_empty_dataframe_when_no_data() -> None:
 def test_fetch_name_includes_symbol_and_interval() -> None:
     connector = BinancePriceConnector(symbol="ETHUSDT", interval="4h", session=_FakeSession(pages=[]))
     assert connector.name == "binance_price_ethusdt_4h"
+
+
+def test_run_incremental_writes_price_records_via_repository(tmp_path) -> None:
+    """INGEST-003 DB-write path: `run_incremental` with `tenant_id`/`repository`
+    supplied writes via `repository.add_price_records`, not a CSV.
+    """
+    since = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    session = _FakeSession(pages=[[_kline(int(since.timestamp() * 1000) + 1000)]])
+    connector = BinancePriceConnector(session=session)
+    repository = FakeConnectorRecordRepository()
+
+    run_incremental(
+        connector,
+        incremental_dir=tmp_path,
+        timestamp_column="open_time",
+        seed_watermark=since,
+        tenant_id="tenant-a",
+        repository=repository,
+        record_kind="price",
+    )
+
+    assert len(repository.price) == 1
+    tenant_id, source, records = repository.price[0]
+    assert tenant_id == "tenant-a"
+    assert source == connector.name
+    assert len(records) == 1
+    assert "fetched_at" in records.columns
+    assert list(tmp_path.glob("*.csv")) == []  # DB path writes no CSV

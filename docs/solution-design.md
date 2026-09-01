@@ -211,3 +211,159 @@ Revisit this as an ADR (`docs/adr/`) if it changes rather than silently drifting
 - **Report delivery format for pilots**: HTML-in-dashboard only, or also downloadable PDF? (Affects whether WeasyPrint/wkhtmltopdf needs to be in the stack from day one.)
 - **Client prediction submission cadence**: one-off audit only, or recurring feed (needed for Subsystem 3's continuous monitoring) — determines whether the upload API needs to support streaming/incremental uploads early or can start as one-shot batch files.
 - **Pilot client count and expected data volume** — affects whether local Docker Compose can carry the actual pilot phase or whether cloud deployment needs to happen sooner than "phase 2."
+﻿---
+
+## 8. Per-tenant ingestion data pipeline (TimescaleDB schema, `ingestion-service` API, credential encryption, unified ops dashboard)
+
+Locked in by the product owner (2026-08-25), superseding/refining `docs/product/backlog-ingestion-pipeline-integration.md`'s `INGEST-002`/`INGEST-004`/`INGEST-009` where noted below. This section is the technical design the Tech Lead grooms into tickets; it does not re-litigate the six locked decisions (dataset semantics, schema shape, credential encryption, backfill, per-tenant crawlers, dashboard) - see the backlog for their original framing.
+
+Ground truth confirmed by reading code, not assumed: `infra/docker-compose.yml`'s `postgres` service already runs `timescale/timescaledb:latest-pg16`, and `validation-service`'s `split_results` table is already a real hypertable (`migrations/versions/0004_convert_split_results_to_hypertable.py`, `INF-010`). **No new container, port, or database product is introduced anywhere in this section** - this is a new `ingestion` schema plus hypertables on the existing Postgres instance, exactly the way `validation-service` already did it.
+
+### 8.1 Dataset semantics (binding, drives every contract below)
+
+A **dataset** is `{tenant_id, source}` - a tenant's ongoing, continuously-growing hypertable partition, not a discrete snapshot. There is no `datasets` row with a fixed `raw_path`/`ingested_at` the way section 4's old sketch implied for the pre-DB CSV era; that row-per-snapshot shape is retired for ingestion data specifically (it's still fine for anything section 4 covers that isn't ingestion). Picking a dataset for a validation run means selecting `{tenant, source}` **and a time-range slice at submission time** - this is why every dataset-reading endpoint below takes `start`/`end` query parameters rather than resolving to one static blob. Contrast with a **crawl run**: one execution of a connector appending rows to a dataset (an event, tracked in `crawl_runs`); a dataset is the table it appends to. See `CONTEXT.md`'s "Dataset"/"Seed data" glossary entries - this section operationalizes those definitions, it doesn't restate them.
+
+This refines `INGEST-009`'s original sketch (which proposed a single static `id = "{source}"` with no time-range parameter on the read endpoint) - the fix is additive: `GET /datasets` still lists one entry per `{tenant, source}` for discovery, but the endpoint that actually returns values now requires a `start`/`end` range instead of implicitly returning "the whole table." See `docs/adr/0005-dataset-is-a-continuous-tenant-source-table.md`.
+
+### 8.2 TimescaleDB schema (`ingestion` schema, mirrors `identity`/`validation`/`reporting`)
+
+One hypertable per source family (not per tenant, not per source instance) - decision #2. Sketch:
+
+```sql
+-- ingestion.price_ohlcv (source: binance_price)
+tenant_id       text NOT NULL
+source          text NOT NULL          -- e.g. 'binance_btcusdt_1h' (room for more than one price feed later)
+open_time       timestamptz NOT NULL   -- the record's own time (kline open)
+fetched_at      timestamptz NOT NULL   -- causal-lag column, connectors/base.py's FetchResult.fetched_at
+open, high, low, close, volume double precision NOT NULL
+close_time      timestamptz NOT NULL
+quote_volume, trades, taker_buy_base, taker_buy_quote double precision
+PRIMARY KEY (tenant_id, source, open_time)   -- widened per INF-010's hypertable-PK precedent
+
+-- ingestion.onchain_metric (source: blockchain_onchain, parameterized per metric)
+tenant_id       text NOT NULL
+source          text NOT NULL          -- e.g. 'hash_rate', 'n_unique_addresses'
+timestamp       timestamptz NOT NULL
+fetched_at      timestamptz NOT NULL
+value           double precision NOT NULL
+PRIMARY KEY (tenant_id, source, timestamp)
+
+-- ingestion.sentiment_score (source: reddit_vader_sentiment)
+tenant_id       text NOT NULL
+source          text NOT NULL          -- 'reddit_vader_sentiment' today, room for a second sentiment source later
+created_utc     timestamptz NOT NULL
+fetched_at      timestamptz NOT NULL
+subreddit, post_id, title text
+score, num_comments integer
+reddit_sid_pos, reddit_sid_neg, reddit_sid_neu, reddit_sid_com double precision NOT NULL
+PRIMARY KEY (tenant_id, source, created_utc, post_id)   -- post_id added: created_utc alone is not unique across posts in the same second
+
+-- ingestion.connector_credentials (decision #3 - see 8.5)
+tenant_id, source (PK) | ciphertext columns, never plaintext at rest
+
+-- ingestion.crawl_runs (INGEST-005, unchanged from the backlog's design)
+id, tenant_id, source, since_watermark, fetched_at, row_count, status
+```
+
+- Each of `price_ohlcv`/`onchain_metric`/`sentiment_score` is declared a hypertable via `public.create_hypertable(..., if_not_exists => TRUE)`, partitioned on its own event-time column (`open_time`/`timestamp`/`created_utc` respectively) - copying `0004_convert_split_results_to_hypertable.py`'s exact idiom (including the widened-PK fix for the same "unique index must include the partitioning column" TimescaleDB constraint), not reinventing it.
+- RLS: `ENABLE` + `FORCE ROW LEVEL SECURITY` + `CREATE POLICY tenant_isolation ... USING (tenant_id = current_setting('app.tenant_id')::text)` on all four data tables and `crawl_runs`/`connector_credentials`, byte-identical in shape to `validation-service`'s `0002_add_row_level_security.py` and `gateway-api`'s `0002_add_identity_rls.py` - copied with attribution.
+- Indexes: the widened primary key already gives each table an index on `(tenant_id, source, event_time)`, which is exactly the access pattern every read path below needs (`WHERE tenant_id = :t AND source = :s AND event_time BETWEEN :start AND :end`) - no separate secondary index is needed at MVP scale; add one only if a real query plan shows a sequential scan under load (a concrete, observable trigger, not a preemptive index).
+- `search_path`/`alembic_version` schema-scoping: mirror `validation-service`'s `env.py` fix from `INF-005` exactly (this is `INGEST-002`'s own acceptance criterion already - no change needed here beyond confirming it applies to all four new tables, not just the three original ones).
+
+### 8.3 `ingestion-service` REST API surface
+
+All endpoints tenant-authenticated via `naive_first_common.get_tenant_context` (`X-Tenant-Id`, same convention as `validation-service`), except the operator-gated credential-status path (8.5) and `/health`.
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /connectors/{source}/run` | Trigger tenant's crawl of one source now (`INGEST-008`, unchanged design) - resolves tenant's watermark + credentials, calls `fetch()`, writes via the repository, returns/records a `crawl_runs` row. |
+| `GET /datasets` | List `{tenant, source}` datasets with `earliest_timestamp`/`latest_timestamp`/`row_count` - discovery only, no values. Empty tenant gets `200 {"items": []}`. |
+| `GET /datasets/{source}/series?start=...&end=...&field=...` | Supersedes `INGEST-009`'s `GET /datasets/{id}` - returns `{"timestamps": [...], "values": [...]}` for the tenant's `source` table sliced to `[start, end]`. `start`/`end` are ISO-8601, both optional (omitted `start` = earliest row, omitted `end` = latest row - "the whole dataset so far" is just the no-args case, not a separate code path). `field` selects the value column for multi-column sources (`close` default for `price_ohlcv`, `value` for `onchain_metric`, `reddit_sid_com` default for `sentiment_score` - documented explicitly, confirm defaults with the product owner per open question below). Cross-tenant/nonexistent `source` both return `404` (collapsed, same convention as `validation-service`'s `GET /runs/{id}`). |
+| `GET /connectors/{source}/status` | Tenant's last `crawl_runs` row for that source (status, timestamp, row_count) - feeds `DASH-109`'s per-tenant ingestion status row without needing the dashboard to list full `crawl_runs` history. |
+| `GET /health` | Real DB connectivity check, `OPS-005` convention. |
+
+`gateway-api` gains thin proxy routers (`GW-019`/`GW-020` shape, unchanged from the backlog): `dashboard-web` never calls `ingestion-service` directly, only through `gateway-api`, matching the existing `VALIDATION_SERVICE_URL`/`REPORTING_SERVICE_URL` pattern with a new `INGESTION_SERVICE_URL`.
+
+### 8.4 `validation-service`'s third `DatasetSource` mode
+
+`dataset_source.py` gains `IngestionServiceDatasetSource` (Adapter, same `DatasetSource` Protocol, `load(reference) -> pd.Series`) alongside `InlineOrLocalFileDatasetSource`/`ObjectStorageDatasetSource`, wired into `CompositeDatasetSource`'s existing dispatch as a fourth branch. Design, refined from `VS-023`'s original sketch for the continuous-table semantics locked in at 8.1:
+
+- `reference` shape: `{"source": "<source>", "start": "<iso8601, optional>", "end": "<iso8601, optional>", "field": "<optional>"}` - a new, distinct key (`"source"`) from `"inline"`/`"path"`/`"object_key"`, so the existing three dispatch branches need no change.
+- `IngestionServiceDatasetSource.load` calls `ingestion-service`'s `GET /datasets/{source}/series` directly by Compose hostname (`http://ingestion-service:8000/...`), the same direct-service-to-service precedent `reporting-service` already uses for `validation-service` - not through `gateway-api` (that hop is only for `dashboard-web`'s external calls, per `implementation-plan.md`'s rule about `dashboard-web` specifically, not every internal service-to-service call).
+- Tenant identity flows through as an `X-Tenant-Id` header on this outbound call, injected by `dependencies/repositories.py`'s `get_dataset_source()` provider from the resolved `TenantContext` of the inbound `POST /runs` request - this is `VS-024`'s cross-tenant-leak guard, unchanged in spirit from the backlog, just restated against the new reference shape.
+- Hard rule, unchanged: no `sqlalchemy`/`psycopg` import of any `ingestion.*` table anywhere in `validation-service`. A `grep -R "ingestion\." services/validation-service/src` returning nothing beyond comments remains this rule's own acceptance test.
+- Reuses `InlineOrLocalFileDatasetSource._build_series` for turning the fetched JSON into the validated `pd.Series` - no second timestamp/float-parsing implementation.
+- A downstream failure (timeout, 404, malformed response) raises `DatasetSourceError`, same as every other `DatasetSource`.
+
+### 8.5 Credential encryption (decision #3 - supersedes `INGEST-004`'s originally-disclosed plaintext posture)
+
+The backlog's `INGEST-004` accepted plaintext-at-rest for Reddit credentials as an MVP tradeoff and flagged it as an open question; the product owner has since resolved that question: encrypt at rest. Design:
+
+- **Mechanism**: application-level symmetric encryption via `cryptography`'s `Fernet` (AES-128-CBC + HMAC, already-audited, already in the Python ecosystem - no new crypto to write). Encryption/decryption lives as a small `encrypt(plaintext: str) -> bytes` / `decrypt(ciphertext: bytes) -> str` pair, keyed off a single `INGESTION_CREDENTIAL_ENCRYPTION_KEY` env var - start as a private module inside `ingestion-service` (only consumer today); move it into `libs/common` the moment a second service needs the same primitive (YAGNI, matching this repo's own DRY convention: extract on second duplication, not preemptively).
+- **Key storage**: the key lives in `infra/.env` (never committed - same convention as `POSTGRES_APP_PASSWORD`/`OPERATOR_TOKEN`), generated once via `Fernet.generate_key()` and printed by `infra/bootstrap.ps1`/`.sh` the same way `SETUP-002`'s API key is one-time-revealed - losing this key means every stored credential becomes permanently undecryptable (a real operational fact, documented in `ingestion-service/README.md`'s credentials section, not hidden).
+- **What's encrypted**: only the credential value columns in `ingestion.connector_credentials` (`client_secret` at minimum; `client_id` is arguably not sensitive but is encrypted too for uniformity - one encrypted-blob column per secret field, not a mix of encrypted/plaintext columns that would require a reader to know which is which). `tenant_id`/`source`/timestamps stay plaintext (they are not secrets, and RLS already scopes them).
+- **What the dashboard ever sees**: plaintext only at the moment an operator submits new credentials (write path, phase 2 per decision (a) below) - the value is encrypted immediately server-side inside `ingestion-service` before the write, never logged, never echoed back in any response. Every read path (`DASH-112`'s status view, any future audit) returns only a boolean "credential is set" + timestamp, similar in spirit to `SETUP-012`'s one-time-reveal discipline for API keys, but weaker in one specific way worth stating plainly to the Tech Lead: unlike an API key (hashed, so it is never technically recoverable even by the platform itself), a Reddit secret is decryptable by design (the connector needs the real value to authenticate to Reddit) - the guarantee here is operational ("no API response ever returns it"), not cryptographic irreversibility.
+- **Who decrypts**: only `ingestion-service`'s own connector code, in-process, immediately before calling Reddit's API - the decrypted value never crosses a process boundary (no endpoint returns it, no log line contains it, matching the existing `provision()` function's `extra=` logging discipline for API keys).
+- This is a hard-to-reverse-feeling call worth its own ADR given it introduces a new key-management surface to the platform (the first symmetric application key, distinct from password hashing and RLS) - see `docs/adr/0004-tenant-credential-encryption-at-rest.md`.
+
+### 8.6 Seeding/backfill mechanism (decision #4 - repeatable, tenant-parameterized)
+
+`INGEST-010`'s original design (a one-time `scripts/backfill_from_csv.py`) is retained as the CSV-source half but generalized per decision #4's explicit requirement that seeding be a repeatable capability, not a one-off script:
+
+- **Shape**: a CLI command, `services/ingestion-service/scripts/seed_tenant.py --tenant-id <id> --source <source> [--from <path-or-platform-csv>] [--dry-run]`, mirroring `provision_tenant.py`'s existing "standalone, operator-run, host-access-gated" convention rather than a new network-reachable endpoint - seeding is an operator action, not a tenant self-service action, and this repo already has a clean precedent for "operator CLI script talking to the DB directly" that does not need reinventing as HTTP.
+- **Tenant-parameterized by construction**: `--tenant-id` is a required argument, not a hardcoded default - the same script seeds an existing tenant or a brand-new one on demand, satisfying decision #4 literally. The historical `data/raw/_platform/...` CSV archive becomes just one `--from platform-csv` source option among others the script accepts (e.g. `--from <arbitrary-csv-path>` for a future non-platform seed source), not a special-cased one-off migration.
+- **Idempotent**: upsert keyed on the same `(tenant_id, source, event_time)` primary key the hypertables already enforce - re-running the script for a tenant that already has some rows in a given range does not duplicate them (`ON CONFLICT DO NOTHING` or `DO UPDATE`, decided by the Tech Lead at ticket time; either is safe given the PK).
+- **Repository reuse**: writes via the exact same `ConnectorRecordRepository` interface `INGEST-003`'s DB-write path already introduces - no second, divergent CSV-parsing/DB-writing code path (this is `INGEST-010`'s own AC, unchanged).
+- **Open founder decision, restated from the backlog, not resolved here**: which tenant(s) get the existing platform-wide historical CSVs attached at first-run time (every tenant vs. one designated seed/demo tenant) is still open - this section's contribution is making the mechanism general enough that either answer (or "seed tenant X now, seed tenant Y next month when they onboard") is the same operation, not a design fork.
+
+### 8.7 Dashboard: unified ops view information architecture
+
+Reconciled against `backlog-first-run-setup-and-ops.md`'s existing Monitoring (`SETUP-020`-`022`) and Settings (`SETUP-010`-`015`) epics - extends, does not duplicate, per that backlog's own reconciliation statement carried over from `backlog-ingestion-pipeline-integration.md`.
+
+| Page | Pulls from | New vs. existing |
+|---|---|---|
+| `/monitoring` (existing) | `GET /system/health` (`gateway-api`, `SETUP-020`) | Extended: add `ingestion-service` as a fourth health row (`DASH-109`). |
+| `/monitoring` - ingestion panel (new) | `GET /ingestion/connectors/{source}/status` (proxy of 8.3's status endpoint) per tenant/source | New panel, same page - "last crawl status," never framed as data quality/predictive signal (CLAUDE.md). |
+| `/monitoring` - trigger actions (new) | `POST /ingestion/connectors/{source}/run` (`GW-019` proxy), existing `POST /reports/generate` (`GW-018`, already built) | New buttons on the existing page (`DASH-110`) - every action is an authenticated HTTP call to a service's own API; grep-verified zero references to `docker`/`subprocess`/the Docker socket anywhere in `dashboard-web` after this ships (decision #6's structural, not just policy, boundary). |
+| `/datasets` (new page) | `GET /ingestion/datasets` (`GW-020` proxy) | New - lists each tenant's ingested series with last-updated timestamps (`DASH-111`), cross-links into the submit-run form's dataset picker and into the trigger-a-crawl action for the same source. |
+| Submit-run form - "Stored dataset" mode (existing form, new mode) | `GET /ingestion/datasets` for the dropdown, `POST /runs` with the new `{"source": ..., "start": ..., "end": ...}` reference shape | Extends `DASH-108`'s existing two-mode form with a third mode; per 8.1's continuous-table semantics, this mode also needs `start`/`end` range inputs (date pickers), not just a dataset-name dropdown - a UI detail `DASH-108`'s original sketch (written before the continuous-table decision) did not yet need. |
+| `/settings/connectors` (new page, status/read-only only in this phase - see decision (a) below) | New `GET /ingestion/connectors/credentials-status` (operator-authenticated proxy) | Shows, per tenant/source, whether a credential is stored + when it was last set - no write form in this phase, per decision (a). |
+
+Every trigger-action and every settings page reuses `SETUP-010`'s existing operator-token mechanism and `GW-009`'s existing downstream-failure-to-status-code handling - no new auth mechanism, no new transport-error pattern, per this repo's own DRY convention.
+
+### 8.8 Sequencing / dependency notes for the Tech Lead
+
+This is a strictly layered dependency chain - schema before connectors before API before dataset-picker/dashboard, matching the backlog's own sequencing note, refined with the encryption and continuous-slice work folded in:
+
+1. `ingestion` schema + hypertables + RLS (8.2, `INGEST-002`) and `libs/common` tenant-scope extraction (`LC-010`) - parallel, both prerequisites for everything else.
+2. Credential encryption primitive (8.5) - small, no dependency on the schema beyond `connector_credentials`'s column shape; can be built in parallel with step 1, must land before `INGEST-004`'s repository writes any credential row.
+3. Connectors write to DB (`INGEST-003`), per-tenant credentials via the repository, now encrypted at rest (`INGEST-004`, revised per 8.5), crawl-run tracking (`INGEST-005`) - sequential, each depending on the prior, all depending on step 1.
+4. `ingestion-service` FastAPI scaffolding (`INGEST-007`) - can start as soon as step 1 lands (only needs the schema for its `/health` check), does not need to wait for step 3.
+5. The real endpoints - `POST /connectors/{source}/run` (`INGEST-008`) and `GET /datasets`, `GET /datasets/{source}/series` (revised `INGEST-009`, 8.3) - depend on steps 3 and 4.
+6. `gateway-api` proxies (`GW-019`/`GW-020`) - thin, start the moment their respective step-5 endpoints exist.
+7. `validation-service`'s `IngestionServiceDatasetSource` (revised `VS-023`/`VS-024`, 8.4) - depends on step 5's `series` endpoint existing and reachable by Compose hostname; does not need step 6 (proxies are only for `dashboard-web`'s path).
+8. `dashboard-web`'s dataset picker (`DASH-108`, revised for date-range inputs per 8.1) - depends on step 6 (`GW-020`) and step 7 (needs `POST /runs` to actually accept the new reference shape end-to-end).
+9. Dashboard ops view (`DASH-109`/`110`/`111`, 8.7) - depends on steps 4-6; can proceed in parallel with steps 7-8 once its own dependencies land, same "most independent part of the set" note the backlog already makes.
+10. Settings -> connectors status page (revised `DASH-112`, read-only phase only) - depends on `SETUP-010` (already built) and step 3; the write-form half of the original `DASH-112` is deliberately deferred - see decision (a) below.
+11. Seeding/backfill CLI (8.6, revised `INGEST-010`) - can run any time after step 3, blocked only on the founder's tenant-attachment decision (still open, restated in 8.6), not on any later step.
+
+### 8.9 Decisions adopted by default, not user-confirmed - flagged individually per the product owner's own instruction
+
+- **(a) Credential-write UI deferred**: `DASH-112`'s write form ("set/rotate Reddit credentials" from the dashboard) ships as a separate ticket/phase after the core connector/DB/encryption work (steps 1-7 above). Until then, an operator sets a tenant's credentials via a CLI script (`services/ingestion-service/scripts/set_connector_credentials.py`, same host-access-gated convention as `provision_tenant.py`) that calls the same encrypted-write repository method the dashboard form will eventually call - one write path, two front doors, added later, not two divergent implementations built up front. Revisit if the user wants the write UI bundled into the core work during grooming.
+- **(b) Operator identity model**: the dashboard's Settings/connectors page (and every other operator-gated page referenced in 8.7) reuses `SETUP-010`'s single shared `OPERATOR_TOKEN` env var - no real multi-admin user accounts. This was already the adopted design for `SETUP-010`/`011`/`012`; this section only confirms nothing about ingestion credentials changes that posture. Revisit the day a second real human operator needs their own distinguishable credential (`SETUP-010`'s own named trigger, unchanged).
+- **(c) Setup-secret bootstrap protection**: `SETUP-002`'s `POST /setup/initialize` (the credential-less first-tenant bootstrap endpoint) is protected by a one-time setup secret generated and printed by `infra/bootstrap.ps1`/`.sh` at first stack startup, required as a header/body field on the initialize call - not by binding the endpoint to loopback-only. This means the endpoint can safely stay reachable through `gateway-api`'s existing public-facing port (no special-cased network topology for one endpoint) while still being unusable by anyone who has not read the bootstrap script's own console output. Revisit if the user wants loopback-only binding instead (e.g. if a remote/cloud-hosted first-run flow ever needs the setup step to happen from a different machine than the one that ran `bootstrap.sh`, a setup secret travels more easily than a loopback restriction - but that tradeoff is exactly why this is flagged rather than assumed).
+
+### 8.10 Further ADR-0003 trigger-override disclosures
+
+Beyond what `backlog-ingestion-pipeline-integration.md` already discloses (Epic A's second-order override of trigger #10, Epic B's fresh override of trigger #6), this section adds one further disclosure the backlog did not yet need to make because it predates the encryption decision: the credential encryption primitive (8.5) is new platform capability, not covered by any existing override paragraph - it does not extend a previously-overridden module's trigger (there is no "encryption" trigger in `implementation-plan.md`'s table to override), it is simply new scope introduced by decision #3. Recorded here so a future reader does not go looking for a trigger-table row this work does not have one against.
+
+### 8.11 Open questions for the founder/Tech Lead, restated and added to
+
+Carried over from the backlog (still open, not resolved by this section):
+1. Backfill tenant attachment (`INGEST-010`/8.6) - every existing tenant vs. one designated seed tenant.
+2. `GET /datasets/{source}/series`'s multi-column `field` defaults (8.3) - confirm `close`/`value`/`reddit_sid_com` are the right defaults per source.
+3. N-times redundant external API load (decision #4) - accepted per the locked decision, restated for visibility only.
+
+New, raised by this section:
+4. **Key-loss blast radius (8.5)** - if `INGESTION_CREDENTIAL_ENCRYPTION_KEY` is ever lost or rotated without a migration step, every stored credential becomes undecryptable and every affected tenant's Reddit crawl silently starts failing (a `409`/`422` on `POST /connectors/reddit/run`, not a data-loss event, but an availability one). Confirm whether key rotation needs a supported re-encryption path in an early ticket, or whether "re-enter your Reddit credentials" is an acceptable operator response for the pilot phase.
+5. **Setup-secret delivery (8.9c)** - confirm the setup secret should be console-printed only (matching `provision_tenant.py`'s API-key precedent) versus also written to a local file the bootstrap script can re-print on request, for the case where an operator's terminal scrollback is already gone by the time they reach the wizard.

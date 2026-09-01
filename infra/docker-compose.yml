@@ -67,6 +67,12 @@ services:
       # RLS unconditionally).
       DATABASE_URL: ${VALIDATION_SERVICE_DATABASE_URL:-postgresql://${POSTGRES_APP_USER:-naive_first_app}:${POSTGRES_APP_PASSWORD:-naive_first_app_dev_password}@postgres:5432/${POSTGRES_DB:-naive_first}}
       REDIS_URL: ${VALIDATION_SERVICE_REDIS_URL:-redis://redis:6379/0}
+      # VS-024's IngestionServiceDatasetSource defaults to localhost:8003,
+      # which inside this container resolves to validation-service's own
+      # container, not the sibling ingestion-service one -- same class of
+      # gap as gateway-api's REPORTING_SERVICE_URL/INGESTION_SERVICE_URL fix
+      # above (found live during Sprint 18 UAT, 2026-08-26).
+      INGESTION_SERVICE_URL: ${VALIDATION_SERVICE_INGESTION_SERVICE_URL:-http://ingestion-service:8003}
     depends_on:
       postgres:
         condition: service_healthy
@@ -87,6 +93,20 @@ services:
       # documents a `localhost` default for non-Compose dev; this override
       # points it at validation-service's Compose service name instead.
       VALIDATION_SERVICE_URL: ${GATEWAY_API_VALIDATION_SERVICE_URL:-http://validation-service:8000}
+      # Same rationale as VALIDATION_SERVICE_URL above -- http_client.py's
+      # own default (http://localhost:8002/8003) resolves to gateway-api's
+      # own container inside the Compose network, not the sibling service,
+      # so both must be overridden here or every reporting-service/
+      # ingestion-service proxy route 502s with "downstream service
+      # unavailable" despite both services being healthy (found live during
+      # Sprint 18 UAT, 2026-08-26).
+      REPORTING_SERVICE_URL: ${GATEWAY_API_REPORTING_SERVICE_URL:-http://reporting-service:8002}
+      INGESTION_SERVICE_URL: ${GATEWAY_API_INGESTION_SERVICE_URL:-http://ingestion-service:8003}
+      # GW-021's shared operator-token stopgap -- must be explicitly passed
+      # through here or operator_auth.py's os.environ.get returns None and
+      # every operator-gated route 401s regardless of the token presented
+      # (same live-UAT finding as above).
+      OPERATOR_TOKEN: ${OPERATOR_TOKEN:-naive_first_operator_dev_token}
       # DATABASE_URL points at the `identity` schema's parent database via
       # the internal Compose network hostname, using the non-superuser
       # runtime role naive_first_app (INF-014) -- same rationale as
@@ -137,6 +157,44 @@ services:
       # "wired through but not yet consumed" situation validation-service's
       # own REDIS_URL was in before VS-014 landed).
       redis:
+        condition: service_healthy
+
+  ingestion-service:
+    build:
+      context: ../services/ingestion-service
+      additional_contexts:
+        libs: ../libs
+    container_name: naive-first-ingestion-service
+    restart: unless-stopped
+    ports:
+      # Bound to localhost only, same rationale as validation-service/
+      # reporting-service above (ARCH-005 / "gateway-api is the only
+      # internet-facing service"): this is a disclosed override of trigger
+      # #6 (see ../services/ingestion-service/README.md's status line) --
+      # not yet reachable from outside the Docker network. Port 8003, not
+      # the next free number after reporting-service's 8002: GW-021 already
+      # committed to 8003 as this service's own port (gateway-api's
+      # dependencies/http_client.py's INGESTION_SERVICE_URL default and
+      # infra/.env.example's own INGESTION_SERVICE_URL entry, both landed
+      # before this ticket) -- matching that existing wiring here, not
+      # picking a fresh number, so GW-021's proxy route resolves correctly
+      # by default.
+      - "127.0.0.1:${INGESTION_SERVICE_PORT:-8003}:8003"
+    environment:
+      # DATABASE_URL points at the `ingestion` schema's parent database via
+      # the internal Compose network hostname, using the non-superuser
+      # runtime role naive_first_app (INF-014) -- same rationale as
+      # validation-service/gateway-api/reporting-service above: naive_first
+      # stays migration-only so Postgres RLS is actually enforced against
+      # the running app's connection.
+      DATABASE_URL: ${INGESTION_SERVICE_DATABASE_URL:-postgresql://${POSTGRES_APP_USER:-naive_first_app}:${POSTGRES_APP_PASSWORD:-naive_first_app_dev_password}@postgres:5432/${POSTGRES_DB:-naive_first}}
+      # INGEST-011's credential_crypto.py Fernet key -- referenced via env
+      # var, same "insecure dev-only default, override for anything beyond
+      # local dev" convention as POSTGRES_APP_PASSWORD/MINIO_ROOT_PASSWORD
+      # above; see infra/.env.example for how to generate a real one.
+      INGESTION_CREDENTIAL_ENCRYPTION_KEY: ${INGESTION_CREDENTIAL_ENCRYPTION_KEY:-KzEyHIA7xvThTmsJXBWZZej0qD4GMjl8tMV76KJXpAo=}
+    depends_on:
+      postgres:
         condition: service_healthy
 
   minio:

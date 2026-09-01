@@ -8,7 +8,9 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+from connectors.base import run_incremental
 from connectors.blockchain_onchain import BlockchainInfoConnector
+from fake_repository import FakeConnectorRecordRepository
 
 
 class _FakeResponse:
@@ -72,3 +74,32 @@ def test_fetch_requests_a_generous_timespan() -> None:
     connector.fetch(since=datetime(2026, 1, 1, tzinfo=timezone.utc))
 
     assert int(session.calls[0]["timespan"].removesuffix("days")) >= 90
+
+
+def test_run_incremental_writes_onchain_records_via_repository(tmp_path) -> None:
+    """INGEST-003 DB-write path: writes via `repository.add_onchain_records`,
+    including a value column named after the chart (`hash-rate`), not stored
+    as a CSV.
+    """
+    since = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    values = [{"x": int(datetime(2026, 1, 2, tzinfo=timezone.utc).timestamp()), "y": 42.0}]
+    connector = BlockchainInfoConnector("hash-rate", session=_FakeSession(values))
+    repository = FakeConnectorRecordRepository()
+
+    run_incremental(
+        connector,
+        incremental_dir=tmp_path,
+        timestamp_column="date",
+        seed_watermark=since,
+        tenant_id="tenant-a",
+        repository=repository,
+        record_kind="onchain",
+    )
+
+    assert len(repository.onchain) == 1
+    tenant_id, source, records = repository.onchain[0]
+    assert tenant_id == "tenant-a"
+    assert source == connector.name
+    assert records.iloc[0]["hash-rate"] == 42.0
+    assert "fetched_at" in records.columns
+    assert list(tmp_path.glob("*.csv")) == []

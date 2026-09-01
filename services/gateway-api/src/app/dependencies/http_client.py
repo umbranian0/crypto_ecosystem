@@ -18,6 +18,14 @@ exact same shape, pointed at `REPORTING_SERVICE_URL` (env var, default
 `EXPOSE 8002`) instead of collapsing both downstream services onto one client
 with a runtime-branched base URL (ticket Design section: two named providers,
 not one client that needs to know which service it's talking to per call).
+
+GW-021: `get_ingestion_service_client`/`IngestionServiceClientDep` follow the
+same shape again, pointed at `INGESTION_SERVICE_URL` (env var, default
+`http://localhost:8003` -- the next unused local-dev port after
+`validation-service`/`gateway-api`/`reporting-service`'s 8000/8001/8002).
+`ingestion-service` does not exist as a running service yet, so this default
+is a placeholder for local, non-Compose dev only -- see `app.routers.operator`
+for the one route that uses this client today.
 """
 
 from __future__ import annotations
@@ -33,6 +41,9 @@ _DEFAULT_VALIDATION_SERVICE_URL = "http://localhost:8000"
 
 _REPORTING_SERVICE_URL_ENV_VAR = "REPORTING_SERVICE_URL"
 _DEFAULT_REPORTING_SERVICE_URL = "http://localhost:8002"
+
+_INGESTION_SERVICE_URL_ENV_VAR = "INGESTION_SERVICE_URL"
+_DEFAULT_INGESTION_SERVICE_URL = "http://localhost:8003"
 
 _DOWNSTREAM_TIMEOUT_ENV_VAR = "GATEWAY_API_DOWNSTREAM_TIMEOUT_SECONDS"
 _DEFAULT_DOWNSTREAM_TIMEOUT_SECONDS = 30.0
@@ -54,5 +65,14 @@ def get_reporting_service_client() -> httpx.Client:
     return httpx.Client(base_url=base_url, timeout=timeout)
 
 
+def get_ingestion_service_client() -> httpx.Client:
+    base_url = os.environ.get(_INGESTION_SERVICE_URL_ENV_VAR, _DEFAULT_INGESTION_SERVICE_URL)
+    timeout = float(
+        os.environ.get(_DOWNSTREAM_TIMEOUT_ENV_VAR, _DEFAULT_DOWNSTREAM_TIMEOUT_SECONDS)
+    )
+    return httpx.Client(base_url=base_url, timeout=timeout)
+
+
 ValidationServiceClientDep = Annotated[httpx.Client, Depends(get_validation_service_client)]
 ReportingServiceClientDep = Annotated[httpx.Client, Depends(get_reporting_service_client)]
+IngestionServiceClientDep = Annotated[httpx.Client, Depends(get_ingestion_service_client)]

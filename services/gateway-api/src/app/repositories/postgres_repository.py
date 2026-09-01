@@ -54,6 +54,11 @@ for the matching permissive RLS policy clause (and its docstring's note on
 why it's `NULLIF(current_setting('app.tenant_id', true), '') IS NULL`, not
 the more obvious plain `IS NULL`) that lets these two specific query shapes
 resolve across tenants despite RLS being enabled on their tables.
+
+`_set_tenant_scope` itself is now a thin alias for
+`naive_first_common.db.tenant_scope` (LC-010) -- this module previously
+defined the `SELECT set_config(...)` statement itself, byte-identical to
+validation-service's own copy, which is the duplication LC-010 extracted.
 """
 
 from __future__ import annotations
@@ -61,7 +66,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import uuid4
 
-from sqlalchemy import Engine, select, text, update
+from sqlalchemy import Engine, select, update
 from sqlalchemy.orm import Session
 
 from app.models import ApiKey, Tenant, User
@@ -71,17 +76,7 @@ from app.repositories.sqlite_repository import (
     _tenant_to_record,
     _user_to_record,
 )
-
-
-def _set_tenant_scope(session: Session, tenant_id: str) -> None:
-    """Must be the first statement executed in `session`'s transaction (see
-    module docstring): `set_config(..., true)` is `SET LOCAL`'s
-    parameterizable equivalent, scoped to exactly this transaction.
-    """
-    session.execute(
-        text("SELECT set_config('app.tenant_id', :tenant_id, true)"),
-        {"tenant_id": tenant_id},
-    )
+from naive_first_common.db import tenant_scope as _set_tenant_scope
 
 
 class PostgresTenantRepository:
