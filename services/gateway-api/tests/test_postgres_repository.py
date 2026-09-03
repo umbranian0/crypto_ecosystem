@@ -309,7 +309,7 @@ def test_get_by_hash_and_get_user_by_email_resolve_across_tenants_despite_rls(
 
 
 def test_set_local_scope_does_not_leak_across_pooled_connection_reuse(
-    restricted_role_engine,
+    restricted_role_engine, unique
 ) -> None:
     """THE core test (sprint-level flag, Tech Lead personally verifies this
     one): proves the SET LOCAL/set_config hook is genuinely per-transaction,
@@ -328,14 +328,23 @@ def test_set_local_scope_does_not_leak_across_pooled_connection_reuse(
     true)`, this would still return tenant A's id here -- this test would
     fail. Since the real implementation scopes it to the transaction, it
     must come back NULL.
+
+    GW-026 note: these emails were previously hardcoded literals
+    (`pool-a@example.com`/`pool-b@example.com`), which is exactly what the
+    `unique` fixture's own docstring above warns against -- a rerun against
+    this suite's real, persistent Postgres database collided with a previous
+    run's uncommitted-cleanup rows once `ix_users_email` made `email`
+    globally unique. Switched to the same `unique`-suffixed convention every
+    other test in this file already uses, rather than leaving a latent
+    collision for the next person to debug live.
     """
     tenant_repo = PostgresTenantRepository(engine=restricted_role_engine)
     user_repo = PostgresUserRepository(engine=restricted_role_engine)
 
     tenant_a = tenant_repo.create_tenant("PG Tenant A (pool reuse)")
     tenant_b = tenant_repo.create_tenant("PG Tenant B (pool reuse)")
-    user_a = user_repo.create_user(tenant_a.id, "pool-a@example.com", "member")
-    user_b = user_repo.create_user(tenant_b.id, "pool-b@example.com", "member")
+    user_a = user_repo.create_user(tenant_a.id, f"pool-a-{unique}@example.com", "member")
+    user_b = user_repo.create_user(tenant_b.id, f"pool-b-{unique}@example.com", "member")
 
     # Acquire + release a connection scoped to tenant A.
     with Session(restricted_role_engine) as session:

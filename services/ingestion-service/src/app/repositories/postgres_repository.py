@@ -53,6 +53,24 @@ maps each of the three tables to its own event-time column and default
 table) -- `list_datasets`/`read_series` both iterate it instead of each
 hand-rolling its own "which table, which column" logic, and it is the same
 three-model tuple `latest_fetched_at` above already iterates by hand.
+
+`INGEST-019` (DBOPT-009): `list_datasets` now queries three
+`<table>_daily_source_summary` materialized views (migration 0007) instead
+of the raw hypertables -- cheap, but only as current as the last scheduled
+refresh (see README.md's documented staleness window). These are plain
+Postgres materialized views refreshed on a TimescaleDB-scheduled job
+(`add_job`, every 5 minutes), not true TimescaleDB continuous aggregates as
+originally designed -- TimescaleDB refuses to create a continuous aggregate
+on a hypertable with row-level security enabled, see migration 0007's own
+docstring for the full live-discovered blocker and the substituted design.
+The view name is derived from `spec.model.__tablename__` rather than a
+fourth ad hoc table list, so `_TABLE_SPECS` stays the single source of
+truth for table order/names, per this ticket's own DRY check. These views
+are plain materialized views, not hypertables with `FORCE ROW LEVEL
+SECURITY` -- they inherit no RLS of their own, so the `WHERE tenant_id =
+:tenant_id` predicate in `list_datasets`' raw SQL is the *only*
+tenant-isolation mechanism for this one method, not defense-in-depth on top
+of RLS like every other method on this class.
 """
 
 from __future__ import annotations
@@ -63,7 +81,7 @@ import uuid
 from datetime import datetime
 
 import pandas as pd
-from sqlalchemy import Engine, select, func
+from sqlalchemy import Engine, select, func, text
 from sqlalchemy.orm import Session
 
 from app import credential_crypto
@@ -240,14 +258,27 @@ class PostgresConnectorRecordRepository:
             session.commit()
 
     def list_datasets(self, tenant_id: str) -> list[DatasetSummary]:
+        # INGEST-019 (DBOPT-009): reads the `<table>_daily_source_summary`
+        # materialized views (migration 0007), not the raw hypertables --
+        # a second-level GROUP BY source over the small materialized rows,
+        # not a full per-tenant, all-chunks scan. These are plain Postgres
+        # materialized views (no FORCE ROW LEVEL SECURITY, unlike the raw
+        # hypertables), so the `WHERE tenant_id = :tenant_id` predicate
+        # below is the *only* tenant-isolation mechanism for this method --
+        # RLS provides no defense-in-depth here the way it does elsewhere on
+        # this class.
         summaries: list[DatasetSummary] = []
         with _tenant_scoped_session(self._engine, tenant_id) as session:
             for spec in _TABLE_SPECS:
-                time_column = getattr(spec.model, spec.event_time_column)
+                cagg_name = f"{spec.model.__tablename__}_daily_source_summary"
                 rows = session.execute(
-                    select(spec.model.source, func.min(time_column), func.max(time_column), func.count())
-                    .where(spec.model.tenant_id == tenant_id)
-                    .group_by(spec.model.source)
+                    text(
+                        f"SELECT source, min(bucket_min), max(bucket_max), sum(bucket_count) "
+                        f"FROM ingestion.{cagg_name} "
+                        f"WHERE tenant_id = :tenant_id "
+                        f"GROUP BY source"
+                    ),
+                    {"tenant_id": tenant_id},
                 ).all()
                 summaries.extend(
                     DatasetSummary(

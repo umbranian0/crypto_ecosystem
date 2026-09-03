@@ -44,6 +44,45 @@ ix_crawl_runs_tenant_source_fetched_at`, proving the index is real and usable.
 
 **Hypertable chunk sizing** (`INGEST-016`/`DBOPT-004`, `migrations/versions/0004_retune_hypertable_chunk_intervals.py`): `0003_convert_to_hypertables.py`'s `create_hypertable` calls used TimescaleDB's 7-day default `chunk_time_interval`, which against 9-17 years of real backfilled history produced hundreds of undersized chunks (`price_ohlcv`: 472 chunks, ~258 rows/chunk; `onchain_metric`: 922 chunks, ~21 rows/chunk), hurting every query against these tables on chunk-count-driven planning cost. `INGEST-016` retunes all three hypertables' (`price_ohlcv`/`onchain_metric`/`sentiment_score`) `chunk_time_interval` to 90 days via `set_chunk_time_interval`. **This only affects chunks created after the change** -- the existing 472/922 chunks on `price_ohlcv`/`onchain_metric` are not retroactively resized or merged; only chunks created from this point forward span 90 days instead of 7. See VS-027 for the `validation-service` half of the same DBOPT-004 story.
 
+**Compression policy -- blocked, not implemented (`INGEST-020`/`DBOPT-008`, ingestion half)**:
+`DBOPT-008` planned `ALTER TABLE ... SET (timescaledb.compress, ...)` +
+`add_compression_policy` (90-day threshold, `compress_segmentby = 'tenant_id,
+source'`, matching the same query shape `read_series`/`list_datasets`/
+`latest_fetched_at` already filter on) on `price_ohlcv`/`onchain_metric`/
+`sentiment_score`. **Live-verified against this repo's real Compose Postgres
+container (TimescaleDB 2.29.1) before writing any migration**:
+`ALTER TABLE ... SET (timescaledb.compress, ...)` fails outright --
+`ERROR: columnstore cannot be used on table with row security` -- the moment
+`ENABLE ROW LEVEL SECURITY` is set on the target table, **with or without
+`FORCE`**, and independent of whether any policy actually exists yet. This
+was reproduced against a disposable scratch hypertable
+(`scratch_ingest020.probe`/`probe2`/`probe3`, created and fully dropped in
+the same session -- no trace left in the real `ingestion`/`naive_first`
+schema): `FORCE ROW LEVEL SECURITY` + a real policy fails, plain `ENABLE ROW
+LEVEL SECURITY` + a real policy fails identically, and the same
+`ALTER TABLE ... SET (timescaledb.compress, ...)` on an otherwise-identical
+hypertable with no RLS at all succeeds cleanly -- isolating the cause to the
+`rowsecurity` reloption itself, not to `FORCE` specifically or to policy
+evaluation. `price_ohlcv`/`onchain_metric`/`sentiment_score` all carry
+`FORCE ROW LEVEL SECURITY` (`INGEST-002`), a locked-in multi-tenant
+isolation invariant not relaxed for this ticket, and this session's own
+execution safeguards refuse to run any migration that disables RLS even
+transiently (the same refusal `INGEST-019`'s continuous-aggregate work hit
+and treated as authoritative) -- so unlike `INGEST-019`/`DBOPT-009`, which
+had a materialize-a-separate-view substitute available, there is no
+equivalent substitute here: compression is a physical storage transform on
+the hypertable itself, not something that can be read through a side view
+instead. **No `0008` migration was written** -- writing one that calls
+`SET (timescaledb.compress, ...)` directly against these three real tables
+would fail identically against the real container, failing AC1 outright
+rather than partially satisfying it. This is escalated to the Tech Lead as a
+design-level blocker (same category as `INGEST-019`'s RLS-vs-continuous-
+aggregate finding, this time with no available workaround) rather than
+routed around silently. Zero rows/schema objects were added to or left
+behind in the real `ingestion`/`naive_first` database by this
+investigation -- see `docs/tickets/INGEST-020.md`'s Outcome notes for the
+full reproduction transcript.
+
 Setup/run (no live app yet, migrations only):
 ```
 uv venv && uv pip install -e .
@@ -143,6 +182,37 @@ by the range-read shape below.
   `source`, `earliest_timestamp`, `latest_timestamp`, `row_count`. Discovery
   only, no values. An empty-history tenant gets `200 {"items": []}`, never a
   `404` — an empty list is a valid, successful answer.
+
+  **Eventual consistency, not always-current (`INGEST-019`/`DBOPT-009`)**:
+  `list_datasets` (`PostgresConnectorRecordRepository`) reads three
+  `<table>_daily_source_summary` materialized views (migration 0007,
+  `price_ohlcv_daily_source_summary`/`onchain_metric_daily_source_summary`/
+  `sentiment_score_daily_source_summary`) instead of scanning the raw
+  hypertables directly — a per-tenant, all-chunks `GROUP BY` on every
+  `GET /datasets` call was the DBA-evidenced cost this closes (see
+  `docs/product/backlog-db-optimization.md` DBOPT-009). This is a deliberate,
+  user-approved tradeoff, not a regression: the user explicitly accepted a
+  few minutes of staleness on `GET /datasets` in exchange for a much cheaper
+  query. **Observed staleness window: up to ~5 minutes** (the scheduled
+  refresh's `schedule_interval`; live-measured full-refresh execution time
+  for all three views against this session's real backfilled data was
+  under 2 seconds combined, negligible next to the 5-minute interval) — a
+  row written to a hypertable can take up to that long to appear in
+  `GET /datasets`, though `GET /datasets/{source}/series` (which reads the
+  raw hypertable directly, unchanged by this ticket) reflects it
+  immediately. Design note: these are plain Postgres materialized views
+  refreshed via a TimescaleDB-scheduled job (`add_job`, every 5 minutes),
+  not true TimescaleDB continuous aggregates as this ticket's Design
+  section originally specified — TimescaleDB 2.29.1 refuses to create a
+  continuous aggregate on any hypertable with row-level security enabled
+  (live-reproduced against a scratch hypertable before concluding this),
+  and `price_ohlcv`/`onchain_metric`/`sentiment_score` all have `FORCE ROW
+  LEVEL SECURITY` (`INGEST-002`) — a locked-in multi-tenant isolation
+  invariant not relaxed for this ticket. See migration 0007's own docstring
+  for the full finding and the substituted design, which is functionally
+  equivalent (same view shape/naming, same `list_datasets` query, same
+  ~5-minute staleness target) and does not change `GET /datasets`'
+  response shape at all.
 - `GET /datasets/{source}/series?start=&end=&field=` — `{"timestamps": [...],
   "values": [...]}` for the tenant's `source` table, sliced to `[start,
   end]`. `start`/`end` are ISO-8601 and both optional — an omitted `start`

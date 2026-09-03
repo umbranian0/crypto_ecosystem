@@ -1166,3 +1166,58 @@ patterns -- not something to keep re-deriving per dev-agent prompt.
 `docs/product/backlog-db-optimization.md` updated: DBOPT-001/002/003/004/006/007 marked done,
 DBOPT-005/008/009 left explicitly open (unchanged text, still blocked on their respective user
 decisions), DBOPT-010 left as-is (`Won't (for now)`, untouched).
+
+# Sprint 22 — DB optimization, part 2 (INGEST-019/020, VS-028; DBOPT-005 escalated, not implemented)
+
+Source: `docs/sprints/sprint-22.md`, `docs/product/backlog-db-optimization.md` (DBOPT-005/008/009, the
+three items left open by Sprint 21, now unblocked by explicit user decisions recorded this session:
+`identity.users.email` should be `UNIQUE`; old ingestion/validation data is actively queried, so
+compression is approved but must be validated for query correctness; a few minutes of `list_datasets`
+staleness is acceptable, so a continuous aggregate is approved).
+
+**DBOPT-005 — blocked, escalated back to the PM/user, NOT implemented this sprint.** Per the sprint
+plan's binding precondition, a live duplicate-email check was run against the real `identity.users`
+table *before* any migration was written:
+```sql
+SELECT email, count(*) FROM identity.users GROUP BY email HAVING count(*) > 1;
+```
+Result: **two duplicate emails found**, `pool-a@example.com` (62 rows, 62 distinct `tenant_id`s) and
+`pool-b@example.com` (62 rows, 62 distinct `tenant_id`s) — 124 of the table's 313 total rows, all
+`role = "member"`, created across many dates from 2026-08-09 through 2026-08-24 (visual pattern
+strongly suggests reused fixture/synthetic emails from repeated load-test or UAT tenant provisioning,
+not a real product incident, but this is an observation, not a resolution). A `CREATE UNIQUE INDEX`
+against this table would hard-fail today. Per the sprint's explicit, non-negotiable instruction, this
+is **not** resolved here (no merge/rename/soft-delete performed) — it is escalated back to the PM/user
+for a resolution decision. No `GW-0xx` ticket was created for DBOPT-005 this sprint (there is nothing
+to implement until a resolution decision is made); `docs/product/backlog-db-optimization.md`'s DBOPT-005
+entry is updated to record this live finding and the escalation, not marked done.
+
+**DBOPT-005 — resumed later in Sprint 22 (2026-09-03), precondition independently reconfirmed
+resolved.** `identity.users` was truncated (0 rows, confirmed live by the Tech Lead via a direct
+`SELECT count(*)` and the DBA's own duplicate-check query, both independently re-run — not taken on
+report alone; also confirmed no other table carries an FK into `identity.users`, so `api_keys`/`tenants`
+were unaffected). `GW-026` implements the originally-scoped `CREATE UNIQUE INDEX ix_users_email` migration
+now that the blocking real-data conflict is gone. See `GW-026`'s own file for the full ticket and its
+process note that a full-table truncate is a more drastic remedy than the merge/rename/soft-delete
+options the original escalation offered, even though it was safe in this instance.
+
+| Ticket | Story | Module | Depends on | Status |
+|---|---|---|---|---|
+| [INGEST-019](INGEST-019.md) | Dataset-list summary materialized views for `list_datasets`' per-source min/max/count (DBOPT-009; substituted for a true continuous aggregate -- RLS-enabled hypertables refuse `timescaledb.continuous`, see ticket Outcome) | ingestion-service | none | done |
+| [INGEST-020](INGEST-020.md) | Compression policy for `price_ohlcv`/`onchain_metric`/`sentiment_score` (DBOPT-008, ingestion half) — **blocked**: TimescaleDB refuses `timescaledb.compress` on any RLS-enabled table, live-confirmed, no migration written, escalated to the user (see ticket Outcome) | ingestion-service | INGEST-019 | blocked |
+| [VS-028](VS-028.md) | Compression policy for `validation.split_results` (DBOPT-008, validation-service half) — **blocked**: same TimescaleDB-refuses-`timescaledb.compress`-on-RLS-enabled-table finding as INGEST-020, live-confirmed via a real (and rolled-back) `0008` migration attempt, no migration committed, escalated to the user (see ticket Outcome) | validation-service | none (parallel with INGEST-020) | blocked |
+| [GW-026](GW-026.md) | `identity.users`: unique index on `email` (DBOPT-005) — resumed once the table's blocking real-data conflict was cleared | gateway-api | none (independent schema) | done |
+
+## Sequencing
+
+`INGEST-019` runs first, alone (no dependency, independent schema from DBOPT-005/008). `INGEST-020`
+(same service) is sequenced after it, both for Alembic migration-chain linearity (same service, one
+linear revision history) and because DBOPT-008's ingestion-side correctness testing benefits from
+`list_datasets`' new continuous-aggregate-backed query path already existing, per the sprint plan's own
+note. `VS-028` (a different service/schema entirely) runs in parallel with `INGEST-020` — no shared
+file, no data dependency.
+
+See `docs/sprints/sprint-22.md` for the full sprint framing and each ticket file's own Outcome section
+(to be filled in as each ticket completes) for live-verification details: the DBOPT-009 continuous
+aggregate's actual observed staleness window, and DBOPT-008's compressed-chunk read-correctness and
+write-path-behavior findings for both services.
