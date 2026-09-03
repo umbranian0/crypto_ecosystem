@@ -25,10 +25,10 @@ signal.</p>
         <label for="dataset_reference_path">
             Local file path
             <span class="field-tooltip" tabindex="0"
-                  data-tooltip="Path to a two-column CSV (timestamp, value) on disk, readable by the service. Leave blank if using the inline payload below.">?</span>
+                  data-tooltip="Path to a two-column CSV (timestamp, value) inside validation-service's own container filesystem -- not a path on your host machine, and not another service's data directory (ingestion-service's data/ isn't shared with this container). Most users want the Stored dataset option below instead. Leave blank if using inline payload or stored dataset.">?</span>
         </label>
         <input type="text" id="dataset_reference_path" name="dataset_reference_path"
-               placeholder="data/raw/_platform/price/binance_btcusdt_1h/seed.csv"
+               placeholder="/repo/services/validation-service/seed.csv"
                value="{{ values.dataset_reference_path if values else '' }}">
 
         <label for="dataset_reference_inline">
