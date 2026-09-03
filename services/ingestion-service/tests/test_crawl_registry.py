@@ -78,3 +78,28 @@ def test_concurrent_try_acquire_on_same_key_only_one_thread_wins():
 
 def test_get_crawl_registry_returns_same_instance_across_calls():
     assert get_crawl_registry() is get_crawl_registry()
+
+
+def test_request_cancel_then_should_cancel_scoped_to_exact_key_and_cleared_on_release():
+    registry = CrawlRegistry()
+    registry.try_acquire("tenant-a", "binance_price_btcusdt_1h")
+
+    assert registry.request_cancel("tenant-a", "binance_price_btcusdt_1h") is True
+    assert registry.should_cancel("tenant-a", "binance_price_btcusdt_1h") is True
+    # Different tenant, same source -- must not see the flag.
+    assert registry.should_cancel("tenant-b", "binance_price_btcusdt_1h") is False
+    # Same tenant, different source -- must not see the flag.
+    assert registry.should_cancel("tenant-a", "reddit_vader_sentiment") is False
+
+    registry.release("tenant-a", "binance_price_btcusdt_1h")
+
+    # A fresh acquire of the same key must not inherit the stale cancel flag.
+    assert registry.try_acquire("tenant-a", "binance_price_btcusdt_1h") is True
+    assert registry.should_cancel("tenant-a", "binance_price_btcusdt_1h") is False
+
+
+def test_request_cancel_on_key_with_no_in_flight_entry_is_a_noop():
+    registry = CrawlRegistry()
+
+    assert registry.request_cancel("tenant-a", "binance_price_btcusdt_1h") is False
+    assert registry.should_cancel("tenant-a", "binance_price_btcusdt_1h") is False

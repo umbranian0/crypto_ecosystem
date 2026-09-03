@@ -15,6 +15,19 @@
 # this makes that grant reproducible on a fresh volume too, matching
 # validation/identity's own since-INF-014 treatment.
 #
+# ingestion added during Sprint 25 live UAT (found live, not hypothetical):
+# this schema was never added here when INGEST-002 introduced it, so
+# naive_first_app's access to ingestion's own tables had only ever been
+# granted by hand against the already-running dev container -- any *new*
+# object created later (e.g. INGEST-019's daily-source-summary materialized
+# views) had no default-privilege rule to inherit from, so GET /datasets
+# 500'd with `permission denied for materialized view` the moment those
+# views existed, despite the underlying raw tables working fine. Same
+# reporting-precedent fix: added here for fresh volumes, applied by hand
+# against the already-running container, and backfilled via a migration
+# (services/ingestion-service/migrations/versions/0007_add_dataset_list_continuous_aggregates.py)
+# for any volume that's already past that revision.
+#
 # Written as a .sh (not a raw .sql) because docker-entrypoint-initdb.d does
 # not substitute env vars into .sql files, and the role's password must come
 # from POSTGRES_APP_PASSWORD, not be hardcoded.
@@ -28,10 +41,10 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-E
     CREATE ROLE naive_first_app LOGIN PASSWORD '$POSTGRES_APP_PASSWORD'
         NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
 
-    GRANT USAGE ON SCHEMA validation, identity, reporting TO naive_first_app;
+    GRANT USAGE ON SCHEMA validation, identity, reporting, ingestion TO naive_first_app;
 
-    GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA validation, identity, reporting TO naive_first_app;
+    GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA validation, identity, reporting, ingestion TO naive_first_app;
 
-    ALTER DEFAULT PRIVILEGES IN SCHEMA validation, identity, reporting
+    ALTER DEFAULT PRIVILEGES IN SCHEMA validation, identity, reporting, ingestion
         GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO naive_first_app;
 EOSQL

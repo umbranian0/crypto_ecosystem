@@ -1221,3 +1221,153 @@ See `docs/sprints/sprint-22.md` for the full sprint framing and each ticket file
 (to be filled in as each ticket completes) for live-verification details: the DBOPT-009 continuous
 aggregate's actual observed staleness window, and DBOPT-008's compressed-chunk read-correctness and
 write-path-behavior findings for both services.
+
+# Sprint 23 — Crawl lifecycle control, part 1 (backend: cancellation + live progress)
+
+Source: `docs/sprints/sprint-23.md`, `docs/product/backlog-crawl-lifecycle-control.md` (Epic 1 —
+cancellable crawls; Epic 2 — live progress reporting; Epic 3, dashboard controls, deferred to Sprint 24).
+This backlog is a **third**, disclosed extension of `ingestion-service`'s already-twice-overridden
+trigger #6/#10 surface (per `docs/adr/0003-disclosed-trigger-override-pattern.md` and `INGEST-001`'s own
+retroactive tracking) — it adds cancellation/progress to connectors and an endpoint that already exist
+ahead of schedule, not a fresh trigger decision. No story in this sprint touches
+`libs/naive_first_engine` or redefines what a dataset is (ADR-0005 stands unchanged).
+
+| Ticket | Story | Module | Depends on | Status |
+|---|---|---|---|---|
+| [INGEST-021](INGEST-021.md) | `crawl_runs` status vocabulary gains `running`/`cancelling`/`cancelled` | ingestion-service | none | done |
+| [INGEST-022](INGEST-022.md) | Cooperative cancellation signal threaded through the fetch loop (`should_cancel`/`on_progress` params, `FetchResult.cancelled`) | ingestion-service | INGEST-021 | done |
+| [INGEST-023](INGEST-023.md) | `CrawlRegistry` gains a per-crawl cancellation flag (`request_cancel`/`should_cancel`) | ingestion-service | INGEST-022 | done |
+| [INGEST-024](INGEST-024.md) | `POST /connectors/{source}/cancel` + `crawl_runs` progress columns (`rows_fetched_so_far`, `updated_at`) | ingestion-service | INGEST-021/022/023 | done |
+| [INGEST-025](INGEST-025.md) | Binance connector: per-page progress checkpoints | ingestion-service | INGEST-022, INGEST-024 | done |
+| [INGEST-026](INGEST-026.md) | Reddit connector: per-submission progress checkpoints (Tech Lead's granularity call) | ingestion-service | INGEST-024 (parallel with INGEST-025) | done |
+| [INGEST-027](INGEST-027.md) | Blockchain.info connector: document the before/after-only progress ceiling | ingestion-service | INGEST-024 (parallel with INGEST-025/026) | done |
+| [GW-027](GW-027.md) | Proxy: `POST /ingestion/connectors/{source}/cancel` | gateway-api | INGEST-024 | done |
+| [GW-028](GW-028.md) | Confirm cancel/progress fields pass through the existing status proxy unmodified | gateway-api | INGEST-024, INGEST-025 | done |
+
+**Sprint 23 outcome**: all 9 tickets done. `services/ingestion-service` full suite (isolated, no
+concurrent DB activity): **142 passed, 1 skipped (pre-existing, unrelated), 0 failed**.
+`services/gateway-api` full suite: **158 passed, 0 failed**. A transient `psycopg.errors.DeadlockDetected`
+class of failure was observed and fully explained during parallel execution of INGEST-025/026/027 (three
+dev-agent sessions concurrently running Alembic-migration-integration tests against the same shared live
+Postgres container) — confirmed, not just assumed, to be cross-agent DB lock contention rather than a
+real regression, via a clean re-run in true isolation after all three landed (142/1/0, no failures).
+**Live cancellation proof, personally performed by the Tech Lead against the real, rebuilt Docker Compose
+stack** (not simulated): triggered a real `binance_price_btcusdt_1h` backfill crawl (since 2017-08-17),
+observed live progress via `GET /connectors/{source}/status` (`rows_fetched_so_far` climbing, e.g.
+`12000`), issued a real cancel request mid-flight, and confirmed the crawl genuinely stopped — a direct
+`psql` read of `ingestion.crawl_runs` showed the exact predicted 4-row sequence (`queued` → `running`,
+progress updated **in place** to `rows_fetched_so_far=23000` rather than a new row per checkpoint →
+`cancelling` → `cancelled`, `row_count=23000`), and a direct read of `ingestion.price_ohlcv` confirmed
+**exactly 23000 rows** for that tenant with `count(*) == count(DISTINCT open_time)` (no duplicates) and
+no gap/partial row — the crawl stopped exactly where it said it stopped, with no data corruption. The
+same stop/restart cycle was independently re-proven end-to-end through `gateway-api`'s new
+`POST /ingestion/connectors/{source}/cancel` proxy (`GW-027`) with a real provisioned tenant and API key,
+including a genuine `409` once the crawl had actually finished and a genuine `404` for an unknown source.
+`blockchain_info_hash-rate`'s `GET .../status` was independently live-verified (both directly against
+`ingestion-service` and through the `gateway-api` proxy) to return `rows_fetched_so_far: null` — never a
+fabricated `0` — while `"running"`, honoring the connector's disclosed before/after-only progress ceiling.
+`docs/product/backlog-crawl-lifecycle-control.md` has been updated to mark Epic 1/Epic 2 done and
+restate Epic 3's dependency on this now-complete backend.
+
+## Sequencing
+
+Strictly per the PM's sprint plan: `INGEST-021` → `INGEST-022` → `INGEST-023` → `INGEST-024` (each
+depends on real code from the one before, same file family in `services/ingestion-service/`) →
+`INGEST-025`/`INGEST-026` in parallel (disjoint connector files) → `INGEST-027` in parallel with those
+two (docs-only, disjoint file) → `GW-027`/`GW-028` in parallel with each other (both depend only on
+`INGEST-024`/`025`, disjoint from the ingestion-service work and from each other's own test files, same
+`gateway-api` router file but additive, non-overlapping route/test additions). Epic 3 (`DASH-116/117/118`)
+remains deferred to Sprint 24, unstarted.
+
+**Design decisions made at ticket-breakdown time, not re-litigated from the backlog**:
+- `crawl_runs` progress is a single running counter (`rows_fetched_so_far`) + `updated_at`, updated **in
+  place** on the crawl's own `"running"` row via a new `record_crawl_progress` method — not a new insert
+  per checkpoint, and not a richer per-checkpoint JSON history. Flagged for Sprint 24/future: if a
+  dashboard sparkline is ever wanted, that needs the richer shape from the start, not a bolt-on migration
+  of this simpler one.
+- Reddit's progress/cancellation checkpoint is per-submission (finer than Binance's per-page), the same
+  boundary for both concerns, chosen for maximal responsiveness within the connector's own natural loop
+  shape — disclosed tradeoff: up to ~1000 `record_crawl_progress` calls per crawl in the worst case, each
+  a cheap single-row `UPDATE`, not an `INSERT`.
+- `FetchResult` gains a `cancelled: bool` field so `_execute_crawl`'s terminal write reflects whether the
+  connector itself actually observed and honored a cancel signal, rather than re-querying the registry's
+  flag after the fact — this is what correctly resolves the documented race (a crawl that finishes before
+  any checkpoint observed the cancel request still legitimately writes `"completed"`) uniformly across
+  all three connectors, blockchain.info included.
+
+See each ticket's own Outcome section (filled in as this sprint executes) for live-verification detail
+against the real running Docker Compose stack, and the Tech Lead's final sprint report for the
+cross-cutting cancellation proof (a real triggered crawl, actually cancelled mid-flight, confirmed via a
+direct database read).
+
+# Sprint 25 — Run submission safety (validation-service guardrail + dashboard-web guided submission)
+
+Source: `docs/sprints/sprint-25.md`, `docs/product/backlog-run-submission-safety.md` (RSS-001 through
+RSS-005). Motivated by a real live incident (verified against `validation.runs`/`validation.split_results`
+before ticket breakdown, not a hypothetical): tenant `e80a603ffd5e4e9e98bbfe2cba39b6e1`'s
+`binance_price_btcusdt_1h` source (79,180 real rows), `train_window=360, test_window=1540, step=2,
+purge_gap_hours=24` → 38,597 splits, two runs completed synchronously in 502.7s/488.4s (both exceeding
+`gateway-api`'s 240s downstream timeout). No story in this sprint touches `generate_splits`/
+`run_validation_protocol`'s own math or makes `POST /runs` asynchronous.
+
+| Ticket | Story | Module | Depends on | Status |
+|---|---|---|---|---|
+| [RSS-004](RSS-004.md) | Server-side split-count guardrail on `POST /runs` (cap = 500, calls `generate_splits` directly) | validation-service | none | done |
+| [RSS-001](RSS-001.md) | Show the selected stored dataset's real row count/date range on the run form | dashboard-web | none (parallel with RSS-004) | done |
+| [RSS-002](RSS-002.md) | Live, client-side "approximately N splits" estimate | dashboard-web | RSS-001 | done |
+| [RSS-005](RSS-005.md) | Document the guardrail + real throughput evidence in `validation-service`'s README | validation-service | RSS-004 | done |
+
+**RSS-003 (Server-computed exact split count for narrowed ranges) — deferred by Tech Lead cost call, not
+built this sprint.** The backlog's own acceptance criteria explicitly permit this: a new
+`validation-service`/`gateway-api` dry-run endpoint (plus `dashboard-web` wiring) is real, multi-service
+cost (three services touched, three test suites extended) for a UX gain that only matters when a tenant
+both selects a stored dataset *and* narrows it with a start/end date — RSS-001/002 already solve the
+primary "stop guessing blind" problem for the common (no-narrowing) case, and RSS-004 is the actual safety
+backstop regardless of whether the client-side number shown is an estimate or an exact count. Revisit if
+real pilot usage shows narrowed-range submissions hitting RSS-004's `422` often enough to justify the
+added endpoint.
+
+## Sequencing
+
+`RSS-004` and `RSS-001` run in parallel (disjoint services/files, no data dependency). `RSS-002` runs
+strictly after `RSS-001` is merged and verified (reads the `data-row-count` attribute RSS-001 adds,
+same file `run_new.html`). `RSS-005` runs strictly after `RSS-004` is merged and verified (documents that
+ticket's actual shipped constant/code, not a placeholder). `RSS-003` is not scheduled this sprint (see
+above).
+
+See `docs/sprints/sprint-25.md` for the full sprint framing and each ticket's own Outcome section (filled
+in as this sprint executes) for live-verification detail against the real running Docker Compose stack.
+
+**Sprint 25 outcome**: all 4 in-scope tickets (RSS-004, RSS-001, RSS-002, RSS-005) done; RSS-003 deferred
+by Tech Lead cost call (see above), not counted as an incomplete Must/Should per the backlog's own
+explicit allowance. `services/validation-service` full suite: 142/143 passed on the Tech Lead's own
+re-run (one pre-existing, independently-reproduced-as-pre-existing `created_at`-ordering flake, same
+known class already disclosed in this repo's Sprint 17 outcome notes — not in any file this sprint
+touched); RSS-004's own 10 new tests plus VS-012's `test_failure_handling.py` re-run in isolation, 12/12.
+`services/dashboard-web` full suite (default, `e2e`-excluded): 113/113 passed, zero regressions across
+RSS-001+RSS-002's combined 4 new tests plus the full pre-existing suite. RSS-004's cap (`MAX_SPLIT_COUNT
+= 500` in `services/validation-service/src/app/routers/runs.py`) confirmed via live proof against the
+real running Compose stack (rebuilt `validation-service` from this sprint's code): the real incident's
+tenant/dataset (`e80a603ffd5e4e9e98bbfe2cba39b6e1` / `binance_price_btcusdt_1h`, 79,180 real rows) with
+`train_window=360, test_window=1540, step=2, purge_gap_hours=24` returned `422` in 2.9s with the real
+computed count (`38629`) in the body, zero new `validation.runs` rows, and zero protocol/baseline log
+activity; the same tenant/dataset with `step=200` (387 splits, under the cap) returned `201` with a real
+completed run and 387 real persisted `split_results` rows. RSS-005's throughput evidence (38,597 splits /
+502.7s+488.4s / ≈78 splits/sec / cap ≈6.4s) independently re-verified against `validation.runs`/
+`validation.split_results` directly, not copied from any ticket's own claim. **Disclosed, not fixed this
+sprint**: two real environment findings surfaced during Tech Lead review, both outside this sprint's own
+file scope — (1) `gateway-api`'s 240s downstream timeout is shorter than the incident's own ~495s real
+duration (documented in RSS-005 as a "zombie success" risk, candidate follow-up, not built); (2)
+`ingestion-service`'s real `GET /datasets` currently `500`s against the live stack
+(`psycopg.errors.InsufficientPrivilege: permission denied for materialized view
+price_ohlcv_daily_source_summary`), most likely a Sprint 22 `DBOPT-009` grants gap, found incidentally
+while attempting RSS-001/RSS-002's live browser click-through verification — flagged to the requester/PM
+as a new candidate ticket, not fixed here (zero files under `services/ingestion-service/` touched by any
+ticket this sprint). Full live click-through of RSS-001/RSS-002 through an authenticated browser session
+could not be completed for two reasons, both disclosed in those tickets' own Review sections rather than
+silently skipped: the auto-mode permission classifier declined to mint a fresh test API key (both a
+direct repository call and the project's own sanctioned `provision_tenant.py` CLI were blocked as
+credential-issuing actions), and finding (2) above independently would have blocked it anyway. Verified
+instead via full diff reads, independently re-run test suites, and — for RSS-002's formula specifically —
+a direct line-by-line arithmetic comparison against `generate_splits`'s real source plus a real
+Python-side cross-check test calling `generate_splits` itself.

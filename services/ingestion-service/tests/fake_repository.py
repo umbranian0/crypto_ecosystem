@@ -55,7 +55,14 @@ class FakeConnectorRecordRepository:
         self.price: list[tuple[str, str, pd.DataFrame]] = []
         self.onchain: list[tuple[str, str, pd.DataFrame]] = []
         self.sentiment: list[tuple[str, str, pd.DataFrame]] = []
-        self.crawl_runs: list[tuple[str, str, datetime | None, datetime, int, str]] = []
+        # (tenant_id, source, since_watermark, fetched_at, row_count, status,
+        # rows_fetched_so_far, updated_at) -- the last two are INGEST-024's
+        # additions, mutated in place by `record_crawl_progress` (never
+        # appended to), mirroring `PostgresConnectorRecordRepository`'s own
+        # UPDATE-not-INSERT semantics for that one call path.
+        self.crawl_runs: list[
+            tuple[str, str, datetime | None, datetime, int, str, int | None, datetime | None]
+        ] = []
 
     def add_price_records(self, tenant_id: str, source: str, records: pd.DataFrame) -> int:
         self.price.append((tenant_id, source, records))
@@ -86,7 +93,38 @@ class FakeConnectorRecordRepository:
         row_count: int,
         status: str,
     ) -> None:
-        self.crawl_runs.append((tenant_id, source, since_watermark, fetched_at, row_count, status))
+        # INGEST-024: mirrors the real repository's own `updated_at=utcnow()`
+        # addition on every insert -- `rows_fetched_so_far` starts `None`
+        # (never a fabricated 0), only ever set by `record_crawl_progress`.
+        now = datetime.now(timezone.utc)
+        self.crawl_runs.append((tenant_id, source, since_watermark, fetched_at, row_count, status, None, now))
+
+    def record_crawl_progress(self, tenant_id: str, source: str, rows_fetched_so_far: int) -> None:
+        """INGEST-024: updates the most recent `status="running"` entry for
+        `(tenant_id, source)` in place -- replaces the tuple at the same list
+        index rather than appending, mirroring the real repository's
+        UPDATE-not-INSERT semantics (the fake's list length must not grow per
+        progress call). A no-op if no matching `"running"` entry exists.
+        """
+        candidate_indices = [
+            i
+            for i, run in enumerate(self.crawl_runs)
+            if run[0] == tenant_id and run[1] == source and run[5] == "running"
+        ]
+        if not candidate_indices:
+            return
+        latest_index = max(candidate_indices, key=lambda i: self.crawl_runs[i][7])
+        run = self.crawl_runs[latest_index]
+        self.crawl_runs[latest_index] = (
+            run[0],
+            run[1],
+            run[2],
+            run[3],
+            run[4],
+            run[5],
+            rows_fetched_so_far,
+            datetime.now(timezone.utc),
+        )
 
     def list_datasets(self, tenant_id: str) -> list[DatasetSummary]:
         summaries: list[DatasetSummary] = []
@@ -145,8 +183,23 @@ class FakeConnectorRecordRepository:
         matches = [c for c in self.crawl_runs if c[0] == tenant_id and c[1] == source]
         if not matches:
             return None
-        _t, _s, _since_watermark, fetched_at, row_count, status = max(matches, key=lambda c: c[3])
-        return CrawlRunSummary(status=status, fetched_at=fetched_at, row_count=row_count)
+        (
+            _t,
+            _s,
+            _since_watermark,
+            fetched_at,
+            row_count,
+            status,
+            rows_fetched_so_far,
+            updated_at,
+        ) = max(matches, key=lambda c: c[3])
+        return CrawlRunSummary(
+            status=status,
+            fetched_at=fetched_at,
+            row_count=row_count,
+            rows_fetched_so_far=rows_fetched_so_far,
+            updated_at=updated_at,
+        )
 
 
 class FakeCredentialRepository:

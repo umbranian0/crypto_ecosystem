@@ -123,3 +123,12 @@ class CrawlRun(Base):
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     row_count: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[str] = mapped_column(String, nullable=False)
+    # INGEST-024: mid-fetch progress checkpoint count, updated in place by
+    # `record_crawl_progress` rather than written via a new insert per
+    # checkpoint (see postgres_repository.py). Nullable -- a source that
+    # never reports progress (blockchain.info, or before Binance's first
+    # page completes) has no value here, never a fabricated 0.
+    rows_fetched_so_far: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # "Last touched" timestamp, distinct from `fetched_at` (which keeps its
+    # existing "crawl outcome time"/ordering role, unchanged by this ticket).
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

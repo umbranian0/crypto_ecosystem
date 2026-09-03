@@ -71,6 +71,19 @@ window.
 Same three tables, same order, as `_TABLE_SPECS`
 (`src/app/repositories/postgres_repository.py`) and `_INDEXES`/`_HYPERTABLES`
 (0003/0004/0006) already iterate -- not a fourth ad hoc table list.
+
+**Live-discovered follow-on bug (Sprint 25 UAT), fixed here**: `infra/postgres-init/02-create-app-role.sh`
+was never updated to include the `ingestion` schema when INGEST-002
+introduced it -- `naive_first_app`'s access to this schema's own tables had
+only ever been granted by hand against the already-running dev container,
+with no `ALTER DEFAULT PRIVILEGES` rule for objects created afterward. These
+three materialized views were the first new `ingestion` objects created
+since that gap, so `GET /datasets` 500'd with `permission denied for
+materialized view` the moment they existed, despite the underlying raw
+hypertables working fine. Fixed at both layers: `02-create-app-role.sh` now
+includes `ingestion` (for a fresh volume), and this migration explicitly
+grants `SELECT` on each view it creates (for any volume already past
+INGEST-002, where the fresh-volume script won't re-run).
 """
 from typing import Sequence, Union
 
@@ -137,6 +150,12 @@ def upgrade() -> None:
         # population, mirroring the Design section's manual
         # refresh_continuous_aggregate(..., NULL, NULL) call.
         op.execute(f"REFRESH MATERIALIZED VIEW ingestion.{cagg_name}")
+        # Live-discovered follow-on bug fix (see module docstring): a
+        # materialized view is a new object, not covered by any grant issued
+        # before it existed -- naive_first_app (the RLS-enforcing runtime
+        # role every service actually connects as) needs explicit SELECT
+        # here, same as 02-create-app-role.sh grants for a fresh volume.
+        op.execute(f"GRANT SELECT ON ingestion.{cagg_name} TO naive_first_app")
 
     view_refresh_statements = "\n    ".join(
         f"REFRESH MATERIALIZED VIEW CONCURRENTLY ingestion.{cagg_name};"

@@ -330,6 +330,50 @@ exact fields (`dataset_id`, `dataset_reference`, `horizon`, `purge_gap_hours`, `
 - A transport-level `httpx.ConnectError`/`httpx.TimeoutException`, or a `502`/`504` forwarded from
   `gateway-api`, renders the same `error.html` DASH-004 uses -- no second, near-identical template.
 
+### Stored-dataset context summary (RSS-001)
+
+The "Stored dataset" mode's `#dataset_reference_source` dropdown (`run_new.html`) carries a small,
+stable `data-*` attribute contract on each `<option>`, sourced from the same `DatasetSummaryResponse`
+fields (`row_count`/`earliest_timestamp`/`latest_timestamp`) `run_new_form` already fetches via
+`_fetch_ingestion_datasets` -- no new backend field, no second `GET /ingestion/datasets` call:
+
+- `data-row-count` -- that source's total row count (integer, as a string).
+- `data-earliest` -- that source's earliest timestamp (`str(datetime)`, e.g. `2024-01-01 00:00:00+00:00`).
+- `data-latest` -- that source's latest timestamp, same format as `data-earliest`.
+
+Selecting a source reads these attributes client-side (inline `<script>` in `run_new.html`, the same
+block `checkReference()` lives in) and renders a summary line into `#dataset-source-summary` below the
+dropdown -- no page reload, no new server call. If `dataset_reference_start`/`dataset_reference_end`
+already have a value when a source is selected (or are edited afterward), the summary line explicitly
+labels the row count as the *full source's*, not a value recomputed for the narrowed range -- RSS-003's
+territory (a real narrowed-range row count) is not built here. RSS-002 (a live run-size estimate) depends
+on this same `data-*` contract; keep those three attribute names stable for that ticket.
+
+### Live split-count estimate (RSS-002)
+
+Same "Stored dataset" fieldset, same inline `<script>` block `checkReference()`/
+`updateDatasetSourceSummary()` already live in -- `computeEstimatedSplits()` renders a live
+"approximately N split(s)" estimate into a new `#estimated-splits` element (next to RSS-001's
+`#dataset-source-summary`) whenever the dropdown's `change` fires or any of `purge_gap_hours`/
+`train_window`/`test_window`/`step` fires `input` (not `horizon` -- `generate_splits` takes no horizon
+parameter). The formula is `naive_first_engine.splitting.generate_splits`'s row-count
+(position-based) branch closed form -- see `_generate_splits_by_position` there for the authoritative
+definition, not restated here a third time -- including its `purge_gap_hours`-as-a-literal-row-offset
+semantics (the OQ-3 naming mismatch, `docs/product/backlog-run-submission-safety.md`, disclosed and out
+of scope this sprint). When no stored dataset is selected (or a required numeric field is blank/
+non-numeric), the element shows "Select a stored dataset to see an estimate." instead of a stale or
+fabricated number. **This is informational only** -- it adds no new `event.preventDefault()` and does
+not gate `form`'s `submit` event; `checkReference()` remains the sole client-side submission gate.
+**This estimate is not the safety backstop** -- RSS-004's server-side check (`validation-service`/
+`gateway-api`) is the actual guardrail against a run with too few/zero splits; this estimate exists only
+so a tenant doesn't have to submit-and-see to find out. `tests/test_runs_submit.py`'s RSS-002 tests cover
+(a) a Jinja-render-level assertion that `computeEstimatedSplits` and its event-listener wiring are
+present in the rendered HTML (no JS-execution harness exists in this service's default suite for this),
+and (b) a Python-side cross-check that the formula's own closed form matches
+`naive_first_engine.splitting.generate_splits`'s real output for a synthetic, gapless hourly index
+(added as a dev-only dependency on `naive_first_engine`, used only by this test, never imported by
+`app/` code) -- guarding against formula drift between this client estimate and RSS-004's server check.
+
 ## Runs list (DASH-005)
 
 `GET /runs` (`src/app/routers/runs.py`, DASH-005-01, Sprint 15) renders one row per tenant-scoped run,
@@ -619,7 +663,10 @@ page's own embedded panel markup for the same stubbed state, carries its own pol
 requires a tenant session, degrades to a small error fragment on a downstream failure) and updated
 `tests/test_monitoring_triggers.py`'s crawl-trigger success case to `INGEST-015`'s real `202 {source,
 status: "queued", since, queued_at}` shape -- 109 unit tests passing as of this ticket, up from 101,
-plus the same 5 e2e (unaffected -- the Selenium suite never exercises `/monitoring`).
+plus the same 5 e2e (unaffected -- the Selenium suite never exercises `/monitoring`). `RSS-002` (see
+"Live split-count estimate (RSS-002)" above) added two more tests to `tests/test_runs_submit.py` --
+113 unit tests passing as of this ticket, up from 111 (still `-m "not e2e"` by default), plus the same
+5 e2e.
 
 **DASH-009 -- Selenium E2E suite** (`tests/e2e/`, the first browser-level suite in this platform): run
 separately via `uv run pytest -m e2e` -- 5 tests, exercising login (valid + invalid key), submit-a-run

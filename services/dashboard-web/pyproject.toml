@@ -16,6 +16,7 @@ dependencies = [
 
 [tool.uv.sources]
 naive_first_common = { path = "../../libs/common", editable = true }
+naive_first_engine = { path = "../../libs/naive_first_engine", editable = true }
 
 [build-system]
 requires = ["hatchling"]
@@ -36,6 +37,7 @@ dev = [
     "pytest>=7.4",
     "httpx>=0.27",
     "naive_first_common",
+    "naive_first_engine",
     "pytest-cov>=7.1.0",
     "selenium>=4.20",
 ]

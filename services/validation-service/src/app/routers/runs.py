@@ -36,22 +36,36 @@ sprint's schema -- see solution-design.md section 4's `datasets` table, which
 request body; `tenant_id` is no longer a body field (VS-010) -- it is resolved
 via `Depends(get_tenant_context)` from `naive_first_common` instead.
 
-VS-012: `DatasetSource.load`, `run_validation_protocol`, and the split-mapping/
-`add_splits` persistence that depends on their output are wrapped in a single
-`try`/`except Exception`. `run_repository.create_run` happens *before* the
-`try` (not after `DatasetSource.load` as VS-006 originally had it) so a
-`run.id` always exists to attach a `"failed"` status to, even when the very
-first thing inside the `try` (the dataset load) raises. On any exception, the
-handler persists `status="failed"` + `failure_reason=str(exc)` via
-`update_run_status` and returns immediately from inside the `except` block
-with a `201` (the HTTP request was handled correctly -- a run that fails is a
-completed *request*, just an unsuccessful *run*; a bare `500` would suggest
-the service itself malfunctioned). That `return` is what makes
+VS-012: `run_validation_protocol` and the split-mapping/`add_splits`
+persistence that depends on its output are wrapped in a `try`/`except
+Exception`, whose run row is created (via the local `_persist_new_run`
+helper) immediately before that `try`, so a `run.id` always exists to attach
+a `"failed"` status to. On any exception, the handler persists
+`status="failed"` + `failure_reason=str(exc)` via `update_run_status` and
+returns immediately from inside the `except` block with a `201` (the HTTP
+request was handled correctly -- a run that fails is a completed *request*,
+just an unsuccessful *run*; a bare `500` would suggest the service itself
+malfunctioned). That `return` is what makes
 `event_publisher.publish("run.completed", ...)` structurally unreachable on
 failure: it sits after the whole `try`/`except` statement, so the only way
 to reach it is for the `try` block to finish without raising -- there is no
 `finally`, no fallthrough, nothing that could route a caught exception back
 into it.
+
+RSS-004: `DatasetSource.load` itself is no longer inside that `try` -- it now
+runs first, in its own `try`/`except`, *before* any run row exists at all.
+A load failure there creates the run row (via the same `_persist_new_run`
+helper) and immediately marks it `"failed"`, preserving VS-012's exact
+`"failed"`/`201` outward contract, just with the run row created one step
+later than before this ticket. Once `series` loads successfully, the RSS-004
+split-count guardrail (`MAX_SPLIT_COUNT`, see that constant's own comment)
+calls `generate_splits` directly on `series.index` with the same arguments
+`run_validation_protocol` uses internally and rejects with a `422` --
+creating no run row and calling `run_validation_protocol` zero times -- if
+the real computed split count would exceed the cap. Only once both the load
+succeeds and the guardrail passes does the pre-existing `_persist_new_run` +
+`try`/`except` flow described above run, reusing the already-loaded `series`
+rather than loading it a second time.
 
 `GET /runs/{id}` (VS-007): tenant is resolved the same way as `POST /runs`
 (VS-010) -- via `Depends(get_tenant_context)`, not a query parameter. Tenant
@@ -116,6 +130,7 @@ from naive_first_engine.protocol import (
     ValidationConfig,
     run_validation_protocol,
 )
+from naive_first_engine.splitting import generate_splits
 
 from app.client_baseline import ClientPredictionBaseline
 from app.dependencies.repositories import (
@@ -127,6 +142,29 @@ from app.dependencies.repositories import (
 from app.repositories.interfaces import SplitResultRecord
 
 router = APIRouter()
+
+# RSS-004 (docs/product/backlog-run-submission-safety.md OQ-1/OQ-2): a real
+# incident (see that backlog entry and RSS-004's ticket Analysis section)
+# measured ~78 splits/second on this hardware -- at that rate 500 splits take
+# ~6.4s. This cap is deliberately far below what that single measurement
+# would justify as a tighter number: it is a conservative-by-design safety
+# margin against unbounded synchronous request duration, not a
+# performance-tuned ceiling derived from a benchmark suite.
+MAX_SPLIT_COUNT = 500
+
+
+def _persist_new_run(run_repository, tenant: TenantContext, request: RunRequest):
+    return run_repository.create_run(
+        tenant_id=tenant.tenant_id,
+        dataset_id=request.dataset_id,
+        horizon=request.horizon,
+        purge_gap_hours=request.purge_gap_hours,
+        split_config={
+            "train_window": request.train_window,
+            "test_window": request.test_window,
+            "step": request.step,
+        },
+    )
 
 
 def _json_safe_float(value: float) -> float | None:
@@ -193,24 +231,55 @@ def create_run(
         horizon=request.horizon,
     )
 
-    # Created before the try below (VS-012) so a run.id always exists to
-    # attach a "failed" status to, even if DatasetSource.load is the very
-    # first thing that raises.
-    run = run_repository.create_run(
-        tenant_id=tenant.tenant_id,
-        dataset_id=request.dataset_id,
-        horizon=request.horizon,
-        purge_gap_hours=request.purge_gap_hours,
-        split_config={
-            "train_window": request.train_window,
-            "test_window": request.test_window,
-            "step": request.step,
-        },
-    )
-
+    # RSS-004: the dataset is loaded *before* any run row exists (unlike
+    # VS-012's original ordering), so the RSS-004 guardrail below can compute
+    # a real split count from the real index before deciding whether a run
+    # row -- or any protocol computation -- should happen at all. A load
+    # failure still needs a run.id to attach a "failed" status to (VS-012's
+    # existing, tested contract), so this branch creates the run row itself,
+    # one step later than before, then immediately marks it failed.
     try:
         series = dataset_source.load(request.dataset_reference)
+    except Exception as exc:
+        run = _persist_new_run(run_repository, tenant, request)
+        run_repository.update_run_status(
+            tenant.tenant_id, run.id, status="failed", failure_reason=str(exc)
+        )
+        return RunResponse(id=run.id, status="failed")
 
+    # RSS-004 guardrail: call generate_splits directly (the same function
+    # run_validation_protocol calls internally, same arguments) so this
+    # check can never disagree with the real computation -- no independently
+    # reimplemented split-count formula. This runs before any run row is
+    # created and before run_validation_protocol is ever invoked, so a
+    # rejected request persists nothing and spends no CPU on baselines/
+    # metrics/DM-test.
+    split_count = len(
+        generate_splits(
+            series.index,
+            config.train_window,
+            config.test_window,
+            config.step,
+            purge_gap=config.purge_gap,
+        )
+    )
+    if split_count > MAX_SPLIT_COUNT:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"This request would compute {split_count} splits, exceeding "
+                f"the maximum of {MAX_SPLIT_COUNT} splits allowed per run. "
+                "Reduce the split count by increasing 'step', narrowing the "
+                "dataset's date range, and/or reducing 'train_window'/"
+                "'test_window'."
+            ),
+        )
+
+    # Created before the try below (VS-012) so a run.id always exists to
+    # attach a "failed" status to, even if something inside the try raises.
+    run = _persist_new_run(run_repository, tenant, request)
+
+    try:
         # VS-017: an optional third baseline, loaded the same way as the
         # primary dataset (same DatasetSourceDep, no second loading
         # mechanism) and passed as config.extra_baselines. This is the ONLY

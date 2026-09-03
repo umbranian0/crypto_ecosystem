@@ -81,6 +81,11 @@ class ConnectorStatusResponse(BaseModel):
     status: str
     timestamp: datetime
     row_count: int
+    # INGEST-024: `None` for a source that never called `on_progress` (e.g.
+    # blockchain.info, or before Binance's first page completes) -- never a
+    # fabricated `0`.
+    rows_fetched_so_far: int | None = None
+    updated_at: datetime | None = None
 
 
 @router.get("/datasets", response_model=DatasetListResponse)
@@ -142,4 +147,6 @@ def connector_status(
         status=summary.status,
         timestamp=summary.fetched_at,
         row_count=summary.row_count,
+        rows_fetched_so_far=summary.rows_fetched_so_far,
+        updated_at=summary.updated_at,
     )

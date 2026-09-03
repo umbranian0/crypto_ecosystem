@@ -30,7 +30,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 import os
-from typing import TYPE_CHECKING
+from typing import Callable, TYPE_CHECKING
 
 import pandas as pd
 
@@ -92,12 +92,32 @@ class RedditSentimentConnector(IngestionSource):
             self._analyzer = SentimentIntensityAnalyzer()
         return self._analyzer
 
-    def fetch(self, since: datetime) -> FetchResult:
+    def fetch(
+        self,
+        since: datetime,
+        should_cancel: "Callable[[], bool] | None" = None,
+        on_progress: "Callable[[int], None] | None" = None,
+    ) -> FetchResult:
+        """Cancellation checkpoint (INGEST-022): per submission actually
+        scored and appended to `rows`, not per subreddit. This is the finer of
+        the two loop boundaries this method already has (subreddit, then
+        submission within it) -- chosen deliberately so cancellation can take
+        effect mid-subreddit rather than only between the two subreddits,
+        since a single subreddit's `.new(limit=...)` page can itself be large.
+        INGEST-026 (progress reporting) reuses this same per-submission
+        boundary; it must not assume a different one. Immediately after each
+        submission's row is appended, `on_progress(len(rows))` is called if
+        supplied, then `should_cancel()` if supplied; a `True` result stops
+        both the inner submission loop and the outer subreddit loop, and the
+        returned `FetchResult` is built from whatever is in `rows` so far,
+        `cancelled=True`.
+        """
         reddit = self._client()
         analyzer = self._sentiment_analyzer()
         since_ts = since.timestamp()
 
         rows: list[dict] = []
+        cancelled = False
         for subreddit_name in self.subreddits:
             subreddit = reddit.subreddit(subreddit_name)
             for submission in subreddit.new(limit=self.limit_per_subreddit):
@@ -119,12 +139,19 @@ class RedditSentimentConnector(IngestionSource):
                         "reddit_sid_com": scores["compound"],
                     }
                 )
+                if on_progress is not None:
+                    on_progress(len(rows))
+                if should_cancel is not None and should_cancel():
+                    cancelled = True
+                    break
+            if cancelled:
+                break
 
         df = pd.DataFrame(rows)
         if not df.empty:
             df = df.sort_values("created_utc").reset_index(drop=True)
 
-        return FetchResult(source=self.name, fetched_at=utcnow(), records=df)
+        return FetchResult(source=self.name, fetched_at=utcnow(), records=df, cancelled=cancelled)
 
 
 def default_seed_watermark() -> datetime:

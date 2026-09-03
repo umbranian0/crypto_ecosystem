@@ -54,11 +54,16 @@ signal.</p>
             <option value="">-- select one of your ingested datasets --</option>
             {% for dataset in datasets %}
             <option value="{{ dataset.source }}"
+                    data-row-count="{{ dataset.row_count }}"
+                    data-earliest="{{ dataset.earliest_timestamp }}"
+                    data-latest="{{ dataset.latest_timestamp }}"
                     {{ 'selected' if values and values.dataset_reference_source == dataset.source else '' }}>
                 {{ dataset.source }} ({{ dataset_macros.date_range(dataset) }}, {{ dataset.row_count }} rows)
             </option>
             {% endfor %}
         </select>
+        <p class="field-hint" id="dataset-source-summary" aria-live="polite"></p>
+        <p class="field-hint" id="estimated-splits" aria-live="polite"></p>
 
         <label for="dataset_reference_start">
             Start (optional)
@@ -144,6 +149,68 @@ signal.</p>
     var inline = document.getElementById("dataset_reference_inline");
     var source = document.getElementById("dataset_reference_source");
     var status = document.getElementById("run-form-status");
+    var sourceSummary = document.getElementById("dataset-source-summary");
+    var referenceStart = document.getElementById("dataset_reference_start");
+    var referenceEnd = document.getElementById("dataset_reference_end");
+    var estimatedSplits = document.getElementById("estimated-splits");
+    var purgeGapHours = document.getElementById("purge_gap_hours");
+    var trainWindow = document.getElementById("train_window");
+    var testWindow = document.getElementById("test_window");
+    var step = document.getElementById("step");
+
+    function updateDatasetSourceSummary() {
+        if (!source || !sourceSummary) {
+            return;
+        }
+        var selected = source.options[source.selectedIndex];
+        var rowCount = selected ? selected.getAttribute("data-row-count") : null;
+        if (!selected || !selected.value || !rowCount) {
+            sourceSummary.textContent = "";
+            return;
+        }
+        var earliest = selected.getAttribute("data-earliest");
+        var latest = selected.getAttribute("data-latest");
+        var hasNarrowedRange = !!(
+            (referenceStart && referenceStart.value.trim().length > 0) ||
+            (referenceEnd && referenceEnd.value.trim().length > 0)
+        );
+        var rowCountPhrase = hasNarrowedRange
+            ? rowCount + " rows for the full source (not the narrowed range)"
+            : rowCount + " rows";
+        sourceSummary.textContent = rowCountPhrase + ", " + earliest + " to " + latest + ".";
+    }
+
+    function computeEstimatedSplits() {
+        if (!source || !estimatedSplits) {
+            return;
+        }
+        var selected = source.options[source.selectedIndex];
+        var rowCountAttr = selected ? selected.getAttribute("data-row-count") : null;
+        if (!selected || !selected.value || !rowCountAttr) {
+            estimatedSplits.textContent = "Select a stored dataset to see an estimate.";
+            return;
+        }
+        var rowCount = Number(rowCountAttr);
+        var train = Number(trainWindow ? trainWindow.value : "");
+        var test = Number(testWindow ? testWindow.value : "");
+        var gap = Number(purgeGapHours ? purgeGapHours.value : "");
+        var stepValue = Number(step ? step.value : "");
+        if (
+            !isFinite(rowCount) || !isFinite(train) || !isFinite(test) ||
+            !isFinite(gap) || !isFinite(stepValue) || stepValue <= 0
+        ) {
+            estimatedSplits.textContent = "Select a stored dataset to see an estimate.";
+            return;
+        }
+        // Same row-offset closed form as generate_splits's row-count branch
+        // (naive_first_engine.splitting._generate_splits_by_position) --
+        // purge_gap_hours is used as a literal row-position offset here, not
+        // a calendar-hour conversion (OQ-3, disclosed, out of scope this sprint).
+        var numerator = rowCount - train - gap - test;
+        var estimate = numerator < 0 ? 0 : Math.floor(numerator / stepValue) + 1;
+        estimatedSplits.textContent = "Approximately " + estimate +
+            " split(s) estimated for the whole selected source (not the post-filter row count).";
+    }
 
     function checkReference() {
         var hasPath = path.value.trim().length > 0;
@@ -196,7 +263,29 @@ signal.</p>
     path.addEventListener("input", checkReference);
     inline.addEventListener("input", checkReference);
     if (source) {
-        source.addEventListener("change", checkReference);
+        source.addEventListener("change", function () {
+            checkReference();
+            updateDatasetSourceSummary();
+            computeEstimatedSplits();
+        });
+    }
+    if (referenceStart) {
+        referenceStart.addEventListener("input", updateDatasetSourceSummary);
+    }
+    if (referenceEnd) {
+        referenceEnd.addEventListener("input", updateDatasetSourceSummary);
+    }
+    if (purgeGapHours) {
+        purgeGapHours.addEventListener("input", computeEstimatedSplits);
+    }
+    if (trainWindow) {
+        trainWindow.addEventListener("input", computeEstimatedSplits);
+    }
+    if (testWindow) {
+        testWindow.addEventListener("input", computeEstimatedSplits);
+    }
+    if (step) {
+        step.addEventListener("input", computeEstimatedSplits);
     }
 
     form.addEventListener("submit", function (event) {
@@ -204,6 +293,9 @@ signal.</p>
             event.preventDefault();
         }
     });
+
+    updateDatasetSourceSummary();
+    computeEstimatedSplits();
 })();
 </script>
 {% endblock %}

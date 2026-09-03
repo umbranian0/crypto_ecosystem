@@ -152,6 +152,16 @@ class ConnectorRecordRepository(typing.Protocol):
         """
         ...
 
+    def record_crawl_progress(self, tenant_id: str, source: str, rows_fetched_so_far: int) -> None:
+        """`INGEST-024`: updates the most recent `status="running"` `crawl_runs`
+        row for `(tenant_id, source)` in place -- sets `rows_fetched_so_far`
+        and `updated_at`, never inserts a new row (unlike `record_crawl_run`
+        above). A no-op, not an exception, if no matching `"running"` row
+        exists (e.g. called after the crawl already finished) -- progress
+        reporting must never crash an otherwise-succeeding fetch loop.
+        """
+        ...
+
 
 @dataclass(frozen=True)
 class DatasetSummary:
@@ -184,6 +194,10 @@ class CrawlRunSummary:
     status: str
     fetched_at: datetime
     row_count: int
+    # `INGEST-024`: `None`/absent-shaped for a source that never reported
+    # progress (or never entered "running") -- never a fabricated `0`.
+    rows_fetched_so_far: int | None = None
+    updated_at: datetime | None = None
 
 
 @dataclass(frozen=True)

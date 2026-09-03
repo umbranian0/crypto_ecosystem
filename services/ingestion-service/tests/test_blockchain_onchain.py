@@ -76,6 +76,67 @@ def test_fetch_requests_a_generous_timespan() -> None:
     assert int(session.calls[0]["timespan"].removesuffix("days")) >= 90
 
 
+def test_fetch_does_not_call_get_when_should_cancel_returns_true() -> None:
+    """INGEST-022: this connector has exactly one blocking `GET` and no loop,
+    so `should_cancel` is checked once, before that call -- a `True` result
+    must prevent the `GET` from being issued at all."""
+    session = _FakeSession([{"x": int(datetime(2026, 1, 2, tzinfo=timezone.utc).timestamp()), "y": 1.0}])
+    connector = BlockchainInfoConnector("hash-rate", session=session)
+
+    result = connector.fetch(since=datetime(2026, 1, 1, tzinfo=timezone.utc), should_cancel=lambda: True)
+
+    assert result.cancelled is True
+    assert result.is_empty()
+    assert session.calls == []
+
+
+def test_fetch_natural_completion_reports_cancelled_false() -> None:
+    session = _FakeSession([{"x": int(datetime(2026, 1, 2, tzinfo=timezone.utc).timestamp()), "y": 1.0}])
+    connector = BlockchainInfoConnector("hash-rate", session=session)
+
+    result = connector.fetch(since=datetime(2026, 1, 1, tzinfo=timezone.utc), should_cancel=lambda: False)
+
+    assert result.cancelled is False
+    assert len(session.calls) == 1
+
+
+def test_fetch_never_calls_on_progress_when_cancelled_before_request() -> None:
+    """INGEST-027: a spy assertion, not an implicit "test happens to pass" --
+    `on_progress` must receive zero calls in the cancelled-before-request
+    case, matching the docstring's claim that there is no mid-fetch
+    checkpoint to report from."""
+    session = _FakeSession([{"x": int(datetime(2026, 1, 2, tzinfo=timezone.utc).timestamp()), "y": 1.0}])
+    connector = BlockchainInfoConnector("hash-rate", session=session)
+    progress_calls: list[int] = []
+
+    result = connector.fetch(
+        since=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        should_cancel=lambda: True,
+        on_progress=progress_calls.append,
+    )
+
+    assert result.cancelled is True
+    assert progress_calls == []
+
+
+def test_fetch_never_calls_on_progress_on_normal_completion() -> None:
+    """INGEST-027: same spy assertion for the completed-normally case --
+    `on_progress` is accepted for interface uniformity only and is never
+    invoked, even when the single blocking `GET` succeeds."""
+    session = _FakeSession([{"x": int(datetime(2026, 1, 2, tzinfo=timezone.utc).timestamp()), "y": 1.0}])
+    connector = BlockchainInfoConnector("hash-rate", session=session)
+    progress_calls: list[int] = []
+
+    result = connector.fetch(
+        since=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        should_cancel=lambda: False,
+        on_progress=progress_calls.append,
+    )
+
+    assert result.cancelled is False
+    assert progress_calls == []
+
+
 def test_run_incremental_writes_onchain_records_via_repository(tmp_path) -> None:
     """INGEST-003 DB-write path: writes via `repository.add_onchain_records`,
     including a value column named after the chart (`hash-rate`), not stored

@@ -242,3 +242,74 @@ def test_connector_status_cross_tenant_returns_404(client):
     response = test_client.get("/connectors/binance_btcusdt_1h/status", headers={"X-Tenant-Id": "tenant-b"})
 
     assert response.status_code == 404
+
+
+# --- INGEST-024: rows_fetched_so_far / updated_at on GET /connectors/{source}/status ---
+
+
+def test_connector_status_never_reported_progress_returns_none_not_zero(client):
+    """A source that never called `on_progress` (e.g. blockchain.info, or
+    before Binance's first page completes) reports `rows_fetched_so_far` as
+    `None`, never a fabricated `0`."""
+    test_client, repo = client
+    fetched_at = datetime(2026, 2, 1, tzinfo=timezone.utc)
+    repo.record_crawl_run("tenant-a", "binance_btcusdt_1h", None, fetched_at, 5, "completed")
+
+    response = test_client.get("/connectors/binance_btcusdt_1h/status", headers={"X-Tenant-Id": "tenant-a"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["rows_fetched_so_far"] is None
+
+
+def test_connector_status_blockchain_info_running_never_reported_progress_is_none(client):
+    """INGEST-027: closes the gap left by the Binance-only test above for
+    this connector specifically. `blockchain_info_*`'s one pre-request
+    checkpoint (INGEST-022) never calls `on_progress`, so a `"running"` row
+    for it must report `rows_fetched_so_far` as `None`/absent, never `0`,
+    even while the crawl is still in flight (not just after completion)."""
+    test_client, repo = client
+    fetched_at = datetime(2026, 2, 1, tzinfo=timezone.utc)
+    repo.record_crawl_run("tenant-a", "blockchain_info_hash-rate", None, fetched_at, 0, "running")
+
+    response = test_client.get(
+        "/connectors/blockchain_info_hash-rate/status", headers={"X-Tenant-Id": "tenant-a"}
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "running"
+    assert body["rows_fetched_so_far"] is None
+
+
+def test_record_crawl_progress_updates_running_row_in_place(client):
+    """`record_crawl_progress` mutates the existing `"running"` row's
+    `rows_fetched_so_far` in place -- the tracked `crawl_runs` list does not
+    grow per progress call, and the eventual status read reflects the latest
+    reported count."""
+    test_client, repo = client
+    fetched_at = datetime(2026, 2, 1, tzinfo=timezone.utc)
+    repo.record_crawl_run("tenant-a", "binance_btcusdt_1h", None, fetched_at, 0, "running")
+
+    rows_before = len(repo.crawl_runs)
+    repo.record_crawl_progress("tenant-a", "binance_btcusdt_1h", 10)
+    repo.record_crawl_progress("tenant-a", "binance_btcusdt_1h", 25)
+
+    assert len(repo.crawl_runs) == rows_before
+
+    response = test_client.get("/connectors/binance_btcusdt_1h/status", headers={"X-Tenant-Id": "tenant-a"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "running"
+    assert body["rows_fetched_so_far"] == 25
+
+
+def test_record_crawl_progress_with_no_running_row_is_a_noop(client):
+    """No matching `"running"` row for `(tenant_id, source)` -- a silent
+    no-op, never an exception."""
+    _test_client, repo = client
+
+    repo.record_crawl_progress("tenant-a", "binance_btcusdt_1h", 5)  # must not raise
+
+    assert repo.crawl_runs == []

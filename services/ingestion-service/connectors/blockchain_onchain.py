@@ -16,6 +16,7 @@ boundary is inclusive-but-approximate.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import Callable
 
 import pandas as pd
 import requests
@@ -33,7 +34,30 @@ class BlockchainInfoConnector(IngestionSource):
         self.name = f"blockchain_info_{chart_name}"
         self._session = session or requests.Session()
 
-    def fetch(self, since: datetime) -> FetchResult:
+    def fetch(
+        self,
+        since: datetime,
+        should_cancel: "Callable[[], bool] | None" = None,
+        on_progress: "Callable[[int], None] | None" = None,
+    ) -> FetchResult:
+        """Cancellation ceiling (INGEST-022): this method makes exactly one
+        blocking `GET`, with no loop, so `should_cancel()` is checked exactly
+        once, before that call is issued -- if it returns `True`, the `GET` is
+        never made and an empty, `cancelled=True` `FetchResult` is returned
+        immediately. `on_progress` is never called; there is no mid-fetch
+        checkpoint to report from. Once the request has started, cancellation
+        cannot take effect: a call that begins and completes normally always
+        reports `cancelled=False`, regardless of what `should_cancel()` might
+        return if it were checked again after this point (it never is).
+        Both `should_cancel` and `on_progress` are accepted here only for
+        interface uniformity with `IngestionSource.fetch`'s signature (every
+        connector takes both parameters) -- this connector's own shape gives
+        `on_progress` nothing to report and `should_cancel` only one point at
+        which to matter.
+        """
+        if should_cancel is not None and should_cancel():
+            return FetchResult(source=self.name, fetched_at=utcnow(), records=pd.DataFrame(), cancelled=True)
+
         # blockchain.info requires a non-empty `timespan` even when `start` is given;
         # it does NOT extend the window beyond "now", so a generous span (comfortably
         # longer than any realistic gap between connector runs) plus client-side

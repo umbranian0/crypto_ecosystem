@@ -254,7 +254,9 @@ def test_run_incremental_records_crawl_run_on_successful_write(tmp_path: Path) -
     )
 
     assert len(repository.crawl_runs) == 1
-    tenant_id, source, since_watermark, fetched_at, row_count, status = repository.crawl_runs[0]
+    tenant_id, source, since_watermark, fetched_at, row_count, status, _rows_so_far, _updated_at = (
+        repository.crawl_runs[0]
+    )
     assert tenant_id == "tenant-a"
     assert source == "fake_source"
     assert since_watermark == SEED
@@ -283,7 +285,9 @@ def test_run_incremental_records_crawl_run_on_empty_success(tmp_path: Path) -> N
     )
 
     assert len(repository.crawl_runs) == 1
-    _tenant_id, _source, _since, _fetched_at, row_count, status = repository.crawl_runs[0]
+    _tenant_id, _source, _since, _fetched_at, row_count, status, _rows_so_far, _updated_at = (
+        repository.crawl_runs[0]
+    )
     assert row_count == 0
     assert status == "completed"
 
@@ -312,7 +316,9 @@ def test_run_incremental_records_crawl_run_as_failed_when_write_raises(tmp_path:
         )
 
     assert len(repository.crawl_runs) == 1
-    _tenant_id, _source, _since, _fetched_at, row_count, status = repository.crawl_runs[0]
+    _tenant_id, _source, _since, _fetched_at, row_count, status, _rows_so_far, _updated_at = (
+        repository.crawl_runs[0]
+    )
     assert row_count == 0
     assert status == "failed"
 

@@ -10,6 +10,7 @@ Formerly `data-pipeline/`. See [../../docs/solution-design.md](../../docs/soluti
 
 **Design notes**:
 - Each external data source (client upload, exchange API, sentiment/on-chain API) implements a common `IngestionSource` interface (`fetch(since) -> FetchResult`, in `connectors/base.py`) — the Adapter pattern referenced in implementation-plan.md section 7. Adding a new source means one new adapter class, nothing else in the service changes. Implemented so far: `BinancePriceConnector`, `BlockchainInfoConnector` (parameterized for hash-rate and n-unique-addresses), `RedditSentimentConnector`.
+- **`BlockchainInfoConnector` — no live progress** (`INGEST-022`/`INGEST-027`): `fetch` makes exactly one blocking `GET` with no natural mid-fetch checkpoint, so `should_cancel`/`on_progress` are accepted for interface uniformity only — `should_cancel` is checked at most once, before the request starts, and `on_progress` is never called at all. Its status reports only `queued`/`running`/`completed`/`failed`/`cancelled`, no incremental row count.
 - The causal-lag requirement (recording *when data became known*, not just when it happened) is enforced in this interface via `FetchResult.fetched_at`, not left to each adapter's discretion — this is the exact leakage failure mode one layer up from the validation engine (docs section 1.6).
 - Connectors are currently run standalone (`python -m connectors.binance_price` etc. from this directory) — no scheduler wired up yet. Scheduling (cron or a Prefect flow) is a follow-up once `infra/` exists (trigger #4).
 - **Accepted tradeoff — N× external API load** (`INGEST-005`): each tenant's crawler runs independently against the same public upstream endpoint (Binance, blockchain.info) with its own watermark (`latest_watermark_from_db`, resolved per `(tenant_id, source)`). With N tenants configured for the same `source`, that source is fetched N times per scheduling interval — no cross-tenant dedup or shared response cache is built. This is a deliberate per-tenant-crawler design decision (tenant isolation and independent watermarks/credentials are simpler to reason about without a shared-fetch layer in between), not an oversight to silently fix later; it should be revisited explicitly if/when pilot-scale tenant counts against a single free-tier public API start to matter for rate limits, not patched around quietly in a connector.
@@ -116,7 +117,7 @@ connector <source>"`) with no DB read/write at all. If the lock is acquired, the
 watermark (`connectors/base.py`'s `latest_watermark_from_db`, falling back to the `since` override or
 each connector's `default_backfill_start()` on a first crawl — unchanged logic, now run under the lock,
 which is what actually closes the race), writes one `"queued"` `crawl_runs` row via the existing
-`record_crawl_run(...)` (a third status value alongside `"completed"`/`"failed"`, needing no schema
+`record_crawl_run(...)` (one of six status values this column now takes, see below — needing no schema
 change since `status` is a plain `String` column), schedules the fetch-and-write work as a
 `BackgroundTasks.add_task(_execute_crawl, ...)`, and returns `202` immediately with
 `ConnectorRunAcceptedResponse` — `{source, status: "queued", since, queued_at}`. This is a **breaking
@@ -127,7 +128,9 @@ successful `try_acquire` and successfully scheduling the background task (e.g. t
 itself failing), the lock is released before the exception propagates — no code path leaves
 `try_acquire` succeeding without a matching `release`.
 
-`_execute_crawl` (the background task body) calls `connector.fetch(since=since)`, writes rows through
+`_execute_crawl` (the background task body) first writes a `record_crawl_run(..., status="running")` row
+(`INGEST-021`, `row_count=0`, `fetched_at=utcnow()` — a bookkeeping row, not a fetch outcome), immediately
+before calling `connector.fetch(since=since)`, then writes rows through
 the same `add_{price,onchain,sentiment}_records` dispatch `connectors/base.py`'s `run_incremental`
 DB-write branch already uses, then calls `record_crawl_run(..., status="completed")`
 (`row_count=0` for an empty-but-successful fetch, same as before this ticket). On *any* exception —
@@ -135,6 +138,48 @@ including one raised by `fetch()` itself, not only a subsequent write failure as
 it instead writes `record_crawl_run(..., status="failed")`. A `finally` block calls
 `registry.release(tenant_id, connector.name)` unconditionally, on every exit path, so a background-task
 exception never leaves a `(tenant_id, source)` permanently locked out of future crawls.
+
+`_execute_crawl` (`INGEST-024`) also wires `on_progress=lambda n: repository.record_crawl_progress(
+tenant_id, connector.name, n)` alongside the existing `should_cancel` closure into
+`connector.fetch(since=since, should_cancel=..., on_progress=...)` — reusing the same closure shape
+`should_cancel` already established (`INGEST-023`). Its terminal write chooses `"cancelled"` vs
+`"completed"` from `FetchResult.cancelled` (`INGEST-022`, set by the connector itself at whatever
+checkpoint it observed `should_cancel()==True`), never a fresh `registry.should_cancel(...)` query after
+`fetch()` returns — this is what correctly resolves the race where a crawl finishes normally after a
+cancel was requested but before any checkpoint observed it (must resolve to `"completed"`, not
+`"cancelled"`). The exception-path `"failed"` write is unaffected — an exception mid-fetch is still
+`"failed"` even if a cancel was also requested.
+
+**`crawl_runs.status` vocabulary** (`INGEST-021`/`INGEST-024`, plain `String` column, no allowlist/enum
+enforced — `record_crawl_run`'s `status` parameter accepts any string by construction): `"queued"`
+(written by `run_connector` once validation/locking succeed, before the background task is scheduled —
+accepted, not yet started), `"running"` (written by `_execute_crawl` immediately before
+`connector.fetch(...)` — the crawl is actually in flight), `"completed"` (the fetch-and-write sequence
+finished without error), `"failed"` (any exception during fetch or write), `"cancelling"` (written by
+`POST /connectors/{source}/cancel` when a cancel request is accepted — the request was received, not
+proof the crawl has actually stopped), and `"cancelled"` (written by `_execute_crawl`'s terminal write
+when `FetchResult.cancelled` is `True` — the crawl actually honored the cancel request).
+
+**`crawl_runs.rows_fetched_so_far`/`updated_at`** (`INGEST-024`, migration `0008`, both nullable):
+`rows_fetched_so_far` is the running row count reported via `record_crawl_progress`, `None` for a source
+that never called `on_progress` (e.g. `blockchain_info_*`, whose one pre-request checkpoint reports
+nothing mid-fetch, or before Binance's first page completes) — never a fabricated `0`.
+**Update-frequency granularity differs by source, and the dashboard (Sprint 24) must not assume otherwise
+(`INGEST-026`)**: `BinancePriceConnector` calls `on_progress` once per page fetched from the exchange API,
+reporting cumulative rows-fetched-so-far progress (`INGEST-025`) — never a per-page delta — once per page
+during a crawl (coarser — only as many updates as pages in a backfill), while `RedditSentimentConnector` calls it once
+per submission actually scored and appended (finer — up to `limit_per_subreddit * len(subreddits)`
+updates per crawl, cumulative across the subreddit boundary, not reset per subreddit).
+`record_crawl_progress(tenant_id, source, rows_fetched_so_far)` **updates the most recent
+`status="running"` row for `(tenant_id, source)` in place** (an `UPDATE`, not an `INSERT`) rather than
+writing a new `crawl_runs` row per checkpoint — a deliberate design decision: a Binance historical
+backfill can span dozens of pages and a Reddit crawl up to ~1000 submissions, and inserting one row per
+checkpoint would make this table's row count scale with fetch granularity instead of with crawl count,
+the same table-growth cost `INGEST-016`/`017`/`018`/`019` already treated as real. A silent no-op, never
+an exception, if no matching `"running"` row exists (e.g. called after the crawl already finished).
+`updated_at` is a separate "last touched" timestamp, set by every `record_crawl_run` insert and by
+`record_crawl_progress`'s update — `fetched_at`'s existing meaning/ordering role (`latest_crawl_run`'s
+`ORDER BY fetched_at DESC`) is unchanged.
 `app.dependencies.repositories.get_connector_record_repository`/`get_credential_repository` currently
 only resolve to the Postgres-backed repositories (`INGEST-003`/`INGEST-004`) — there is no SQLite
 fallback yet (tenant-scoped RLS session setup is Postgres-specific), so a real `DATABASE_URL` is
@@ -149,7 +194,11 @@ exposed as a `get_crawl_registry()`/`CrawlRegistryDep` module-level singleton al
 `app/dependencies/repositories.py`'s existing `Engine` one). **Disclosed limitation**: this lock is
 process-local only, not shared across multiple `ingestion-service` replicas/processes — a known gap if
 this service is ever scaled horizontally, the same kind of disclosed limitation as the
-encryption-key-rotation gap noted above.
+encryption-key-rotation gap noted above. **`INGEST-023`** extends the same registry (same
+`threading.Lock`, no second primitive) with a cancellation-flag set — `CrawlRegistry.request_cancel`/
+`should_cancel`, wired into `_execute_crawl`'s `connector.fetch(...)` call as its `should_cancel`
+argument — and `release` clears any pending flag; the HTTP endpoint that calls `request_cancel` is
+`INGEST-024` (`POST /connectors/{source}/cancel`, see below) — built.
 
 `since` query parameter (`INGEST-013`): an optional ISO 8601 date/datetime, honored **only** on a
 tenant's first-ever crawl of `(tenant_id, source)` (`latest_watermark_from_db` returns `None`); on any
@@ -249,9 +298,33 @@ by the range-read shape below.
   that could tell them apart. An unrecognized `field` (not a real column on
   the resolved table) is a `400`.
 - `GET /connectors/{source}/status` — this tenant's most recent `crawl_runs`
-  row for `source` (`status`, `timestamp`, `row_count`), feeding the
-  (currently blocked) `DASH-109` panel. No matching row (unknown source, or a
-  source that only has runs for a different tenant) is a `404`.
+  row for `source` (`status`, `timestamp`, `row_count`, and, since `INGEST-024`,
+  `rows_fetched_so_far`/`updated_at`), feeding the (currently blocked)
+  `DASH-109` panel. No matching row (unknown source, or a source that only
+  has runs for a different tenant) is a `404`. `rows_fetched_so_far` is
+  `None`/absent-shaped, never a fabricated `0`, for a source whose most
+  recent `crawl_runs` row never had `record_crawl_progress` called against
+  it (e.g. `blockchain_info_*`, or a Binance crawl still on its first page);
+  `updated_at` is `None` for a `crawl_runs` row written before migration
+  `0008` and never subsequently touched (pre-existing rows are not
+  backfilled).
+
+**`POST /connectors/{source}/cancel`** (`INGEST-024`, `src/app/routers/connectors.py`, mirrors
+`POST /connectors/{source}/run`'s async "202 now, poll status" shape): tenant-authenticated
+(`Depends(naive_first_common.get_tenant_context)`, `X-Tenant-Id`), requests cancellation of an
+in-flight crawl for `(tenant_id, source)`. `source` is checked against `_KNOWN_SOURCES` (the same
+`BINANCE_SOURCE_NAME`/`_ONCHAIN_FACTORIES.keys()`/`REDDIT_SOURCE_NAME` constants `_resolve_connector`
+already uses) — an unknown source is a `404`, resolved before any registry/DB call; unlike
+`POST /connectors/{source}/run`, no credential check and no connector instantiation happen here,
+since cancelling never calls `fetch()` or touches credentials. `registry.request_cancel(tenant_id,
+source)` (`CrawlRegistry`, `INGEST-023`) returning `False` (nothing in flight for this
+`(tenant_id, source)`) is a `409` — the inverse framing of `run_connector`'s own `409`. On success,
+writes one plain-insert `"cancelling"` `crawl_runs` row (`since_watermark=None`, since this write isn't
+a fetch outcome) and returns `202 {"source": source, "status": "cancelling"}`. This response is an
+acknowledgement that the request was received, not proof the crawl has actually stopped — poll
+`GET /connectors/{source}/status` for the eventual outcome (`"cancelled"` only if the connector's own
+`fetch()` observed `should_cancel()==True` at a checkpoint it evaluated before returning; otherwise
+`"completed"`/`"failed"`, per the documented race in `_execute_crawl`'s own note above).
 
 **`GET /connectors/credentials-status`** (`INGEST-012`, `src/app/routers/connectors.py`,
 live-UAT-driven: `GW-021`'s operator proxy had been pointed at `GET /connectors/{source}/status`

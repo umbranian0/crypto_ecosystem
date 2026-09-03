@@ -96,6 +96,20 @@ status code, `409` included, with no status-code allowlist to update. Proven,
 not just asserted, by
 `test_run_connector_forwards_queued_202_response_shape`/
 `test_run_connector_conflict_returns_409_forwarded_unmodified` below.
+
+GW-027: `POST /ingestion/connectors/{source}/cancel` extends this same file,
+proxying `ingestion-service`'s real `POST /connectors/{source}/cancel`
+(`INGEST-024`) -- the counterpart `dashboard-web`'s stop button (`DASH-116`)
+needs to cancel an in-flight crawl queued by `run_connector` above. Same
+handler flow as every other route in this file: `get_authenticated_tenant`
+-> `build_downstream_headers` -> `_call_downstream`/`_raise_for_error`, all
+reused unmodified -- no new auth mechanism, no new transport-error pattern.
+Returns the forwarded `202 {"source", "status": "cancelling"}` body as a
+plain `dict`, matching `run_connector`'s own `-> dict` pass-through shape
+above; `ingestion-service`'s `404` (unknown source) and `409` (nothing in
+flight to cancel) are forwarded unmodified with no re-interpretation at this
+layer, the same "no status-code allowlist" property GW-024 already proved
+for `_raise_for_error` in this file.
 """
 
 from __future__ import annotations
@@ -183,5 +197,17 @@ def connector_status(
 ) -> dict:
     headers = build_downstream_headers(tenant)
     response = _call_downstream(client.get, f"/connectors/{source}/status", headers=headers)
+    _raise_for_error(response)
+    return response.json()
+
+
+@router.post("/ingestion/connectors/{source}/cancel", status_code=202)
+def cancel_connector(
+    source: str,
+    client: IngestionServiceClientDep,
+    tenant: TenantContext = Depends(get_authenticated_tenant),
+) -> dict:
+    headers = build_downstream_headers(tenant)
+    response = _call_downstream(client.post, f"/connectors/{source}/cancel", headers=headers)
     _raise_for_error(response)
     return response.json()

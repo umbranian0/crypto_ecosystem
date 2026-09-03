@@ -19,7 +19,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import Callable, TYPE_CHECKING
 
 import pandas as pd
 
@@ -33,6 +33,7 @@ class FetchResult:
     source: str
     fetched_at: datetime
     records: pd.DataFrame
+    cancelled: bool = False
 
     def is_empty(self) -> bool:
         return self.records.empty
@@ -44,12 +45,30 @@ class IngestionSource(ABC):
     name: str
 
     @abstractmethod
-    def fetch(self, since: datetime) -> FetchResult:
+    def fetch(
+        self,
+        since: datetime,
+        should_cancel: "Callable[[], bool] | None" = None,
+        on_progress: "Callable[[int], None] | None" = None,
+    ) -> FetchResult:
         """Return all records known to have become available strictly after `since`.
 
         Implementations must not backfill or mutate records already fetched in
         a prior call — this is an append-only, incremental interface so raw-zone
         writes stay immutable (docs/solution-design.md section 3.1).
+
+        `should_cancel`/`on_progress` (INGEST-022) are both optional and
+        additive — every existing caller (`run_incremental`, which only ever
+        calls `connector.fetch(since=since)`) is unaffected. `should_cancel`,
+        when supplied, is polled at whatever mid-fetch checkpoint each
+        connector's own loop actually has (documented per-connector, since the
+        granularity differs); a `True` result stops the fetch early and the
+        returned `FetchResult.cancelled` is `True`, built from whatever rows
+        were already fully accumulated — never a partial/placeholder row.
+        `on_progress`, when supplied, is called with the running row count at
+        the same checkpoints (INGEST-025/026's own concern; this ticket only
+        declares the parameter once here so every connector's signature stays
+        identical, it does not wire a real callback body anywhere).
         """
         raise NotImplementedError
 

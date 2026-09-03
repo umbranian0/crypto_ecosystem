@@ -70,6 +70,18 @@ reddit, which has no such boundary). Validation (`_parse_since_override`)
 always runs when `since` is supplied, even on a non-first crawl where the
 parsed value ends up unused -- fails fast on bad input rather than silently
 accepting garbage that happens to be ignored.
+
+`POST /connectors/{source}/cancel` (`INGEST-024`): requests cancellation of
+an in-flight crawl via `CrawlRegistry.request_cancel` (`INGEST-023`) --
+`404` for an unknown `source` (checked against `_KNOWN_SOURCES`, reused from
+`_resolve_connector`'s own constants), `409` if nothing is in flight, `202`
++ a `"cancelling"` `crawl_runs` row on success. `_execute_crawl`'s terminal
+write resolves `"cancelled"` vs `"completed"` from `result.cancelled`
+(`FetchResult`'s own field, INGEST-022) rather than re-querying
+`registry.should_cancel(...)` after `fetch()` returns -- this is what
+correctly handles the race where a crawl finishes normally after a cancel
+was requested but before any checkpoint observed it (must resolve to
+`"completed"`, not `"cancelled"`).
 """
 
 from __future__ import annotations
@@ -144,6 +156,21 @@ BINANCE_SOURCE_NAME = "binance_price_btcusdt_1h"
 # Every connector with a credentials concept at all (INGEST-012) -- Reddit
 # only, today. Reuses REDDIT_SOURCE_NAME above rather than a second literal.
 _CREDENTIALED_SOURCES: tuple[str, ...] = (REDDIT_SOURCE_NAME,)
+
+# INGEST-024: every known `source` value `POST /connectors/{source}/cancel`
+# accepts -- built from the same constants `_resolve_connector` already
+# checks, not a fourth hand-typed list.
+_KNOWN_SOURCES: frozenset[str] = frozenset({BINANCE_SOURCE_NAME, REDDIT_SOURCE_NAME, *_ONCHAIN_FACTORIES.keys()})
+
+
+class ConnectorCancelResponse(BaseModel):
+    """`POST /connectors/{source}/cancel`'s `202` body (INGEST-024) -- an
+    acknowledgement that the cancel request was received, not proof the
+    crawl has actually stopped yet (poll `GET /connectors/{source}/status`
+    for the eventual outcome)."""
+
+    source: str
+    status: str
 
 
 class CredentialStatusItem(BaseModel):
@@ -280,6 +307,40 @@ def run_connector(
     )
 
 
+@router.post("/connectors/{source}/cancel", response_model=ConnectorCancelResponse, status_code=202)
+def cancel_connector(
+    source: str,
+    connector_repository: ConnectorRecordRepositoryDep,
+    registry: CrawlRegistryDep,
+    tenant: TenantContext = Depends(get_tenant_context),
+) -> ConnectorCancelResponse:
+    """`INGEST-024`: requests cancellation of an in-flight crawl for
+    `(tenant.tenant_id, source)`.
+
+    No credential check and no connector instantiation -- cancelling never
+    calls `fetch()` or touches credentials, so `source` is validated against
+    `_KNOWN_SOURCES` alone (unknown -> `404`, resolved before any registry/DB
+    call). `registry.request_cancel(...)` returning `False` means nothing is
+    in flight for this `(tenant_id, source)` -> `409` (mirrors
+    `run_connector`'s own `409` framing, inverted). On success, writes one
+    plain-insert `"cancelling"` `crawl_runs` row (matching this router's
+    existing insert-only convention for status-transition writes;
+    `since_watermark=None` since this write isn't a fetch outcome) and
+    returns `202`.
+    """
+    if source not in _KNOWN_SOURCES:
+        raise HTTPException(status_code=404, detail=f"unknown connector source {source!r}")
+
+    if not registry.request_cancel(tenant.tenant_id, source):
+        raise HTTPException(
+            status_code=409, detail=f"no crawl in progress for connector {source!r}"
+        )
+
+    connector_repository.record_crawl_run(tenant.tenant_id, source, None, utcnow(), 0, "cancelling")
+
+    return ConnectorCancelResponse(source=source, status="cancelling")
+
+
 def _execute_crawl(
     repository: ConnectorRecordRepository,
     registry: CrawlRegistry,
@@ -295,6 +356,13 @@ def _execute_crawl(
     `run_incremental` is that `since` is already resolved by the caller
     (under the lock), not re-resolved here.
 
+    Writes a `status="running"` `crawl_runs` row (INGEST-021) immediately
+    before `connector.fetch(...)` is called -- a bookkeeping row marking the
+    crawl as actually in flight, not just accepted (`"queued"`, written by
+    `run_connector` before scheduling this task). Uses `utcnow()` for both
+    `fetched_at` and `row_count=0`, same as the `"failed"` write below, since
+    this row records an event, not a fetch outcome.
+
     Catches *any* exception from `fetch()` or the write step alike (a
     deliberate improvement over the old synchronous handler, which only
     caught write-step exceptions -- a `fetch()`-raised exception used to
@@ -306,7 +374,13 @@ def _execute_crawl(
     future crawls.
     """
     try:
-        result = connector.fetch(since=since)
+        repository.record_crawl_run(tenant_id, connector.name, since, utcnow(), 0, "running")
+
+        result = connector.fetch(
+            since=since,
+            should_cancel=lambda: registry.should_cancel(tenant_id, connector.name),
+            on_progress=lambda n: repository.record_crawl_progress(tenant_id, connector.name, n),
+        )
 
         if not result.is_empty():
             records = result.records.copy()
@@ -316,7 +390,14 @@ def _execute_crawl(
         else:
             row_count = 0
 
-        repository.record_crawl_run(tenant_id, connector.name, since, result.fetched_at, row_count, "completed")
+        # INGEST-024: `result.cancelled` (set by the connector itself at
+        # whatever checkpoint it observed `should_cancel()==True`), never a
+        # fresh `registry.should_cancel(...)` query here -- this is what
+        # correctly resolves the documented race: a crawl that finishes
+        # normally after a cancel was requested but before any checkpoint
+        # observed it must still resolve to "completed", not "cancelled".
+        terminal_status = "cancelled" if result.cancelled else "completed"
+        repository.record_crawl_run(tenant_id, connector.name, since, result.fetched_at, row_count, terminal_status)
     except Exception:
         repository.record_crawl_run(tenant_id, connector.name, since, utcnow(), 0, "failed")
     finally:

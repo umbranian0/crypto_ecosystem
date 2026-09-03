@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import time
 from datetime import datetime, timedelta, timezone
+from typing import Callable
 
 import pandas as pd
 import requests
@@ -52,17 +53,34 @@ class BinancePriceConnector(IngestionSource):
         self.name = f"binance_price_{symbol.lower()}_{interval}"
         self._session = session or requests.Session()
 
-    def fetch(self, since: datetime) -> FetchResult:
+    def fetch(
+        self,
+        since: datetime,
+        should_cancel: "Callable[[], bool] | None" = None,
+        on_progress: "Callable[[int], None] | None" = None,
+    ) -> FetchResult:
+        """Cancellation checkpoint (INGEST-022): once per page, immediately
+        after that page's rows are appended to `all_rows` and before the next
+        page is requested -- the loop's own existing per-page boundary, not a
+        new one. A `True` from `should_cancel()` at that point stops further
+        pages and returns whatever pages were already fetched, `cancelled=True`.
+        """
         start_ms = int(since.timestamp() * 1000) + 1  # strictly after `since`
         end_ms = int(utcnow().timestamp() * 1000)
 
         all_rows: list[list] = []
         cursor = start_ms
+        cancelled = False
         while cursor < end_ms:
             batch = self._fetch_batch(cursor, end_ms)
             if not batch:
                 break
             all_rows.extend(batch)
+            if on_progress is not None:
+                on_progress(len(all_rows))
+            if should_cancel is not None and should_cancel():
+                cancelled = True
+                break
             last_open_time = batch[-1][0]
             next_cursor = last_open_time + 1
             if next_cursor <= cursor:
@@ -79,7 +97,7 @@ class BinancePriceConnector(IngestionSource):
             df = df.drop(columns=["ignore"])
             df.insert(0, "symbol", self.symbol)
 
-        return FetchResult(source=self.name, fetched_at=utcnow(), records=df)
+        return FetchResult(source=self.name, fetched_at=utcnow(), records=df, cancelled=cancelled)
 
     def _fetch_batch(self, start_ms: int, end_ms: int) -> list[list]:
         params = {

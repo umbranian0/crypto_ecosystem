@@ -152,7 +152,7 @@ def test_run_new_form_prefills_source_from_query_param(monkeypatch) -> None:
     import re
 
     assert re.search(
-        r'<option value="binance_btcusdt_1h"\s+selected>', response.text
+        r'<option value="binance_btcusdt_1h"[^>]*\s+selected>', response.text
     )
 
 

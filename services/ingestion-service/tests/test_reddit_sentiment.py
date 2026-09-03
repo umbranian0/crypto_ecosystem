@@ -106,6 +106,92 @@ def test_fetch_attaches_vader_sentiment_scores() -> None:
     assert row["reddit_sid_pos"] == 0.1
 
 
+def test_fetch_stops_after_first_submission_scored_when_should_cancel_returns_true() -> None:
+    """INGEST-022: `should_cancel` is checked once per submission actually
+    scored/appended -- a `True` result stops both the submission loop and the
+    subreddit loop, even mid-subreddit, and even with a second subreddit still
+    unvisited."""
+    since = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    first = _FakeSubmission(created_utc=datetime(2026, 1, 2, tzinfo=timezone.utc).timestamp(), title="first")
+    second = _FakeSubmission(created_utc=datetime(2026, 1, 3, tzinfo=timezone.utc).timestamp(), title="second")
+    connector = RedditSentimentConnector(subreddits=("Bitcoin", "CryptoCurrency"))
+    connector._reddit = _FakeReddit(
+        {"Bitcoin": [first, second], "CryptoCurrency": [_FakeSubmission(created_utc=datetime(2026, 1, 4, tzinfo=timezone.utc).timestamp(), title="never-reached")]}
+    )
+    connector._analyzer = _FakeAnalyzer()
+
+    result = connector.fetch(since=since, should_cancel=lambda: True)
+
+    assert result.cancelled is True
+    assert len(result.records) == 1
+    assert result.records.iloc[0]["title"] == "first"
+
+
+def test_fetch_natural_completion_reports_cancelled_false() -> None:
+    since = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    submission = _FakeSubmission(created_utc=datetime(2026, 1, 2, tzinfo=timezone.utc).timestamp(), title="x")
+    connector = _connector_with_fakes({"Bitcoin": [submission]})
+
+    result = connector.fetch(since=since, should_cancel=lambda: False)
+
+    assert result.cancelled is False
+
+
+def test_fetch_calls_on_progress_once_per_submission_scored() -> None:
+    since = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    first = _FakeSubmission(created_utc=datetime(2026, 1, 2, tzinfo=timezone.utc).timestamp(), title="first")
+    second = _FakeSubmission(created_utc=datetime(2026, 1, 3, tzinfo=timezone.utc).timestamp(), title="second")
+    connector = _connector_with_fakes({"Bitcoin": [first, second]})
+    progress_calls: list[int] = []
+
+    connector.fetch(since=since, on_progress=progress_calls.append)
+
+    assert progress_calls == [1, 2]
+
+
+def test_fetch_calls_on_progress_cumulatively_across_subreddit_boundary() -> None:
+    """INGEST-026: `on_progress`'s count is cumulative across the whole crawl,
+    not reset when the outer loop advances from the first subreddit to the
+    second -- the 4th call (first submission of the second subreddit) must
+    continue from the first subreddit's total (3), not restart at 1."""
+    since = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    bitcoin_submissions = [
+        _FakeSubmission(created_utc=datetime(2026, 1, 2, tzinfo=timezone.utc).timestamp(), title="b1"),
+        _FakeSubmission(created_utc=datetime(2026, 1, 3, tzinfo=timezone.utc).timestamp(), title="b2"),
+        _FakeSubmission(created_utc=datetime(2026, 1, 4, tzinfo=timezone.utc).timestamp(), title="b3"),
+    ]
+    crypto_submissions = [
+        _FakeSubmission(created_utc=datetime(2026, 1, 5, tzinfo=timezone.utc).timestamp(), title="c1"),
+        _FakeSubmission(created_utc=datetime(2026, 1, 6, tzinfo=timezone.utc).timestamp(), title="c2"),
+    ]
+    connector = RedditSentimentConnector(subreddits=("Bitcoin", "CryptoCurrency"))
+    connector._reddit = _FakeReddit({"Bitcoin": bitcoin_submissions, "CryptoCurrency": crypto_submissions})
+    connector._analyzer = _FakeAnalyzer()
+    progress_calls: list[int] = []
+
+    result = connector.fetch(since=since, on_progress=progress_calls.append)
+
+    assert progress_calls == [1, 2, 3, 4, 5]
+    assert len(result.records) == 5
+
+
+def test_fetch_does_not_call_on_progress_for_submissions_filtered_by_since() -> None:
+    """INGEST-026: submissions at-or-before `since` are skipped by the
+    `since_ts` check before `rows.append`/`on_progress` are reached -- the
+    count only advances for genuinely new rows, not for already-seen ones."""
+    since = datetime(2026, 1, 2, tzinfo=timezone.utc)
+    old_1 = _FakeSubmission(created_utc=datetime(2026, 1, 1, tzinfo=timezone.utc).timestamp(), title="old-1")
+    old_2 = _FakeSubmission(created_utc=datetime(2026, 1, 1, 12, tzinfo=timezone.utc).timestamp(), title="old-2")
+    new = _FakeSubmission(created_utc=datetime(2026, 1, 3, tzinfo=timezone.utc).timestamp(), title="new")
+    connector = _connector_with_fakes({"Bitcoin": [old_1, old_2, new]})
+    progress_calls: list[int] = []
+
+    result = connector.fetch(since=since, on_progress=progress_calls.append)
+
+    assert progress_calls == [1]
+    assert len(result.records) == 1
+
+
 def test_run_incremental_writes_sentiment_records_via_repository(tmp_path) -> None:
     """INGEST-003 DB-write path: writes via `repository.add_sentiment_records`,
     not a CSV.

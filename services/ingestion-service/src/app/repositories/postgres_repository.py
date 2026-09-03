@@ -32,7 +32,18 @@ outcome (`id` generated here via `uuid.uuid4().hex`, matching
 `validation-service/src/app/models.py`'s own `default=lambda: uuid.uuid4().hex`
 precedent, since `CrawlRun.id` itself carries no column default) -- same
 `_tenant_scoped_session` helper as every other method on this class, not a
-new tenant-scoping mechanism.
+new tenant-scoping mechanism. `INGEST-024` adds `updated_at=utcnow()` to
+every insert this method makes -- a new "last touched" field, not a
+replacement for `fetched_at`'s existing meaning/ordering role.
+
+`record_crawl_progress` (`INGEST-024`) is semantically distinct from
+`record_crawl_run`: it UPDATEs the most recent `status="running"` row for
+`(tenant_id, source)` in place instead of inserting a new row -- deliberate,
+since a Binance historical backfill can span dozens of pages and a Reddit
+crawl up to ~1000 submissions, and inserting one row per checkpoint would
+make `crawl_runs`' row count scale with fetch granularity instead of with
+crawl count. A no-op, never an exception, if no matching `"running"` row
+exists.
 
 `PostgresCredentialRepository` (INGEST-004) is `connector_credentials`'s own
 implementation, kept in this same module for cohesion with
@@ -78,7 +89,7 @@ from __future__ import annotations
 import dataclasses
 import math
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pandas as pd
 from sqlalchemy import Engine, select, func, text
@@ -244,6 +255,7 @@ class PostgresConnectorRecordRepository:
         row_count: int,
         status: str,
     ) -> None:
+        now = datetime.now(timezone.utc)
         row = CrawlRun(
             id=uuid.uuid4().hex,
             tenant_id=tenant_id,
@@ -252,9 +264,39 @@ class PostgresConnectorRecordRepository:
             fetched_at=fetched_at,
             row_count=row_count,
             status=status,
+            updated_at=now,
         )
         with _tenant_scoped_session(self._engine, tenant_id) as session:
             session.add(row)
+            session.commit()
+
+    def record_crawl_progress(self, tenant_id: str, source: str, rows_fetched_so_far: int) -> None:
+        # INGEST-024: UPDATE in place, never an INSERT (see this module's own
+        # docstring) -- keeps crawl_runs' row growth bounded to a handful of
+        # rows per crawl regardless of fetch granularity. `ORDER BY
+        # updated_at DESC LIMIT 1` (not `fetched_at`) so the most recently
+        # touched "running" row is the one updated, never a stale prior
+        # "running" row from an earlier, already-terminated crawl of the same
+        # source.
+        with _tenant_scoped_session(self._engine, tenant_id) as session:
+            row = (
+                session.execute(
+                    select(CrawlRun)
+                    .where(
+                        CrawlRun.tenant_id == tenant_id,
+                        CrawlRun.source == source,
+                        CrawlRun.status == "running",
+                    )
+                    .order_by(CrawlRun.updated_at.desc())
+                    .limit(1)
+                )
+                .scalars()
+                .first()
+            )
+            if row is None:
+                return
+            row.rows_fetched_so_far = rows_fetched_so_far
+            row.updated_at = datetime.now(timezone.utc)
             session.commit()
 
     def list_datasets(self, tenant_id: str) -> list[DatasetSummary]:
@@ -345,7 +387,13 @@ class PostgresConnectorRecordRepository:
             )
             if row is None:
                 return None
-            return CrawlRunSummary(status=row.status, fetched_at=row.fetched_at, row_count=row.row_count)
+            return CrawlRunSummary(
+                status=row.status,
+                fetched_at=row.fetched_at,
+                row_count=row.row_count,
+                rows_fetched_so_far=row.rows_fetched_so_far,
+                updated_at=row.updated_at,
+            )
 
 
 class PostgresCredentialRepository:

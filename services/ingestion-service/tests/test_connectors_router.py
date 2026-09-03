@@ -34,7 +34,7 @@ from fastapi.testclient import TestClient
 
 from app.crawl_registry import CrawlRegistry
 from connectors.base import FetchResult
-from connectors.binance_price import BinancePriceConnector
+from connectors.binance_price import MAX_KLINES_PER_REQUEST, BinancePriceConnector
 from connectors.reddit_sentiment import RedditSentimentConnector
 from fake_repository import FakeConnectorRecordRepository, FakeCredentialRepository
 
@@ -74,7 +74,7 @@ def _fake_binance_fetch(monkeypatch, rows: int = 1):
     fetched_at = datetime(2026, 3, 1, tzinfo=timezone.utc)
     records = pd.DataFrame({"symbol": ["BTCUSDT"] * rows, "open": [1.0] * rows})
 
-    def _fetch(self, since):
+    def _fetch(self, since, **_kwargs):
         return FetchResult(source=self.name, fetched_at=fetched_at, records=records)
 
     monkeypatch.setattr(BinancePriceConnector, "fetch", _fetch)
@@ -110,16 +110,78 @@ def test_successful_trigger_writes_rows_via_repository(client, monkeypatch):
     assert len(records) == 2
 
     # `TestClient` runs `BackgroundTasks` synchronously before returning the
-    # response (see module docstring) -- by the time `.post()` returns, both
-    # the "queued" row `run_connector` wrote and the "completed" row
-    # `_execute_crawl` wrote are already present.
-    assert len(connector_repo.crawl_runs) == 2
-    queued_run, completed_run = connector_repo.crawl_runs
+    # response (see module docstring) -- by the time `.post()` returns, the
+    # "queued" row `run_connector` wrote, the "running" row `_execute_crawl`
+    # wrote (INGEST-021) before calling `fetch()`, and the "completed" row it
+    # wrote afterward are all already present, in that order.
+    assert len(connector_repo.crawl_runs) == 3
+    queued_run, running_run, completed_run = connector_repo.crawl_runs
     assert queued_run[0] == "tenant-a"
     assert queued_run[5] == "queued"
+    assert running_run[0] == "tenant-a"
+    assert running_run[5] == "running"
     assert completed_run[0] == "tenant-a"
     assert completed_run[4] == 2
     assert completed_run[5] == "completed"
+
+
+def test_running_row_written_before_terminal_row(client, monkeypatch):
+    """INGEST-021: `_execute_crawl` writes a `status="running"` row
+    immediately before calling `connector.fetch(...)`, not just at
+    completion -- asserted here by exact sequence, not just presence."""
+    test_client, connector_repo, _credential_repo = client
+    _fake_binance_fetch(monkeypatch, rows=1)
+
+    response = test_client.post(
+        "/connectors/binance_price_btcusdt_1h/run", headers={"X-Tenant-Id": "tenant-a"}
+    )
+
+    assert response.status_code == 202
+    statuses = [run[5] for run in connector_repo.crawl_runs if run[0] == "tenant-a"]
+    assert statuses == ["queued", "running", "completed"]
+
+
+def test_execute_crawl_wires_registrys_should_cancel_into_fetch():
+    """INGEST-023: `_execute_crawl`'s `connector.fetch(...)` call passes
+    `should_cancel=lambda: registry.should_cancel(tenant_id, connector.name)`
+    -- proved directly (bypassing the HTTP layer, mirroring
+    `test_crawl_registry.py`'s own unit-level style) by calling `_execute_crawl`
+    with a registry that already has a matching cancel flag set and observing
+    the fake connector's `fetch()` sees `should_cancel() is True`, then again
+    with no flag set and observing `False`. Also proves the closure captures
+    the *same* `tenant_id`/`connector.name` values `try_acquire` used (a
+    mismatched key would silently make cancellation a no-op)."""
+    from app.routers.connectors import _execute_crawl
+
+    tenant_id = "tenant-a"
+    fetched_at = datetime(2026, 3, 1, tzinfo=timezone.utc)
+    seen: dict = {}
+
+    class _FakeConnector:
+        name = "binance_price_btcusdt_1h"
+
+        def fetch(self, since, should_cancel=None, **_kwargs):
+            seen["should_cancel"] = should_cancel() if should_cancel is not None else None
+            return FetchResult(source=self.name, fetched_at=fetched_at, records=pd.DataFrame())
+
+    repository = FakeConnectorRecordRepository()
+    connector = _FakeConnector()
+
+    registry = CrawlRegistry()
+    registry.try_acquire(tenant_id, connector.name)
+    registry.request_cancel(tenant_id, connector.name)
+
+    _execute_crawl(repository, registry, tenant_id, connector, "price", None)
+
+    assert seen["should_cancel"] is True
+
+    seen.clear()
+    registry2 = CrawlRegistry()
+    registry2.try_acquire(tenant_id, connector.name)
+    # No `request_cancel` this time -- the same key must read as not-cancelled.
+    _execute_crawl(repository, registry2, tenant_id, connector, "price", None)
+
+    assert seen["should_cancel"] is False
 
 
 def test_cross_tenant_isolation(client, monkeypatch):
@@ -132,8 +194,8 @@ def test_cross_tenant_isolation(client, monkeypatch):
     assert len(connector_repo.price) == 2
     tenants_written = {tenant_id for (tenant_id, _source, _records) in connector_repo.price}
     assert tenants_written == {"tenant-a", "tenant-b"}
-    # One "queued" + one "completed" row per tenant (see comment above).
-    assert len(connector_repo.crawl_runs) == 4
+    # One "queued" + one "running" + one "completed" row per tenant (see comment above).
+    assert len(connector_repo.crawl_runs) == 6
     crawl_tenants = {run[0] for run in connector_repo.crawl_runs}
     assert crawl_tenants == {"tenant-a", "tenant-b"}
 
@@ -170,7 +232,7 @@ def test_reddit_credentials_isolated_across_tenants(client, monkeypatch):
         }
     )
 
-    def _fetch(self, since):
+    def _fetch(self, since, **_kwargs):
         return FetchResult(source=self.name, fetched_at=fetched_at, records=records)
 
     monkeypatch.setattr(RedditSentimentConnector, "fetch", _fetch)
@@ -198,7 +260,7 @@ def test_onchain_source_writes_via_repository(client, monkeypatch):
         {"timestamp_unix": [1], "date": [fetched_at], "hash-rate": [123.4]}
     )
 
-    def _fetch(self, since):
+    def _fetch(self, since, **_kwargs):
         return FetchResult(source=self.name, fetched_at=fetched_at, records=records)
 
     monkeypatch.setattr(BlockchainInfoConnector, "fetch", _fetch)
@@ -217,7 +279,7 @@ def test_onchain_source_writes_via_repository(client, monkeypatch):
 def test_empty_fetch_still_records_crawl_run(client, monkeypatch):
     fetched_at = datetime(2026, 3, 1, tzinfo=timezone.utc)
 
-    def _fetch(self, since):
+    def _fetch(self, since, **_kwargs):
         return FetchResult(source=self.name, fetched_at=fetched_at, records=pd.DataFrame())
 
     monkeypatch.setattr(BinancePriceConnector, "fetch", _fetch)
@@ -232,9 +294,10 @@ def test_empty_fetch_still_records_crawl_run(client, monkeypatch):
     assert body["status"] == "queued"
     assert "row_count" not in body
     assert connector_repo.price == []
-    assert len(connector_repo.crawl_runs) == 2
-    queued_run, completed_run = connector_repo.crawl_runs
+    assert len(connector_repo.crawl_runs) == 3
+    queued_run, running_run, completed_run = connector_repo.crawl_runs
     assert queued_run[5] == "queued"
+    assert running_run[5] == "running"
     assert completed_run[4] == 0
     assert completed_run[5] == "completed"
 
@@ -255,7 +318,7 @@ def _fake_binance_fetch_capturing(monkeypatch, rows: int = 1):
     records = pd.DataFrame({"symbol": ["BTCUSDT"] * rows, "open": [1.0] * rows})
     seen_since: list[datetime] = []
 
-    def _fetch(self, since):
+    def _fetch(self, since, **_kwargs):
         seen_since.append(since)
         return FetchResult(source=self.name, fetched_at=fetched_at, records=records)
 
@@ -296,7 +359,7 @@ def test_first_crawl_no_override_uses_new_onchain_default(client, monkeypatch):
     fetched_at = datetime(2026, 3, 1, tzinfo=timezone.utc)
     seen_since: list[datetime] = []
 
-    def _fetch(self, since):
+    def _fetch(self, since, **_kwargs):
         seen_since.append(since)
         return FetchResult(source=self.name, fetched_at=fetched_at, records=pd.DataFrame())
 
@@ -373,7 +436,7 @@ def test_since_before_onchain_floor_returns_422(client, monkeypatch):
 
     test_client, _connector_repo, _credential_repo = client
 
-    def _fetch(self, since):
+    def _fetch(self, since, **_kwargs):
         return FetchResult(source=self.name, fetched_at=datetime(2026, 3, 1, tzinfo=timezone.utc), records=pd.DataFrame())
 
     monkeypatch.setattr(BlockchainInfoConnector, "fetch", _fetch)
@@ -398,7 +461,7 @@ def test_reddit_since_older_than_five_years_has_no_floor(client, monkeypatch):
     fetched_at = datetime(2026, 3, 1, tzinfo=timezone.utc)
     seen_since: list[datetime] = []
 
-    def _fetch(self, since):
+    def _fetch(self, since, **_kwargs):
         seen_since.append(since)
         return FetchResult(source=self.name, fetched_at=fetched_at, records=pd.DataFrame())
 
@@ -459,7 +522,7 @@ def test_completed_crawl_observable_via_status_endpoint(client, monkeypatch):
 
     test_client, _connector_repo, _credential_repo = client
 
-    def _fetch(self, since):
+    def _fetch(self, since, **_kwargs):
         time.sleep(0.01)
         records = pd.DataFrame({"symbol": ["BTCUSDT"] * 3, "open": [1.0] * 3})
         return FetchResult(source=self.name, fetched_at=datetime.now(timezone.utc), records=records)
@@ -493,7 +556,7 @@ def test_failed_fetch_recorded_as_failed_and_releases_lock(client, monkeypatch):
 
     test_client, connector_repo, _credential_repo = client
 
-    def _raising_fetch(self, since):
+    def _raising_fetch(self, since, **_kwargs):
         time.sleep(0.01)
         raise RuntimeError("upstream boom")
 
@@ -504,9 +567,10 @@ def test_failed_fetch_recorded_as_failed_and_releases_lock(client, monkeypatch):
     )
     assert response.status_code == 202
 
-    assert len(connector_repo.crawl_runs) == 2
-    queued_run, failed_run = connector_repo.crawl_runs
+    assert len(connector_repo.crawl_runs) == 3
+    queued_run, running_run, failed_run = connector_repo.crawl_runs
     assert queued_run[5] == "queued"
+    assert running_run[5] == "running"
     assert failed_run[5] == "failed"
 
     status_response = test_client.get(
@@ -516,7 +580,7 @@ def test_failed_fetch_recorded_as_failed_and_releases_lock(client, monkeypatch):
     assert status_response.json()["status"] == "failed"
 
     # Lock released -- a subsequent request succeeds, not a 409.
-    monkeypatch.setattr(BinancePriceConnector, "fetch", lambda self, since: FetchResult(
+    monkeypatch.setattr(BinancePriceConnector, "fetch", lambda self, since, **_kwargs: FetchResult(
         source=self.name, fetched_at=datetime(2026, 3, 1, tzinfo=timezone.utc), records=pd.DataFrame()
     ))
     retry_response = test_client.post(
@@ -597,7 +661,7 @@ class _BlockingFakeConnector:
         self._release_event = release_event
         self._entered_event = entered_event
 
-    def fetch(self, since):
+    def fetch(self, since, **_kwargs):
         self._entered_event.set()
         self._release_event.wait(timeout=5)
         return FetchResult(
@@ -663,7 +727,7 @@ def test_concurrent_requests_same_source_one_202_one_409(client, monkeypatch):
     entered_event = threading.Event()
     connector = _BlockingFakeConnector("binance_price_btcusdt_1h", release_event, entered_event)
 
-    monkeypatch.setattr(BinancePriceConnector, "fetch", lambda self, since: connector.fetch(since))
+    monkeypatch.setattr(BinancePriceConnector, "fetch", lambda self, since, **_kwargs: connector.fetch(since))
 
     barrier = threading.Barrier(2)
     responses: list = [None, None]
@@ -702,6 +766,230 @@ def test_concurrent_requests_same_source_one_202_one_409(client, monkeypatch):
     assert len(completed_runs) == 1
 
 
+# --- INGEST-024: POST /connectors/{source}/cancel ---------------------------
+
+
+def test_cancel_unknown_source_returns_404(client):
+    test_client, _connector_repo, _credential_repo = client
+
+    response = test_client.post(
+        "/connectors/not_a_real_source/cancel", headers={"X-Tenant-Id": "tenant-a"}
+    )
+
+    assert response.status_code == 404
+
+
+def test_cancel_nothing_in_flight_returns_409(client):
+    test_client, _connector_repo, _credential_repo = client
+
+    response = test_client.post(
+        "/connectors/binance_price_btcusdt_1h/cancel", headers={"X-Tenant-Id": "tenant-a"}
+    )
+
+    assert response.status_code == 409
+
+
+def test_cancel_success_returns_202_and_writes_cancelling_row(client):
+    """A `POST /cancel` while a crawl is genuinely in flight (proved via the
+    same blocking-`fetch`-via-`threading.Event` pattern the concurrency tests
+    above use) gets `202` + `{"status": "cancelling"}`, and a `"cancelling"`
+    `crawl_runs` row is written."""
+    from app.dependencies.repositories import get_crawl_registry
+    from app.main import app
+
+    test_client, connector_repo, _credential_repo = client
+
+    release_event = threading.Event()
+    entered_event = threading.Event()
+    connector = _BlockingFakeConnector("binance_price_btcusdt_1h", release_event, entered_event)
+    monkeypatch_target = BinancePriceConnector
+    original_fetch = monkeypatch_target.fetch
+    monkeypatch_target.fetch = lambda self, since, **_kwargs: connector.fetch(since)
+    try:
+        thread = threading.Thread(
+            target=lambda: test_client.post(
+                "/connectors/binance_price_btcusdt_1h/run", headers={"X-Tenant-Id": "tenant-a"}
+            )
+        )
+        thread.start()
+        assert entered_event.wait(timeout=5)
+
+        cancel_response = test_client.post(
+            "/connectors/binance_price_btcusdt_1h/cancel", headers={"X-Tenant-Id": "tenant-a"}
+        )
+        assert cancel_response.status_code == 202
+        assert cancel_response.json() == {"source": "binance_price_btcusdt_1h", "status": "cancelling"}
+
+        registry = app.dependency_overrides[get_crawl_registry]()
+        assert registry.should_cancel("tenant-a", "binance_price_btcusdt_1h") is True
+
+        cancelling_rows = [run for run in connector_repo.crawl_runs if run[5] == "cancelling"]
+        assert len(cancelling_rows) == 1
+
+        release_event.set()
+        thread.join(timeout=5)
+    finally:
+        monkeypatch_target.fetch = original_fetch
+
+
+def test_execute_crawl_race_finishes_completed_despite_pending_cancel():
+    """INGEST-024's documented race, exercised non-tautologically: a fake
+    connector whose `fetch()` returns `cancelled=True` (it honored
+    `should_cancel`) resolves to `status="cancelled"`; a fake connector whose
+    `fetch()` returns `cancelled=False` even though a cancel was *also*
+    requested (the race) resolves to `status="completed"` -- proving
+    `_execute_crawl` uses `result.cancelled`, not a fresh registry query."""
+    from app.routers.connectors import _execute_crawl
+
+    tenant_id = "tenant-a"
+    fetched_at = datetime(2026, 3, 1, tzinfo=timezone.utc)
+
+    class _FakeConnector:
+        name = "binance_price_btcusdt_1h"
+
+        def __init__(self, cancelled: bool):
+            self._cancelled = cancelled
+
+        def fetch(self, since, should_cancel=None, on_progress=None, **_kwargs):
+            return FetchResult(
+                source=self.name, fetched_at=fetched_at, records=pd.DataFrame(), cancelled=self._cancelled
+            )
+
+    # Case 1: connector honored should_cancel -> "cancelled".
+    repository = FakeConnectorRecordRepository()
+    registry = CrawlRegistry()
+    connector = _FakeConnector(cancelled=True)
+    registry.try_acquire(tenant_id, connector.name)
+    registry.request_cancel(tenant_id, connector.name)
+
+    _execute_crawl(repository, registry, tenant_id, connector, "price", None)
+
+    terminal_status = repository.crawl_runs[-1][5]
+    assert terminal_status == "cancelled"
+
+    # Case 2 (the race): a cancel was also requested, but fetch() completed
+    # naturally without ever observing it (cancelled=False) -> "completed".
+    repository2 = FakeConnectorRecordRepository()
+    registry2 = CrawlRegistry()
+    connector2 = _FakeConnector(cancelled=False)
+    registry2.try_acquire(tenant_id, connector2.name)
+    registry2.request_cancel(tenant_id, connector2.name)
+
+    _execute_crawl(repository2, registry2, tenant_id, connector2, "price", None)
+
+    terminal_status2 = repository2.crawl_runs[-1][5]
+    assert terminal_status2 == "completed"
+
+
+def test_execute_crawl_wires_on_progress_into_fetch():
+    """INGEST-024: `_execute_crawl` passes `on_progress=lambda n:
+    repository.record_crawl_progress(tenant_id, connector.name, n)` into
+    `connector.fetch(...)` -- proved by having the fake connector call
+    `on_progress` mid-fetch and observing the "running" row's
+    `rows_fetched_so_far` updated in place (no new row inserted)."""
+    from app.routers.connectors import _execute_crawl
+
+    tenant_id = "tenant-a"
+    fetched_at = datetime(2026, 3, 1, tzinfo=timezone.utc)
+
+    class _FakeConnector:
+        name = "binance_price_btcusdt_1h"
+
+        def fetch(self, since, should_cancel=None, on_progress=None, **_kwargs):
+            on_progress(1)
+            on_progress(2)
+            return FetchResult(source=self.name, fetched_at=fetched_at, records=pd.DataFrame())
+
+    repository = FakeConnectorRecordRepository()
+    registry = CrawlRegistry()
+    connector = _FakeConnector()
+    registry.try_acquire(tenant_id, connector.name)
+
+    rows_before = len(repository.crawl_runs)
+    _execute_crawl(repository, registry, tenant_id, connector, "price", None)
+
+    # "running" + "completed" only -- no extra row per on_progress call.
+    assert len(repository.crawl_runs) == rows_before + 2
+    running_run = [run for run in repository.crawl_runs if run[5] == "running"][0]
+    assert running_run[6] == 2
+
+
+def test_multi_page_binance_crawl_reports_progress_before_completion(client, monkeypatch):
+    """INGEST-025: a real (not stand-in) `BinancePriceConnector`, given a
+    fake `requests.Session` that returns two pages, drives `on_progress` via
+    `_execute_crawl`'s wiring into `record_crawl_progress` -- proving the
+    end-to-end path (not just `_execute_crawl` in isolation, as
+    `test_execute_crawl_wires_on_progress_into_fetch` above already does with
+    a stand-in connector). The `"running"` row's `rows_fetched_so_far` ends
+    at the final page's cumulative count, observed before the terminal
+    `"completed"` row is appended (`FakeConnectorRecordRepository.
+    record_crawl_progress` updates in place, never appends).
+    """
+    monkeypatch.setattr("connectors.binance_price.time.sleep", lambda _seconds: None)
+    test_client, connector_repo, _credential_repo = client
+
+    since = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    start_ms = int(since.timestamp() * 1000) + 1
+    full_page = [
+        [start_ms + i * 60_000, "1", "1", "1", "1", "1", start_ms + i * 60_000 + 1, "1", 1, "1", "1", "0"]
+        for i in range(MAX_KLINES_PER_REQUEST)
+    ]
+    partial_page = [
+        [
+            start_ms + MAX_KLINES_PER_REQUEST * 60_000,
+            "1",
+            "1",
+            "1",
+            "1",
+            "1",
+            start_ms + MAX_KLINES_PER_REQUEST * 60_000 + 1,
+            "1",
+            1,
+            "1",
+            "1",
+            "0",
+        ]
+    ]
+
+    class _FakeSession:
+        def __init__(self, pages):
+            self._pages = list(pages)
+
+        def get(self, url, params, timeout):
+            page = self._pages.pop(0) if self._pages else []
+            return _FakeKlinesResponse(page)
+
+    class _FakeKlinesResponse:
+        def __init__(self, payload):
+            self._payload = payload
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return self._payload
+
+    fake_session = _FakeSession([full_page, partial_page])
+    real_connector = BinancePriceConnector(session=fake_session)
+    monkeypatch.setattr(
+        "app.routers.connectors._binance_source",
+        lambda: (real_connector, datetime(2017, 8, 17, tzinfo=timezone.utc), "price", False, datetime(2017, 8, 17, tzinfo=timezone.utc)),
+    )
+
+    response = test_client.post(
+        "/connectors/binance_price_btcusdt_1h/run", headers={"X-Tenant-Id": "tenant-a"}
+    )
+
+    assert response.status_code == 202
+    assert len(connector_repo.crawl_runs) == 3
+    queued_run, running_run, completed_run = connector_repo.crawl_runs
+    assert queued_run[5] == "queued"
+    assert running_run[5] == "running"
+    assert running_run[6] == MAX_KLINES_PER_REQUEST + 1  # final cumulative count, in place
+    assert completed_run[5] == "completed"
+    assert completed_run[4] == MAX_KLINES_PER_REQUEST + 1
+
+
 def test_concurrent_requests_different_sources_both_202(client, monkeypatch):
     """Third case for completeness: same two-thread setup, but for *different*
     `source` values (same tenant) -- both must succeed with `202`, proving
@@ -715,14 +1003,14 @@ def test_concurrent_requests_different_sources_both_202(client, monkeypatch):
     monkeypatch.setattr(
         BinancePriceConnector,
         "fetch",
-        lambda self, since: FetchResult(
+        lambda self, since, **_kwargs: FetchResult(
             source=self.name, fetched_at=fetched_at, records=pd.DataFrame({"symbol": ["BTCUSDT"], "open": [1.0]})
         ),
     )
     monkeypatch.setattr(
         BlockchainInfoConnector,
         "fetch",
-        lambda self, since: FetchResult(
+        lambda self, since, **_kwargs: FetchResult(
             source=self.name,
             fetched_at=fetched_at,
             records=pd.DataFrame({"timestamp_unix": [1], "date": [fetched_at], "hash-rate": [123.4]}),
