@@ -17,7 +17,7 @@ from pathlib import Path
 
 import httpx
 from fastapi import FastAPI
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -55,6 +55,17 @@ app.include_router(auth.router)
 app.include_router(runs.router)
 app.include_router(operator.router)
 app.include_router(settings.router)
+
+
+@app.get("/")
+def root() -> RedirectResponse:
+    """Root has no page of its own -- always redirects to the tenant's main
+    page (`/runs`), which itself redirects to `/login` via the existing
+    session dependency if no tenant session cookie is present. Keeps the
+    "am I logged in" decision in one place (runs.py's DownstreamHeadersDep)
+    rather than duplicating a session check here.
+    """
+    return RedirectResponse(url="/runs")
 
 
 @app.get("/health", response_model=None)
