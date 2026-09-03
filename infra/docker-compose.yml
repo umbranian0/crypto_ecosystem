@@ -107,6 +107,22 @@ services:
       # every operator-gated route 401s regardless of the token presented
       # (same live-UAT finding as above).
       OPERATOR_TOKEN: ${OPERATOR_TOKEN:-naive_first_operator_dev_token}
+      # GATEWAY_API_DOWNSTREAM_TIMEOUT_SECONDS: found via live E2E QA
+      # (2026-09-01, post-INGEST-013) that the http_client.py default of 30s
+      # is too short for a full first-crawl backfill proxied through this
+      # service -- INGEST-013's much-deeper verified default backfill start
+      # dates (Binance 2017-08-17, blockchain.info 2009-01-03) mean a
+      # tenant's first Binance crawl alone took ~70s of real, successful
+      # downstream work (79k rows fetched+inserted) despite completing fine
+      # server-side; the caller only ever saw a 504 and had no way to know
+      # the crawl actually succeeded in the background. Raised to 240s so a
+      # normal first-crawl backfill has room to complete before the proxy
+      # gives up on it. This does not fix the underlying "long-running
+      # synchronous crawl behind a synchronous HTTP proxy" architecture --
+      # see this session's QA-sweep notes for a flagged follow-up (async
+      # crawl-job tracking, and a related crawl-concurrency race) not
+      # resolved here.
+      GATEWAY_API_DOWNSTREAM_TIMEOUT_SECONDS: ${GATEWAY_API_DOWNSTREAM_TIMEOUT_SECONDS:-240}
       # DATABASE_URL points at the `identity` schema's parent database via
       # the internal Compose network hostname, using the non-superuser
       # runtime role naive_first_app (INF-014) -- same rationale as

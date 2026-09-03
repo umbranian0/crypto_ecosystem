@@ -1,2 +1,6 @@
-<p>Crawl for {{ source }}: <span class="status status-{{ result.status }}">{{ result.status }}</span>,
-{{ result.row_count }} rows.</p>
+{# DASH-115: `INGEST-015` made `POST /ingestion/connectors/{source}/run`
+   return `202 {source, status: "queued", since, queued_at}` -- the crawl runs
+   asynchronously, so this fragment must not claim it already finished (no
+   `result.row_count` any more, it does not exist on this response shape). #}
+<p>Crawl for {{ source }} <span class="status status-{{ result.status }}">{{ result.status }}</span>
+(since {{ result.since }}).</p>

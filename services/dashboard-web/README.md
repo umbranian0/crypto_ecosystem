@@ -15,7 +15,12 @@
 **"Settings: connector credential status (DASH-112)" below. `DASH-110` (Sprint 18) added two trigger**
 **actions to that same `/monitoring` page -- a per-source "run this tenant's crawl now" button and a**
 **"generate a report" form -- see "Trigger actions on /monitoring (DASH-110)" below (101 unit tests**
-**passing + 5 e2e as of this ticket). `DASH-005` (runs list), deferred since**
+**passing + 5 e2e as of that ticket). `DASH-115` (Sprint 20) updated the crawl-trigger fragment and**
+**crawl-status panel for `INGEST-015`'s async crawl-trigger contract (`202 {source, status: "queued",**
+**since, queued_at}`, no `row_count`), and made the crawl-status panel self-refresh every 5s via a new**
+**`GET /monitoring/crawl-status-fragment` route -- see "Trigger actions on /monitoring (DASH-110)" and**
+**"Last crawl status panel (DASH-109)" below (109 unit tests passing + 5 e2e as of this ticket).**
+**`DASH-005` (runs list), deferred since**
 **Sprint 11, was closed in Sprint 15 (`DASH-005-01`) once `DASH-005-GAP` was resolved upstream**
 **(Sprint 14: `VS-022` + `GW-016`). Built deliberately ahead of trigger #8 (implementation-plan.md**
 **section 6: "as soon as a pilot client needs to see results without you manually sending them a**
@@ -146,8 +151,9 @@ schemas directly.
 **Contract**: consumes `gateway-api`'s OpenAPI schema (`POST /runs`, `GET /runs`, `GET /runs/{id}`,
 `GET /runs/{id}/splits`, `GET /health`, `GET /system/health`, `GET /ingestion/connectors/credentials-status`,
 `GET /ingestion/datasets`, `GET /ingestion/connectors/{source}/status`, `POST /ingestion/connectors/
-{source}/run` -- `DASH-110`, and `POST /reports/generate` -- `DASH-110`); no contract of its own beyond
-its rendered HTML routes.
+{source}/run` -- `DASH-110`, `GET /monitoring/crawl-status-fragment` -- `DASH-115`, a route of this
+service's own, not gateway-api's, and `POST /reports/generate` -- `DASH-110`); no contract of its own
+beyond its rendered HTML routes.
 Response shapes are parsed via `naive_first_common.contracts`' shared `RunRequest`/`RunResponse`/
 `RunDetailResponse`/`SplitResultResponse`/`RunSummaryResponse` models (ARCH-003) -- the same models
 `gateway-api` itself uses -- rather than a third hand-duplicated copy of the same field list.
@@ -157,10 +163,12 @@ so `dashboard-web` works with the parsed dict directly for the envelope fields, 
 going through the shared `RunSummaryResponse`. `GET /ingestion/connectors/credentials-status`'s
 `{"items": [{"source", "credential_set", "last_set_at"}, ...]}` envelope is likewise consumed as a
 parsed dict directly, not through a shared model. `POST /ingestion/connectors/{source}/run`'s
-`{source, status, row_count, since, fetched_at}` response and `POST /reports/generate`'s `{id, status}`
-response (`DASH-110`) are both consumed as parsed dicts directly, same as `gateway-api`'s own README
-documents for those two proxies -- no local Pydantic model, since this is a pass-through UI trigger
-only, not a page that needs to validate/re-render every field of either response.
+`{source, status: "queued", since, queued_at}` response (`INGEST-015`'s async contract, `DASH-115` --
+`row_count`/`fetched_at` no longer exist on this response, since the crawl now runs asynchronously) and
+`POST /reports/generate`'s `{id, status}` response (`DASH-110`) are both consumed as parsed dicts
+directly, same as `gateway-api`'s own README documents for those two proxies -- no local Pydantic model,
+since this is a pass-through UI trigger only, not a page that needs to validate/re-render every field of
+either response.
 - **DASH-004**: `GET /runs/{id}` (`src/app/routers/runs.py`) consumes `gateway-api`'s `GET /runs/{id}`
   and, on a successful detail fetch, `GET /runs/{id}/splits`, via the same shared
   `naive_first_common.contracts` `RunDetailResponse`/`SplitResultResponse` models -- if those models'
@@ -462,6 +470,23 @@ criteria) with a second panel below the four-row service-status table:
   plain run-status record, explicitly not a claim about data quality -- never "prediction," "forecast,"
   "signal," or "recommendation" (CLAUDE.md's core positioning constraint, proven by the existing
   `test_monitoring_template_has_no_banned_positioning_words` test, unchanged and still passing).
+- **`DASH-115` (Sprint 20): self-refreshing panel**. `INGEST-015` made the underlying crawl-trigger call
+  asynchronous, so a snapshot taken once at page load would otherwise show "queued" indefinitely until a
+  manual reload. The table markup above was extracted into `src/app/templates/_crawl_status_panel.html`
+  (a Jinja `{% include %}`-able partial, the same shared-partial pattern `_dataset_macros.html` already
+  established) so both `monitoring.html`'s own initial render and a new `GET
+  /monitoring/crawl-status-fragment` route (`src/app/routers/operator.py`) render the exact same file --
+  one implementation, not two. The panel's own `<div id="crawl-status-panel">` carries
+  `hx-get="/monitoring/crawl-status-fragment" hx-trigger="load, every 5s" hx-swap="outerHTML"`; because
+  `hx-swap="outerHTML"` replaces the element carrying those attributes on every poll, `_crawl_status_panel
+  .html` itself (not just `monitoring.html`'s initial render) repeats them on its own outer `<div>`, which
+  is what keeps the polling self-sustaining rather than firing once and stopping. 5s is a disclosed,
+  arbitrary interval, not a performance-tuned one. The new route is gated by `DownstreamHeadersDep` (not
+  the parent page's own `OptionalDownstreamHeadersDep`) -- an anonymous visitor has no crawl status of
+  their own to poll -- and reuses `_fetch_crawl_statuses` unmodified; a downstream failure renders a
+  small error fragment via `_render_error_for_status` (a disclosed `502`, since that helper does not
+  preserve which specific transport/status failure occurred) rather than the page's own login-prompt
+  state, since `headers` is never `None` on this route.
 
 ## Trigger actions on /monitoring (DASH-110)
 
@@ -475,8 +500,13 @@ already own -- not a new router module, per the ticket's own Design section: "ex
   (`POST /ingestion/connectors/{source}/run`). Depends on `DASH-003`'s `DownstreamHeadersDep` (not the
   page's own `OptionalDownstreamHeadersDep`) -- an action route has no "render for an anonymous
   visitor" case, unlike the read-only page above. On a `202`, renders `_crawl_trigger_result.html`
-  (`{source, status, row_count}` from the forwarded response body, verbatim) for HTMX to swap into that
-  row's own result `<div>`.
+  (`{source, status, since}` from the forwarded response body, verbatim) for HTMX to swap into that
+  row's own result `<div>`. **`DASH-115` (Sprint 20)**: `INGEST-015` made this call asynchronous
+  (`202 {source, status: "queued", since, queued_at}` -- `row_count`/`fetched_at` no longer exist on
+  this response), so `_crawl_trigger_result.html` now renders "Crawl for {source} queued (since
+  {since})" only -- it never claims the crawl already finished; the crawl-status panel's own polling
+  (see "Last crawl status panel (DASH-109)" above) is what surfaces real progress toward
+  `"completed"`/`"failed"`.
 - **`POST /monitoring/reports/generate`**: one form (single `run_id` text input, "Generate a report"
   button) calling the already-existing `GW-018` proxy (`POST /reports/generate`) -- no new reporting
   capability of any kind is added anywhere in this codebase by this ticket; `reporting-service`'s real
@@ -583,7 +613,13 @@ degrade, the session-required redirect, and `run_new_form`'s `dataset_reference_
 `tests/test_monitoring_triggers.py` (`DASH-110`) reuses `tests/test_monitoring.py`'s
 `httpx.Client`-monkeypatching convention and `tests/test_runs_submit.py`'s tenant-session-cookie login
 helper -- covering both trigger actions' success/failure/session-required cases, no new mocking
-convention (101 unit tests passing as of this ticket, up from 90, plus 5 e2e).
+convention (101 unit tests passing as of that ticket, up from 90, plus 5 e2e). `DASH-115` (Sprint 20)
+extended `tests/test_monitoring.py` with `GET /monitoring/crawl-status-fragment` coverage (matches the
+page's own embedded panel markup for the same stubbed state, carries its own polling attributes,
+requires a tenant session, degrades to a small error fragment on a downstream failure) and updated
+`tests/test_monitoring_triggers.py`'s crawl-trigger success case to `INGEST-015`'s real `202 {source,
+status: "queued", since, queued_at}` shape -- 109 unit tests passing as of this ticket, up from 101,
+plus the same 5 e2e (unaffected -- the Selenium suite never exercises `/monitoring`).
 
 **DASH-009 -- Selenium E2E suite** (`tests/e2e/`, the first browser-level suite in this platform): run
 separately via `uv run pytest -m e2e` -- 5 tests, exercising login (valid + invalid key), submit-a-run

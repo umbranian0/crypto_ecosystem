@@ -347,6 +347,20 @@ both scripts call `configure_structured_logging()` themselves, at the top of the
 OPS-006's exact convention (no second logging shape); re-verified live after the fix, both event types
 now appear correctly. Full suite re-confirmed clean after the fix: **98 passed, 0 failed**.
 
+## Sprint 20
+
+| Ticket | Story | Depends on | Status |
+|---|---|---|---|
+| [GW-024](GW-024.md) | Confirm/document the `POST /ingestion/connectors/{source}/run` proxy's generic passthrough already handles `INGEST-015`'s new `202 queued`/`409` contract | ingestion-service's INGEST-015 (this sprint) | done |
+
+Direct follow-up ticket set from a post-Sprint-18 QA sweep (see `services/ingestion-service (INGEST-*)`
+Sprint 20 above for the full incident). No functional code change expected — `ingestion.py`'s
+`run_connector` is already a generic status-code passthrough (`_raise_for_error`, reused unmodified
+from `runs.py`), so this ticket proves that claim with real tests against the new response shape and
+the new `409` outcome, and updates `services/gateway-api/README.md`'s now-stale description of the
+old synchronous contract. Runs strictly after `INGEST-015` lands (needs the real new contract to test
+against), before `DASH-115`.
+
 # infra (INF-*)
 
 Source: docs/sprints/sprint-06.md, docs/product/backlog-infra.md.
@@ -644,6 +658,37 @@ needed. `git status` scoped to `services/ingestion-service/connectors/` and
 (pre-existing uncommitted modifications to `connectors/*.py` from a prior, unrelated session were
 present before this ticket started and were left untouched, not authored or altered here).
 
+**Note on this section's gap between Sprint 10 and Sprint 20**: Sprint 18 (`docs/sprints/sprint-18.md`)
+shipped `INGEST-002` through `INGEST-013` (schema/hypertables/RLS, connectors-to-DB, credentials,
+crawl-run tracking, FastAPI scaffolding, `POST /connectors/{source}/run`, `GET /datasets`/`GET
+/datasets/{source}/series`/`GET /connectors/{source}/status`, `GET /connectors/credentials-status`,
+the `since` backfill-floor override) but this index was never updated with those tickets' own rows —
+a pre-existing documentation gap, not caused by this sprint's own tickets below, flagged here rather
+than silently left unmentioned. Backfilling Sprint 18's own index rows is out of this sprint's scope
+(would require re-deriving each ticket's own Depends-on/status from `sprint-18.md` after the fact);
+recommended as a small, separate documentation-only follow-up.
+
+## Sprint 20
+
+| Ticket | Story | Depends on | Status |
+|---|---|---|---|
+| [INGEST-014](INGEST-014.md) | Per-`(tenant_id, source)` in-process crawl registry | none | done |
+| [INGEST-015](INGEST-015.md) | `POST /connectors/{source}/run` becomes lock-gated + truly asynchronous (background execution, `202 queued`, `409` on a concurrent trigger) | INGEST-014 | done |
+
+See docs/sprints (no dedicated sprint file — a direct follow-up ticket set from a post-Sprint-18 QA
+sweep, not its own planned sprint). Source: live QA reproduction of a real ~70s/79,127-row Binance
+backfill blocking `POST /connectors/{source}/run` synchronously (timing out `gateway-api`'s proxy,
+band-aided to `GATEWAY_API_DOWNSTREAM_TIMEOUT_SECONDS=240` in `infra/docker-compose.yml`, already
+committed by the QA sweep, not touched by either ticket below) and a genuine, reproduced concurrency
+race (a client retry after that timeout races the still-in-flight original crawl, both resolving the
+same `since` watermark and hitting a real Postgres `UniqueViolation`, surfaced as an unhandled `500`).
+`INGEST-014` (the `threading.Lock`-backed per-`(tenant_id, source)` registry, its own new file, zero
+edits to `routers/connectors.py`) runs first and is fully unit-tested/reviewed in isolation before
+`INGEST-015` (the actual router fix: lock-then-validate-then-background-dispatch, `crawl_runs` gains a
+`"queued"` status alongside the existing `"completed"`/`"failed"`, and the required real
+before-fix/after-fix concurrency reproduction test) builds on it — sequential, not parallel, since
+`INGEST-015` is the one and only consumer of `INGEST-014`'s `CrawlRegistryDep`.
+
 # services/dashboard-web (DASH-*)
 
 Source: docs/sprints/sprint-11.md, docs/product/backlog-dashboard-web.md.
@@ -761,6 +806,22 @@ only `tests/e2e/`, zero `src/app/routers/`/`templates/` changes, confirmed both 
 handoff notes, and added no new externally-visible `dashboard-web` capability — it closed out
 `DASH-009`'s own already-approved acceptance criteria against its originally-preferred dependency
 once that dependency (`DASH-005`) came to exist, rather than introducing new product scope.
+
+## Sprint 20
+
+| Ticket | Story | Depends on | Status |
+|---|---|---|---|
+| [DASH-115](DASH-115.md) | Monitoring page (`DASH-109`/`DASH-110`) reflects `INGEST-015`'s async crawl-trigger contract: trigger-result fragment stops implying a finished crawl, crawl-status panel auto-refreshes via HTMX polling | gateway-api's GW-024 (this sprint) | done |
+
+Direct follow-up ticket set from a post-Sprint-18 QA sweep (see `services/ingestion-service (INGEST-*)`
+Sprint 20 above for the full incident). Runs last in this three-ticket chain (`INGEST-014` ->
+`INGEST-015` -> `GW-024` -> `DASH-115`): `_crawl_trigger_result.html` (`DASH-110`) stops rendering a
+now-nonexistent `row_count` from the accept-time response, and the crawl-status table (`DASH-109`) is
+extracted into a shared partial polled every 5s via a new `GET /monitoring/crawl-status-fragment`
+route, so a tenant actually sees a triggered crawl progress from `"queued"` to `"completed"` without a
+manual page reload -- judged in-scope rather than a follow-up, since `INGEST-015` makes the previously
+mostly-cosmetic staleness of a snapshot-at-load panel materially worse (crawls no longer finish within
+the same request/response cycle).
 
 # services/reporting-service (RS-*)
 
@@ -978,3 +1039,130 @@ re-backfill of an earlier range for a source a tenant has *already* started craw
 not built; (2) Reddit's 5-years-back default is an explicit convention, not a verified data-availability
 boundary like the other two sources, since `praw`'s `.new()` API has no calendar-date floor to verify
 against.
+
+# Sprint 21 — DB optimization: indexes + TimescaleDB chunk sizing (GW-025, VS-025/026/027, INGEST-016/017/018)
+
+Source: `docs/sprints/sprint-21.md`, `docs/product/backlog-db-optimization.md` (DBOPT-001 through
+DBOPT-010, DBA-authored, all evidence live-`EXPLAIN`-verified against real UAT data unless the item's
+own text says otherwise). Spans three modules (`services/gateway-api`, `services/validation-service`,
+`services/ingestion-service`), each ticket touching only its own service's Postgres schema
+(`identity`/`validation`/`ingestion` respectively) per implementation-plan.md section 5's schema-per-
+service rule — no ticket below crosses a schema boundary. DBOPT-005 (`identity.users` email
+uniqueness), DBOPT-008 (compression policy), and DBOPT-009 (continuous aggregate for `list_datasets`)
+are explicitly **out of scope** — each blocked on a user/product decision the PM/Tech Lead are not
+authorized to make, per `docs/sprints/sprint-21.md`. DBOPT-010 stays `Won't (for now)`, already closed
+by the DBA, no ticket needed. DBOPT-004 was split into two per-service tickets (VS-027, INGEST-016),
+mirroring this repo's own OPS-005-01/02 precedent, per the PM's own note.
+
+| Ticket | Story | Module | Depends on | Status |
+|---|---|---|---|---|
+| [GW-025](GW-025.md) | `identity.api_keys`: unique index on `key_hash` | gateway-api | none | done |
+| [VS-025](VS-025.md) | `validation.runs`: composite index `(tenant_id, created_at DESC)` | validation-service | none | done |
+| [VS-026](VS-026.md) | `validation.split_results`: composite index `(tenant_id, run_id)` on hypertable root | validation-service | VS-025 (migration-chain sequencing only) | done |
+| [VS-027](VS-027.md) | `validation.split_results`: `chunk_time_interval` retuning to 90 days | validation-service | VS-026 | done |
+| [INGEST-016](INGEST-016.md) | Three ingestion hypertables: `chunk_time_interval` retuning to 90 days | ingestion-service | none | done |
+| [INGEST-017](INGEST-017.md) | `ingestion.crawl_runs`: composite index `(tenant_id, source, fetched_at DESC)` | ingestion-service | INGEST-016 (migration-chain sequencing only) | done |
+| [INGEST-018](INGEST-018.md) | Three ingestion hypertables: composite index `(tenant_id, source, fetched_at)` | ingestion-service | INGEST-017 | done |
+
+## Sequencing / batches
+
+Three independent per-service tracks, run in parallel with each other (disjoint schemas, disjoint
+`src/`/`migrations/` trees, per implementation-plan.md's "no service reads another service's schema"
+rule) — within each track, tickets run strictly sequentially because each service's Alembic migrations
+form one linear chain (`down_revision` must point at the true current head; two dev agents adding a
+migration in parallel against the same service would otherwise both branch off the same head and
+produce an unmergeable pair):
+
+- **Track A (gateway-api)**: `GW-025` alone.
+- **Track B (validation-service)**: `VS-025` -> `VS-026` -> `VS-027`, in the PM's own stated urgency
+  order (DBOPT-002 -> DBOPT-003 -> DBOPT-004's validation half) — `VS-026` also practically wants
+  `VS-025`'s revision merged first only to avoid a branching Alembic head, not a functional dependency;
+  `VS-027` is sequenced after `VS-026` per the PM's own note that DBOPT-004 "benefits from DBOPT-003
+  already being in place on split_results."
+- **Track C (ingestion-service)**: `INGEST-016` -> `INGEST-017` -> `INGEST-018`, in the PM's own stated
+  order (DBOPT-004's ingestion half -> DBOPT-006 -> DBOPT-007) — same Alembic-chain sequencing reason,
+  not a functional dependency between the three.
+
+**Sprint 21 outcome**: all 7 tickets done (the sprint plan's 6 in-scope stories, DBOPT-004 split into
+two per-service tickets -- VS-027, INGEST-016 -- per the PM's own note), executed as three parallel
+per-service tracks (Track A: GW-025 solo; Track B: VS-025 -> VS-026 -> VS-027; Track C: INGEST-016 ->
+INGEST-017 -> INGEST-018), each personally re-verified by the Tech Lead against the real, live
+`naive-first-postgres` container (`timescale/timescaledb:latest-pg16`, TimescaleDB `2.29.1`, Postgres
+`16.14`) -- not merely trusted from any dev agent's own report.
+
+**Live `EXPLAIN (ANALYZE, BUFFERS)` before/after proof, personally captured/reproduced by the Tech
+Lead for every index item**:
+- **`GW-025`/DBOPT-001** (`identity.api_keys`, `key_hash`): index created and confirmed `UNIQUE` and
+  structurally valid. On the real table's current size (206 rows) the planner still naturally chooses
+  `Seq Scan` -- a genuine, disclosed small-table cost-model result, not a defect. Forcing `SET
+  enable_seqscan = off` confirms the planner switches cleanly to `Index Scan`/`Index Only Scan`,
+  proving the index is real and will be used automatically as the table grows (this was the DBA's
+  explicit rationale -- the query scans the full table platform-wide, not per-tenant).
+- **`VS-025`/DBOPT-002** (`validation.runs`, `(tenant_id, created_at DESC)`): a clean, unambiguous win.
+  Before: `Seq Scan`, 1,950 rows removed by filter, on both `list_runs` and `count_runs`. After:
+  `list_runs` -> `Index Scan`, no separate `Sort` node; `count_runs` -> `Index Only Scan`. Reproduced
+  independently by the Tech Lead.
+- **`VS-026`/DBOPT-003** (`validation.split_results`, `(tenant_id, run_id)` on the hypertable root):
+  index created and propagated to **all 108/108** pre-existing chunks (independently confirmed via
+  `pg_indexes` joined to the chunk catalog). **Honest, disclosed non-improvement, accepted as a
+  legitimate outcome, not a failed Review AC**: Planning Time did *not* drop below the DBA's ~130ms
+  baseline (measured 188-250ms across this session's re-runs, before and after) because `run_id` is not
+  `split_results`' partitioning column (`test_start` is) -- chunk exclusion cannot skip any chunk
+  either way, so a per-chunk plan node is still built regardless of whether that chunk has a supporting
+  index, and only 1 of 108 chunks (holding enough rows to matter) actually preferred the new index over
+  a `Seq Scan`. This migration's real value is closing the missing RLS-`tenant_id` index gap and laying
+  the groundwork for `VS-027`'s larger future chunks to actually benefit from the index -- not an
+  immediate planning-time win on the current, thinly-populated chunk layout.
+- **`INGEST-017`/DBOPT-006** (`ingestion.crawl_runs`, `(tenant_id, source, fetched_at DESC)`): same
+  small-table pattern as `GW-025` -- the real table has only 8 rows, too few for the planner to prefer
+  the index naturally (`Seq Scan` persists), but `SET enable_seqscan = off` independently confirmed the
+  index is real, structurally correct, and usable. Matches this story's own disclosed
+  evidence-quality caveat (DBA evidence was code-inferred, not live-measured, for this exact reason).
+- **`INGEST-018`/DBOPT-007** (three ingestion hypertables, `(tenant_id, source, fetched_at)`): a clean
+  win, independently reproduced. `price_ohlcv` (79,127-row tenant): before, `Finalize Aggregate` over a
+  472-chunk `Append` of `Seq Scan`s (`Buffers: shared hit=2907`, DBA's original measurement); after, a
+  `Merge Append` of per-chunk `Index Only Scan Backward`s, `Buffers: shared hit=472` -- confirmed
+  propagated to **472/472** existing chunks. `onchain_metric` (6,439-row tenant): same
+  `Index Only Scan Backward` pattern confirmed, propagated to **922/922** existing chunks. Honest
+  caveat: `onchain_metric`'s own Planning Time remains high (chunk-count-driven, same root cause as
+  `VS-026`'s finding) -- this index improves each chunk's own access path, it does not reduce how many
+  chunks the planner must still visit; that remains `INGEST-016`'s (forward-only) job.
+
+**`DBOPT-004` (chunk-interval retuning, `VS-027` + `INGEST-016`)**: `timescaledb_information.dimensions`
+independently confirmed by the Tech Lead, before/after, for all four affected hypertables --
+`validation.split_results` (7 -> 90 days), `ingestion.price_ohlcv`/`onchain_metric`/`sentiment_score`
+(7 -> 90 days each). `timescaledb_information.chunks` independently confirmed the pre-existing chunk
+counts (108 / 472 / 922 / 0 respectively) were **unchanged** immediately after each migration -- the
+forward-only-effect constraint the PM flagged (existing undersized chunks are not retroactively
+resized/merged) was proven empirically by the Tech Lead, not just stated in each migration's docstring,
+and no ticket's acceptance criteria or documentation implies otherwise.
+
+**Full test suites, personally re-run by the Tech Lead, zero regressions**: `services/gateway-api`
+146/146; `services/validation-service` 133/133 (one disclosed, pre-existing, unrelated `created_at`-
+ordering flake noted by two separate tickets' dev agents, reproduced once and passed on immediate
+re-run, not caused by or fixed in this sprint); `services/ingestion-service` 108 passed/1 skipped (the
+skip is `sentiment_score`'s chunk-propagation test, which has zero rows/chunks to propagate to this
+session -- not a failure). `git status` scoped to each service's `src/` (`connectors/` also for
+ingestion-service) confirmed zero application-code changes across all seven tickets -- every diff is
+migration + test + README/ticket-doc only, as designed.
+
+**Recurring issue this sprint, flagged for a systemic fix**: four separate encoding-corruption
+incidents occurred across four different dev-agent sessions this sprint (`VS-025`, `INGEST-017`, and
+two near-misses caught by explicit warning on `VS-026`/`INGEST-018`/`VS-027`), all the same root cause
+-- a PowerShell `Get-Content`/`Set-Content` (or equivalent) round-trip without an explicit UTF-8
+encoding flag, silently corrupting every em-dash/en-dash character in an entire Markdown file into
+mojibake (`Ã¢â‚¬"` etc.) even when only a short paragraph was intended. Each incident was caught by the
+Tech Lead via `git diff --stat`/`git diff` showing far more churn than intended (never by the dev
+agent's own self-report) and fixed via a `text.encode('cp1252').decode('utf-8')` round-trip. By the
+final two tickets (`INGEST-018`, `VS-027`), giving the dev agent an explicit, repeated warning plus a
+required self-check (`grep -c 'Ã¢â‚¬'` before finishing) fully prevented the issue. **Recommendation**:
+this is common enough now (this session's own CLAUDE.md/standing-rules context already names it as a
+known issue) that it should stop being restated per-ticket and instead become a documented,
+copy-pasteable helper (e.g. a `scripts/safe_edit.ps1` snippet or a short `docs/` note on the standing
+OneDrive-ENOENT workaround) that every future ticket touching a Markdown/text file under this repo can
+be pointed at directly, the same way tickets already point at `implementation-plan.md`'s design
+patterns -- not something to keep re-deriving per dev-agent prompt.
+
+`docs/product/backlog-db-optimization.md` updated: DBOPT-001/002/003/004/006/007 marked done,
+DBOPT-005/008/009 left explicitly open (unchanged text, still blocked on their respective user
+decisions), DBOPT-010 left as-is (`Won't (for now)`, untouched).

@@ -20,7 +20,12 @@ SERVICE_ROOT = Path(__file__).resolve().parent.parent
 
 # Matches infra/.env.example's POSTGRES_*/VALIDATION_SERVICE_DATABASE_URL
 # defaults, reached via the host-published port (tests run outside Compose).
-POSTGRES_URL = "postgresql+psycopg://naive_first:naive_first_dev_password@localhost:5432/naive_first"
+# Uses the literal loopback IP, not "localhost" -- same IPv6-hang finding
+# as test_postgres_repository.py in this same directory (2026-09-01 QA
+# sweep): resolving "localhost" can attempt an IPv6 (::1) connection first,
+# which Docker Desktop's port-forwarding (127.0.0.1 only) never answers,
+# hanging this file indefinitely instead of failing over to IPv4.
+POSTGRES_URL = "postgresql+psycopg://naive_first:naive_first_dev_password@127.0.0.1:5432/naive_first"
 
 
 def _postgres_reachable() -> bool:
@@ -35,7 +40,7 @@ def _postgres_reachable() -> bool:
 
 
 pytestmark = pytest.mark.skipif(
-    not _postgres_reachable(), reason="Postgres not reachable at localhost:5432"
+    not _postgres_reachable(), reason="Postgres not reachable at 127.0.0.1:5432"
 )
 
 

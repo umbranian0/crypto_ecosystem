@@ -8,6 +8,11 @@ tenant-session-cookie login helper -- no new mocking convention.
 
 DASH-114: extends `trigger_crawl`'s own tests with the optional `since`
 first-crawl override -- same fixtures/helpers, no new mocking convention.
+
+DASH-115: `INGEST-015` made `POST /ingestion/connectors/{source}/run`
+asynchronous (`202 {source, status: "queued", since, queued_at}`, no
+`row_count`) -- the stubbed downstream responses below are updated to that
+real shape instead of the pre-`INGEST-015` synchronous one.
 """
 
 from __future__ import annotations
@@ -20,6 +25,13 @@ from app.dependencies.session import get_session_store
 from app.main import app
 
 RAW_KEY = "monitoring-triggers-test-raw-api-key"
+
+_QUEUED_RESPONSE_BODY = {
+    "source": "binance_price_btcusdt_1h",
+    "status": "queued",
+    "since": "2026-01-01T00:00:00",
+    "queued_at": "2026-01-02T00:00:00",
+}
 
 
 @pytest.fixture(autouse=True)
@@ -45,20 +57,15 @@ def _patch_transport(monkeypatch, handler) -> None:
 # POST /monitoring/connectors/{source}/run
 
 
-def test_trigger_crawl_success_shows_status_and_row_count(monkeypatch) -> None:
+def test_trigger_crawl_success_shows_queued_status_and_since(monkeypatch) -> None:
+    """DASH-115: `INGEST-015` made this call asynchronous -- the response no
+    longer carries `row_count`/a finished status.
+    """
+
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/ingestion/connectors/binance_price_btcusdt_1h/run"
         assert request.method == "POST"
-        return httpx.Response(
-            202,
-            json={
-                "source": "binance_price_btcusdt_1h",
-                "status": "completed",
-                "row_count": 42,
-                "since": "2026-01-01T00:00:00",
-                "fetched_at": "2026-01-02T00:00:00",
-            },
-        )
+        return httpx.Response(202, json=_QUEUED_RESPONSE_BODY)
 
     _patch_transport(monkeypatch, handler)
 
@@ -69,8 +76,10 @@ def test_trigger_crawl_success_shows_status_and_row_count(monkeypatch) -> None:
 
     assert response.status_code == 200
     assert "binance_price_btcusdt_1h" in response.text
-    assert "completed" in response.text
-    assert "42" in response.text
+    assert "queued" in response.text
+    assert "2026-01-01T00:00:00" in response.text
+    assert "None rows" not in response.text
+    assert "row_count" not in response.text
 
 
 def test_trigger_crawl_with_since_forwards_since_param(monkeypatch) -> None:
@@ -80,10 +89,9 @@ def test_trigger_crawl_with_since_forwards_since_param(monkeypatch) -> None:
             202,
             json={
                 "source": "binance_price_btcusdt_1h",
-                "status": "completed",
-                "row_count": 42,
+                "status": "queued",
                 "since": "2020-01-01T00:00:00",
-                "fetched_at": "2026-01-02T00:00:00",
+                "queued_at": "2026-01-02T00:00:00",
             },
         )
 
@@ -102,16 +110,7 @@ def test_trigger_crawl_with_since_forwards_since_param(monkeypatch) -> None:
 def test_trigger_crawl_without_since_omits_since_param(monkeypatch) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert "since" not in request.url.params
-        return httpx.Response(
-            202,
-            json={
-                "source": "binance_price_btcusdt_1h",
-                "status": "completed",
-                "row_count": 42,
-                "since": "2026-01-01T00:00:00",
-                "fetched_at": "2026-01-02T00:00:00",
-            },
-        )
+        return httpx.Response(202, json=_QUEUED_RESPONSE_BODY)
 
     _patch_transport(monkeypatch, handler)
 
@@ -126,16 +125,7 @@ def test_trigger_crawl_without_since_omits_since_param(monkeypatch) -> None:
 def test_trigger_crawl_with_blank_since_omits_since_param(monkeypatch) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert "since" not in request.url.params
-        return httpx.Response(
-            202,
-            json={
-                "source": "binance_price_btcusdt_1h",
-                "status": "completed",
-                "row_count": 42,
-                "since": "2026-01-01T00:00:00",
-                "fetched_at": "2026-01-02T00:00:00",
-            },
-        )
+        return httpx.Response(202, json=_QUEUED_RESPONSE_BODY)
 
     _patch_transport(monkeypatch, handler)
 

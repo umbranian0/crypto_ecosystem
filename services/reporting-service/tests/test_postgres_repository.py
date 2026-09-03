@@ -57,7 +57,17 @@ SERVICE_ROOT = Path(__file__).resolve().parent.parent
 # host-published port (tests run outside Compose). Migration-time role
 # (schema owner) -- same precedent validation-service's/gateway-api's own
 # test_postgres_repository.py use for their main CRUD fixtures.
-POSTGRES_URL = "postgresql+psycopg://naive_first:naive_first_dev_password@localhost:5432/naive_first"
+# Uses the literal loopback IP, not the "localhost" hostname: found live
+# (2026-09-01 QA sweep) that on this platform's Windows/Docker Desktop dev
+# setup, resolving "localhost" can attempt an IPv6 (::1) connection first,
+# which Docker Desktop's port-forwarding (bound to 127.0.0.1 only, per
+# infra/docker-compose.yml's postgres service) never answers or rejects --
+# the connection attempt hangs indefinitely instead of failing over to the
+# working IPv4 address, hanging this entire test file (and anything that
+# imports it, including plain `--collect-only`) with zero output. A literal
+# IPv4 address sidesteps address-family resolution/ordering entirely and
+# connects immediately, verified independently before this change.
+POSTGRES_URL = "postgresql+psycopg://naive_first:naive_first_dev_password@127.0.0.1:5432/naive_first"
 SEARCH_PATH_OPTION = "options=-csearch_path%3Dreporting"
 ENGINE_URL = f"{POSTGRES_URL}?{SEARCH_PATH_OPTION}"
 
@@ -74,7 +84,7 @@ def _postgres_reachable() -> bool:
 
 
 pytestmark = pytest.mark.skipif(
-    not _postgres_reachable(), reason="Postgres not reachable at localhost:5432"
+    not _postgres_reachable(), reason="Postgres not reachable at 127.0.0.1:5432"
 )
 
 
@@ -146,7 +156,7 @@ def test_get_report_returns_none_for_a_different_tenants_report(report_repo) -> 
 
 APP_ROLE_ENGINE_URL = (
     f"postgresql+psycopg://naive_first_app:naive_first_app_dev_password"
-    f"@localhost:5432/naive_first?{SEARCH_PATH_OPTION}"
+    f"@127.0.0.1:5432/naive_first?{SEARCH_PATH_OPTION}"
 )
 
 

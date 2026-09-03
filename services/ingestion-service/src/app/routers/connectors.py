@@ -1,4 +1,5 @@
-"""INGEST-008: `POST /connectors/{source}/run` -- tenant-authenticated crawl trigger.
+"""INGEST-008/INGEST-015: `POST /connectors/{source}/run` -- tenant-authenticated,
+lock-gated, asynchronous crawl trigger.
 
 Single responsibility: adapt an HTTP request into the exact same DB-write
 sequence `connectors/base.py`'s `run_incremental` already encodes for its
@@ -8,11 +9,24 @@ record_crawl_run`) -- no second, divergent "run a crawl" implementation. The
 primitives themselves (`latest_watermark_from_db`, the repository's own
 write/record methods) are imported and called directly rather than through
 `run_incremental` only because `run_incremental` itself returns `None`; this
-handler needs the resolved `since`/`row_count`/`status`/`fetched_at` values
-in hand to answer the request with a reference to the `crawl_runs` row it
-just wrote (`ConnectorRecordRepository` exposes no read-back method for that
-row, and adding one is out of this ticket's scope -- ticket Implementation
-acceptance criteria's disclosed simplification).
+handler needs the resolved `since` value in hand to answer the request and to
+hand off to the background task.
+
+INGEST-015 (QA-reproduced timeout + race-condition fix): the crawl itself no
+longer runs synchronously inside the request -- `run_connector` acquires a
+per-`(tenant_id, source)` lock (`app.crawl_registry.CrawlRegistry`, INGEST-014)
+immediately after validation, resolves `since`, writes a `"queued"`
+`crawl_runs` row, schedules `_execute_crawl` via `BackgroundTasks`, and
+returns `202` with `ConnectorRunAcceptedResponse` -- not the crawl's outcome,
+which isn't known yet. A second request for the same `(tenant_id, source)`
+while one is in flight gets an immediate `409`, before any DB read/write,
+closing the race where two concurrent requests each resolved the same
+`since` and both attempted to write the same rows (reproduced live as an
+unhandled `500` `UniqueViolation`). `_execute_crawl` runs in the background
+thread FastAPI's `BackgroundTasks` uses and is solely responsible for
+releasing the lock (`finally: registry.release(...)`, unconditionally) --
+this is what prevents a `fetch()`/write exception from permanently locking a
+source out of future crawls.
 
 `source` -> connector mapping: the exact `connector.name` strings each
 `IngestionSource` subclass sets, not invented route-level names --
@@ -48,7 +62,7 @@ accident. An unset tenant/source is a valid `200` entry
 service's existing "empty is a valid answer" convention (`GET /datasets`).
 
 `since` override (INGEST-013): honored only on a tenant's first-ever crawl of
-a `(tenant_id, source)` -- see `_run_and_record`'s `since_override` parameter,
+a `(tenant_id, source)` -- resolved inline in `run_connector` via its `since_override` local,
 consulted only inside its `since is None` branch. `_resolve_connector`'s
 tuple grew a 5th element, `since_floor`, the optional real-data-availability
 boundary an override must not predate (binance/onchain only; `None` for
@@ -62,7 +76,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from naive_first_common import TenantContext, get_tenant_context
@@ -76,23 +90,28 @@ from connectors.blockchain_onchain import (
 )
 from connectors.reddit_sentiment import RedditSentimentConnector, default_backfill_start as reddit_backfill_start
 
-from app.dependencies.repositories import ConnectorRecordRepositoryDep, CredentialRepositoryDep
+from app.crawl_registry import CrawlRegistry
+from app.dependencies.repositories import ConnectorRecordRepositoryDep, CredentialRepositoryDep, CrawlRegistryDep
 from app.repositories.interfaces import ConnectorRecordRepository, CredentialRepository
 
 router = APIRouter()
 
 
-class ConnectorRunResponse(BaseModel):
-    """Reference to the `crawl_runs` row this request's `fetch()` attempt
-    produced -- the values `record_crawl_run` was just called with, since
-    `ConnectorRecordRepository` exposes no way to read that row back.
+class ConnectorRunAcceptedResponse(BaseModel):
+    """`POST /connectors/{source}/run`'s `202` body (INGEST-015) -- an
+    acceptance acknowledgement, not the crawl's outcome (which is not known
+    at response time, since the fetch-and-write work now happens in the
+    background). `since` is the watermark this crawl will run from, already
+    resolved before responding; `queued_at` is when the request was
+    accepted. There is deliberately no `row_count`/`fetched_at` here -- see
+    `GET /connectors/{source}/status` (INGEST-009) for the eventual outcome,
+    keyed by the same `(tenant_id, source)` pair this response is scoped to.
     """
 
     source: str
     status: str
-    row_count: int
     since: datetime | None
-    fetched_at: datetime
+    queued_at: datetime
 
 
 def _binance_source():
@@ -185,11 +204,13 @@ def _parse_since_override(raw: str, floor: datetime | None) -> datetime:
     return parsed
 
 
-@router.post("/connectors/{source}/run", response_model=ConnectorRunResponse, status_code=202)
+@router.post("/connectors/{source}/run", response_model=ConnectorRunAcceptedResponse, status_code=202)
 def run_connector(
     source: str,
+    background_tasks: BackgroundTasks,
     connector_repository: ConnectorRecordRepositoryDep,
     credential_repository: CredentialRepositoryDep,
+    registry: CrawlRegistryDep,
     tenant: TenantContext = Depends(get_tenant_context),
     since: str | None = Query(
         default=None,
@@ -198,7 +219,7 @@ def run_connector(
             "first-ever crawl of this source; ignored on any later crawl."
         ),
     ),
-) -> ConnectorRunResponse:
+) -> ConnectorRunAcceptedResponse:
     resolved = _resolve_connector(source, tenant, credential_repository)
     if resolved is None:
         raise HTTPException(status_code=404, detail=f"unknown connector source {source!r}")
@@ -217,51 +238,89 @@ def run_connector(
                 detail=f"no credentials stored for connector {source!r} and this tenant",
             )
 
-    return _run_and_record(
-        connector_repository, tenant.tenant_id, connector, default_start, record_kind, since_override
+    # Lock-then-validate ordering (INGEST-015 Design): every validation above
+    # (unknown source, malformed/out-of-range `since`, missing credentials)
+    # has already passed by this point -- a bad request fails the same way
+    # whether or not a crawl happens to be in flight for this source. Only
+    # now, immediately before the watermark is resolved, is the lock touched
+    # -- this is what closes the actual race (both requests resolving the
+    # same `since` before either held the lock).
+    if not registry.try_acquire(tenant.tenant_id, connector.name):
+        raise HTTPException(
+            status_code=409, detail=f"crawl already in progress for connector {source!r}"
+        )
+
+    try:
+        resolved_since = latest_watermark_from_db(connector_repository, tenant.tenant_id, connector.name)
+        if resolved_since is None:
+            resolved_since = since_override if since_override is not None else default_start
+
+        queued_at = utcnow()
+        connector_repository.record_crawl_run(
+            tenant.tenant_id, connector.name, resolved_since, queued_at, 0, "queued"
+        )
+        background_tasks.add_task(
+            _execute_crawl,
+            connector_repository,
+            registry,
+            tenant.tenant_id,
+            connector,
+            record_kind,
+            resolved_since,
+        )
+    except Exception:
+        # The lock must never be left held on a path that failed to reach
+        # `_execute_crawl` -- that function is the only other place `release`
+        # is called, and it will never run if scheduling itself failed.
+        registry.release(tenant.tenant_id, connector.name)
+        raise
+
+    return ConnectorRunAcceptedResponse(
+        source=connector.name, status="queued", since=resolved_since, queued_at=queued_at
     )
 
 
-def _run_and_record(
+def _execute_crawl(
     repository: ConnectorRecordRepository,
+    registry: CrawlRegistry,
     tenant_id: str,
     connector,
-    default_start: datetime,
     record_kind: str,
-    since_override: datetime | None = None,
-) -> ConnectorRunResponse:
-    # Mirrors `connectors/base.py`'s `run_incremental` DB-write branch
-    # exactly (same primitives, same order, same failure handling) -- the
-    # only reason this isn't a plain call to `run_incremental` is that this
-    # handler needs the resolved values back to answer the request.
-    since = latest_watermark_from_db(repository, tenant_id, connector.name)
-    if since is None:
-        since = since_override if since_override is not None else default_start
-    result = connector.fetch(since=since)
+    since: datetime | None,
+) -> None:
+    """Background-task body (INGEST-015): the actual fetch-and-write work,
+    scheduled via `BackgroundTasks.add_task` rather than awaited inline.
+    Mirrors `connectors/base.py`'s `run_incremental` DB-write branch (same
+    primitives, same order) -- the only reason this isn't a plain call to
+    `run_incremental` is that `since` is already resolved by the caller
+    (under the lock), not re-resolved here.
 
-    if not result.is_empty():
-        records = result.records.copy()
-        records["fetched_at"] = result.fetched_at
-        write_method = getattr(repository, f"add_{record_kind}_records")
-        try:
+    Catches *any* exception from `fetch()` or the write step alike (a
+    deliberate improvement over the old synchronous handler, which only
+    caught write-step exceptions -- a `fetch()`-raised exception used to
+    surface as an unhandled `500` with no `crawl_runs` row at all) and
+    records it as `status="failed"` instead of leaving the row `"queued"`
+    forever. The `finally` block's `registry.release` is the single most
+    important line here -- it must run on every exit path, or a background
+    exception would permanently lock this `(tenant_id, source)` out of
+    future crawls.
+    """
+    try:
+        result = connector.fetch(since=since)
+
+        if not result.is_empty():
+            records = result.records.copy()
+            records["fetched_at"] = result.fetched_at
+            write_method = getattr(repository, f"add_{record_kind}_records")
             row_count = write_method(tenant_id, connector.name, records)
-        except Exception:
-            repository.record_crawl_run(tenant_id, connector.name, since, result.fetched_at, 0, "failed")
-            raise
-        status = "completed"
-    else:
-        row_count = 0
-        status = "completed"
+        else:
+            row_count = 0
 
-    repository.record_crawl_run(tenant_id, connector.name, since, result.fetched_at, row_count, status)
-
-    return ConnectorRunResponse(
-        source=connector.name,
-        status=status,
-        row_count=row_count,
-        since=since,
-        fetched_at=result.fetched_at,
-    )
+        repository.record_crawl_run(tenant_id, connector.name, since, result.fetched_at, row_count, "completed")
+    except Exception:
+        repository.record_crawl_run(tenant_id, connector.name, since, utcnow(), 0, "failed")
+    finally:
+        registry.release(tenant_id, connector.name)
 
 
 @router.get("/connectors/credentials-status", response_model=CredentialsStatusResponse)

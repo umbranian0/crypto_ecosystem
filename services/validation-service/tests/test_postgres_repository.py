@@ -42,7 +42,19 @@ SERVICE_ROOT = Path(__file__).resolve().parent.parent
 
 # Matches infra/.env.example's POSTGRES_*/VALIDATION_SERVICE_DATABASE_URL
 # defaults, reached via the host-published port (tests run outside Compose).
-POSTGRES_URL = "postgresql+psycopg://naive_first:naive_first_dev_password@localhost:5432/naive_first"
+# Uses the literal loopback IP, not the "localhost" hostname: found live
+# (2026-09-01 QA sweep, same finding as reporting-service's own
+# test_postgres_repository.py) that on this platform's Windows/Docker Desktop
+# dev setup, resolving "localhost" can attempt an IPv6 (::1) connection
+# first, which Docker Desktop's port-forwarding (bound to 127.0.0.1 only,
+# per infra/docker-compose.yml's postgres service) never answers or rejects
+# -- the connection attempt hangs indefinitely instead of failing over to
+# the working IPv4 address, hanging this entire test file (and anything
+# that imports it, including plain `--collect-only`) with zero output. A
+# literal IPv4 address sidesteps address-family resolution/ordering
+# entirely and connects immediately, verified independently before this
+# change.
+POSTGRES_URL = "postgresql+psycopg://naive_first:naive_first_dev_password@127.0.0.1:5432/naive_first"
 SEARCH_PATH_OPTION = "options=-csearch_path%3Dvalidation"
 ENGINE_URL = f"{POSTGRES_URL}?{SEARCH_PATH_OPTION}"
 
@@ -61,7 +73,7 @@ def _postgres_reachable() -> bool:
 
 
 pytestmark = pytest.mark.skipif(
-    not _postgres_reachable(), reason="Postgres not reachable at localhost:5432"
+    not _postgres_reachable(), reason="Postgres not reachable at 127.0.0.1:5432"
 )
 
 
@@ -218,7 +230,7 @@ RLS_TEST_ROLE = "validation_rls_test_role"
 RLS_TEST_PASSWORD = "validation_rls_test_pw"
 RLS_TEST_ENGINE_URL = (
     f"postgresql+psycopg://{RLS_TEST_ROLE}:{RLS_TEST_PASSWORD}"
-    f"@localhost:5432/naive_first?{SEARCH_PATH_OPTION}"
+    f"@127.0.0.1:5432/naive_first?{SEARCH_PATH_OPTION}"
 )
 
 
@@ -404,7 +416,7 @@ POOL_TEST_ROLE = "validation_rls_pool_test_role"
 POOL_TEST_PASSWORD = "validation_rls_pool_test_pw"
 POOL_TEST_ENGINE_URL = (
     f"postgresql+psycopg://{POOL_TEST_ROLE}:{POOL_TEST_PASSWORD}"
-    f"@localhost:5432/naive_first?{SEARCH_PATH_OPTION}"
+    f"@127.0.0.1:5432/naive_first?{SEARCH_PATH_OPTION}"
 )
 
 

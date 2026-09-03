@@ -22,15 +22,16 @@ risks colliding with other sprint work touching that file. No circular
 import: `runs.py` only imports from `app.dependencies.*`, never from
 `app.routers.ingestion`.
 
-The downstream response body/status code (`202` success with `{source,
-status, row_count, since, fetched_at}`; `404` unknown source; `422` missing
-Reddit credentials -- `services/ingestion-service/src/app/routers/
-connectors.py`, INGEST-008) is forwarded unmodified, not reparsed into a
-local Pydantic model -- this mirrors `operator.py`'s own `-> dict` pass-
-through shape rather than `runs.py`/`reports.py`'s parse-into-local-model
-shape, since there is no shared-contract type for this response to hang off
-of (INGEST-008's `ConnectorRunResponse` lives in `ingestion-service` only,
-not `naive_first_common.contracts`) and this ticket does not add one.
+The downstream response body/status code (originally `202` success with
+`{source, status, row_count, since, fetched_at}`; `404` unknown source; `422`
+missing Reddit credentials -- `services/ingestion-service/src/app/routers/
+connectors.py`, INGEST-008; see GW-024 below for how this response shape
+changed) is forwarded unmodified, not reparsed into a local Pydantic model --
+this mirrors `operator.py`'s own `-> dict` pass-through shape rather than
+`runs.py`/`reports.py`'s parse-into-local-model shape, since there is no
+shared-contract type for this response to hang off of (INGEST-008's
+`ConnectorRunResponse` lives in `ingestion-service` only, not
+`naive_first_common.contracts`) and this ticket does not add one.
 
 GW-020: `GET /ingestion/datasets` and `GET /ingestion/datasets/{source}/series`
 extend this same file (this ticket runs strictly after GW-019's diff lands,
@@ -80,6 +81,21 @@ rejection reasons behind a downstream `422`) belong to `ingestion-service`
 alone (INGEST-013) -- this router adds zero re-validation, matching its own
 established "pass-through, ingestion-service owns validation" precedent for
 `start`/`end`/`field` on `read_series`.
+
+GW-024: `INGEST-015` changes the downstream `POST /connectors/{source}/run`
+contract -- it now returns `202` immediately with `{source, status: "queued",
+since, queued_at}` (the crawl itself runs in the background; poll `GET
+/ingestion/connectors/{source}/status`, DASH-109 above, for the outcome)
+instead of blocking until the crawl finished, and adds a `409` ("crawl
+already in progress for connector '<source>'") outcome for a second request
+against the same in-flight `(tenant_id, source)` pair. `run_connector` itself
+needs no code change for either of these: it already forwards the response
+body unmodified as a plain `dict` (no local Pydantic model to go stale), and
+`_raise_for_error`'s generic `>= 400` check already forwards any non-2xx
+status code, `409` included, with no status-code allowlist to update. Proven,
+not just asserted, by
+`test_run_connector_forwards_queued_202_response_shape`/
+`test_run_connector_conflict_returns_409_forwarded_unmodified` below.
 """
 
 from __future__ import annotations

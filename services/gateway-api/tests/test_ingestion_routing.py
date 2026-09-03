@@ -21,6 +21,18 @@ branch simulating `INGEST-013`'s downstream rejection, and adds tests proving
 supplied, omitted entirely when absent, and that the downstream `422` is
 forwarded as-is. Generic 401/502/504/tenant-header cases for this route are
 already covered above and are not duplicated here.
+
+GW-024: `INGEST-015` changes the downstream `POST /connectors/{source}/run`
+contract to `202` immediately with `{source, status: "queued", since,
+queued_at}` instead of blocking for the crawl's final outcome, and adds a
+`409` ("crawl already in progress") outcome. `FakeIngestionService`'s main
+success branch is updated to return the new `queued` shape (replacing the old
+`status: "completed"`/`row_count`/`fetched_at` body, so no stale expectation
+of that shape lingers anywhere in this file), and gains a
+`simulate_conflict` flag returning `409` for the same route, checked ahead of
+the success branch. Proves -- rather than assumes -- that `run_connector`'s
+generic pass-through already forwards both outcomes unmodified with zero
+code change (ticket GW-024's own Analysis claim).
 """
 
 from __future__ import annotations
@@ -49,6 +61,7 @@ class FakeIngestionService:
     seen_requests: list[httpx.Request]
     simulate_connect_error: bool = False
     simulate_timeout: bool = False
+    simulate_conflict: bool = False
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         if self.simulate_connect_error:
@@ -70,15 +83,25 @@ class FakeIngestionService:
                     "detail": "since='1900-01-01' predates this connector's verified earliest-available date"
                 },
             )
+        if (
+            request.method == "POST"
+            and path == "/connectors/binance_price_btcusdt_1h/run"
+            and self.simulate_conflict
+        ):
+            return httpx.Response(
+                409,
+                json={
+                    "detail": "crawl already in progress for connector 'binance_price_btcusdt_1h'"
+                },
+            )
         if request.method == "POST" and path == "/connectors/binance_price_btcusdt_1h/run":
             return httpx.Response(
                 202,
                 json={
                     "source": "binance_price_btcusdt_1h",
-                    "status": "completed",
-                    "row_count": 3,
-                    "since": "2026-01-01T00:00:00",
-                    "fetched_at": "2026-01-02T00:00:00",
+                    "status": "queued",
+                    "since": None,
+                    "queued_at": "2026-01-02T00:00:00",
                 },
             )
         if request.method == "POST" and path == "/connectors/unknown_source/run":
@@ -185,7 +208,7 @@ def client(fake_ingestion_service: FakeIngestionService) -> TestClient:
     return _build_client(fake_ingestion_service)
 
 
-def test_run_connector_forwards_and_returns_response_shape(client: TestClient) -> None:
+def test_run_connector_forwards_queued_202_response_shape(client: TestClient) -> None:
     response = client.post(
         "/ingestion/connectors/binance_price_btcusdt_1h/run",
         headers={"Authorization": f"Bearer {RAW_KEY_A}"},
@@ -195,11 +218,25 @@ def test_run_connector_forwards_and_returns_response_shape(client: TestClient) -
     body = response.json()
     assert body == {
         "source": "binance_price_btcusdt_1h",
-        "status": "completed",
-        "row_count": 3,
-        "since": "2026-01-01T00:00:00",
-        "fetched_at": "2026-01-02T00:00:00",
+        "status": "queued",
+        "since": None,
+        "queued_at": "2026-01-02T00:00:00",
     }
+
+
+def test_run_connector_conflict_returns_409_forwarded_unmodified() -> None:
+    fake = FakeIngestionService(seen_requests=[], simulate_conflict=True)
+    client = _build_client(fake)
+
+    response = client.post(
+        "/ingestion/connectors/binance_price_btcusdt_1h/run",
+        headers={"Authorization": f"Bearer {RAW_KEY_A}"},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == (
+        "crawl already in progress for connector 'binance_price_btcusdt_1h'"
+    )
 
 
 def test_unknown_source_returns_404_forwarded_unmodified(client: TestClient) -> None:

@@ -98,6 +98,21 @@ check note, ticket Implementation acceptance criteria: "no new error-handling
 pattern"). When HTMX swaps that response into the small result `<div>`, the
 visible effect is the same fixed message text, not a second, differently-
 worded error surface.
+
+DASH-115: `INGEST-015` made `POST /ingestion/connectors/{source}/run`
+asynchronous (`202 {source, status: "queued", since, queued_at}`, no
+`row_count` any more) -- `trigger_crawl`'s own fragment
+(`_crawl_trigger_result.html`) now only ever acknowledges the crawl was
+queued, never that it finished. Since the crawl-status panel above
+(DASH-109) used to be rendered once per page load, and a crawl used to
+finish synchronously within that same request/response, the panel's snapshot
+was usually already final by the time a user saw it; now it would say
+"queued" indefinitely without a manual reload. `crawl_status_fragment` below
+is the fix: a small polling route the panel's own `<div>`
+(`_crawl_status_panel.html`) targets via `hx-get`/`hx-trigger="load, every
+5s"`/`hx-swap="outerHTML"`, re-rendering the same shared partial
+`monitoring`'s own initial render includes -- one file, not two
+near-identical templates (ticket's own DRY check note).
 """
 
 from __future__ import annotations
@@ -215,6 +230,43 @@ def monitoring(request: Request, base_url: GatewayApiUrlDep, headers: OptionalDo
     )
 
 
+@router.get("/monitoring/crawl-status-fragment")
+def crawl_status_fragment(request: Request, headers: DownstreamHeadersDep, base_url: GatewayApiUrlDep):
+    """DASH-115: the polling target `monitoring.html`'s crawl-status panel
+    (`_crawl_status_panel.html`) points `hx-get`/`hx-trigger="load, every 5s"`
+    at -- makes the panel progress from `"queued"` (`INGEST-015`'s new async
+    contract) to `"completed"`/`"failed"` without a manual full-page reload.
+
+    Tenant-scoped via `DownstreamHeadersDep` (redirect-to-`/login`), not the
+    parent `/monitoring` page's own `OptionalDownstreamHeadersDep` -- an
+    anonymous visitor polling their own nonexistent crawl status makes no
+    sense, unlike viewing the page itself. Reuses `_fetch_crawl_statuses`
+    (DASH-109) unmodified -- no second "list sources, call status per source"
+    implementation -- and renders the exact same `_crawl_status_panel.html`
+    file `monitoring`'s own initial render includes, so both responses are
+    byte-identical for the same downstream state (ticket's own DRY check
+    note).
+
+    `_fetch_crawl_statuses` collapses every downstream failure mode
+    (transport error, non-200) into `None`; since `headers` is never `None`
+    here (unlike the parent page), that `None` can only mean a genuine
+    downstream failure, rendered as a small error fragment via
+    `_render_error_for_status` (this module's own docstring, "no new
+    error-handling pattern") rather than the page's own login-prompt state.
+    The specific `502` is a disclosed simplification -- the helper does not
+    preserve which transport/status failure occurred.
+    """
+    with httpx.Client(base_url=base_url) as client:
+        crawl_statuses = _fetch_crawl_statuses(client, headers)
+
+    if crawl_statuses is None:
+        return _render_error_for_status(request, 502)
+
+    return templates.TemplateResponse(
+        request, "_crawl_status_panel.html", {"crawl_statuses": crawl_statuses}
+    )
+
+
 @router.post("/monitoring/connectors/{source}/run")
 def trigger_crawl(
     request: Request,
@@ -230,9 +282,13 @@ def trigger_crawl(
     uses -- no hand-rolled `Authorization` header, and structurally nothing
     beyond that one outbound `httpx` call (this module's own docstring: no
     container-runtime control surface, no locally spawned OS-level process).
-    Returns a small fragment (`_crawl_trigger_result.html`) showing the
-    resulting `status`/`row_count` for HTMX to swap into that source row's
-    own result `<div>`; any transport failure or non-`202` response reuses
+    Returns a small fragment (`_crawl_trigger_result.html`) acknowledging the
+    resulting `status`/`since` for HTMX to swap into that source row's own
+    result `<div>` -- `INGEST-015` made this call asynchronous (`202
+    {source, status: "queued", since, queued_at}`, DASH-115), so this
+    fragment only ever confirms the crawl was queued, never that it finished
+    (the crawl-status panel's own polling, DASH-115, is what shows real
+    progress). Any transport failure or non-`202` response reuses
     `_render_error_for_status` unmodified (this module's own docstring, "no
     new error-handling pattern").
 

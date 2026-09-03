@@ -33,6 +33,12 @@ ARCH-002: `_get_engine` is the memoized-by-URL `Engine` provider -- one
 URL string (`functools.lru_cache`), never zero-arg, so a test that
 `monkeypatch.setenv`s the DB path/URL mid-suite still gets an isolated engine
 per value.
+
+INGEST-014 adds `get_crawl_registry`/`CrawlRegistryDep`, one more
+process-lifetime singleton alongside `_get_engine`'s `Engine` -- but a plain
+module-level instance, not `functools.lru_cache`-memoized, since
+`app.crawl_registry.CrawlRegistry` takes no constructor argument to key on
+(unlike `_get_engine`, which is memoized per db_path/URL).
 """
 
 from __future__ import annotations
@@ -44,6 +50,7 @@ from typing import Annotated
 from fastapi import Depends
 from sqlalchemy import Engine
 
+from app.crawl_registry import CrawlRegistry
 from app.models import Base
 from app.repositories.interfaces import ConnectorRecordRepository, CredentialRepository
 from app.repositories.postgres_repository import (
@@ -114,8 +121,19 @@ def get_credential_repository() -> CredentialRepository:
     return PostgresCredentialRepository(url, engine=_get_engine(url))
 
 
+# Module-level singleton (not `functools.lru_cache`-memoized -- `CrawlRegistry`
+# takes no constructor argument to key on) -- must be the *same* instance
+# across concurrent requests to actually serialize them.
+_crawl_registry = CrawlRegistry()
+
+
+def get_crawl_registry() -> CrawlRegistry:
+    return _crawl_registry
+
+
 HealthCheckEngineDep = Annotated[Engine, Depends(get_health_check_engine)]
 ConnectorRecordRepositoryDep = Annotated[
     ConnectorRecordRepository, Depends(get_connector_record_repository)
 ]
 CredentialRepositoryDep = Annotated[CredentialRepository, Depends(get_credential_repository)]
+CrawlRegistryDep = Annotated[CrawlRegistry, Depends(get_crawl_registry)]

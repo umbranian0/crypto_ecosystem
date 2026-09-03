@@ -62,9 +62,21 @@ from app.repositories.postgres_repository import (
 
 SERVICE_ROOT = Path(__file__).resolve().parent.parent
 
+# Uses the literal loopback IP, not the "localhost" hostname: found live
+# (2026-09-01 QA sweep, same finding as reporting-service's/
+# validation-service's own test_postgres_repository.py) that on this
+# platform's Windows/Docker Desktop dev setup, resolving "localhost" can
+# attempt an IPv6 (::1) connection first, which Docker Desktop's
+# port-forwarding (bound to 127.0.0.1 only, per
+# infra/docker-compose.yml's postgres service) never answers or rejects --
+# the connection attempt hangs indefinitely instead of failing over to the
+# working IPv4 address, hanging this entire test file with zero output. A
+# literal IPv4 address sidesteps address-family resolution/ordering
+# entirely and connects immediately, verified independently before this
+# change.
 POSTGRES_TEST_URL = os.environ.get(
     "GATEWAY_API_TEST_DATABASE_URL",
-    "postgresql+psycopg://naive_first:naive_first_dev_password@localhost:5432/naive_first",
+    "postgresql+psycopg://naive_first:naive_first_dev_password@127.0.0.1:5432/naive_first",
 )
 
 

@@ -16,6 +16,34 @@ Formerly `data-pipeline/`. See [../../docs/solution-design.md](../../docs/soluti
 
 **`ingestion` Postgres schema** (`INGEST-002`, `src/app/models.py` + `migrations/`): five tables, column-for-column per solution-design.md section 8.2 — `price_ohlcv`, `onchain_metric`, `sentiment_score` (each a TimescaleDB hypertable, partitioned on `open_time`/`timestamp`/`created_utc` respectively, primary key widened to include that column per the same TimescaleDB constraint `validation-service`'s `INF-010` hit), `connector_credentials` (ciphertext-only `bytea` columns — `INGEST-011` owns the actual encrypt/decrypt code), `crawl_runs`. Row-level security (`ENABLE`/`FORCE ROW LEVEL SECURITY` + a `tenant_isolation` policy) is on all five, byte-identical in shape to `validation-service`/`gateway-api`'s own RLS migrations. Alembic environment scoped to the `ingestion` schema (`version_table_schema="ingestion"`, the same `INF-005` fix `validation-service`/`gateway-api` already apply) so this service's `alembic_version` bookkeeping never collides with the other services sharing the same Postgres instance. `migrations/env.py` also issues `CREATE SCHEMA IF NOT EXISTS ingestion` itself (unlike its sibling services, whose schemas are pre-created by `infra/postgres-init/01-create-schemas.sql`) because that script does not yet list `ingestion` — folding it in there for consistency is a disclosed follow-up, out of this ticket's file scope (`services/ingestion-service/` only).
 
+**Hypertable `(tenant_id, source, fetched_at)` composite indexes** (`INGEST-018`/`DBOPT-007`,
+`migrations/versions/0006_add_hypertables_tenant_source_fetched_at_index.py`): `price_ohlcv`,
+`onchain_metric`, `sentiment_score` each gained `ix_<table>_tenant_source_fetched_at`, a composite
+btree on `(tenant_id, source, fetched_at)` (`fetched_at` trailing, not leading -- deliberate, see the
+migration's own docstring), issued against each hypertable's root table. Serves
+`PostgresConnectorRecordRepository.latest_fetched_at`'s `SELECT max(fetched_at) FROM <table> WHERE
+tenant_id = :tenant_id AND source = :source` query, called by `connectors/base.py`'s incremental-fetch
+path on every scheduled crawl -- `fetched_at` is not the partitioning column, so TimescaleDB chunk
+exclusion could not help this query before this index existed. Live-verified against the real Compose
+Postgres container: propagation to all pre-existing chunks confirmed for both `price_ohlcv` (472/472)
+and `onchain_metric` (922/922), and the query plan now uses a backward `Index Only Scan` per chunk
+instead of a full per-chunk `Seq Scan`/`Partial Aggregate`.
+
+**`crawl_runs` composite index** (`INGEST-017`/`DBOPT-006`,
+`migrations/versions/0005_add_crawl_runs_tenant_source_fetched_at_index.py`): `ingestion.crawl_runs`
+gained `ix_crawl_runs_tenant_source_fetched_at`, a composite btree on `(tenant_id, source,
+fetched_at DESC)`, Postgres-only-guarded like every other index/DDL migration in this service. Serves
+`PostgresConnectorRecordRepository.latest_crawl_run`'s `WHERE tenant_id = :tenant_id AND source =
+:source ORDER BY fetched_at DESC LIMIT 1` query (backing the connector/dataset status surface) and
+doubles as the RLS `tenant_id` index this table was also missing. The real table has only 8 rows this
+session -- too small to show a measurable timing delta -- so this was verified structurally rather than
+by speedup: live `EXPLAIN (ANALYZE, BUFFERS)` against the real container still shows a `Seq Scan`
+(expected, honest small-table planner behavior, same disclosed pattern as `GW-025`), but forcing `SET
+enable_seqscan = off` confirms the planner switches cleanly to `Index Scan using
+ix_crawl_runs_tenant_source_fetched_at`, proving the index is real and usable.
+
+**Hypertable chunk sizing** (`INGEST-016`/`DBOPT-004`, `migrations/versions/0004_retune_hypertable_chunk_intervals.py`): `0003_convert_to_hypertables.py`'s `create_hypertable` calls used TimescaleDB's 7-day default `chunk_time_interval`, which against 9-17 years of real backfilled history produced hundreds of undersized chunks (`price_ohlcv`: 472 chunks, ~258 rows/chunk; `onchain_metric`: 922 chunks, ~21 rows/chunk), hurting every query against these tables on chunk-count-driven planning cost. `INGEST-016` retunes all three hypertables' (`price_ohlcv`/`onchain_metric`/`sentiment_score`) `chunk_time_interval` to 90 days via `set_chunk_time_interval`. **This only affects chunks created after the change** -- the existing 472/922 chunks on `price_ohlcv`/`onchain_metric` are not retroactively resized or merged; only chunks created from this point forward span 90 days instead of 7. See VS-027 for the `validation-service` half of the same DBOPT-004 story.
+
 Setup/run (no live app yet, migrations only):
 ```
 uv venv && uv pip install -e .
@@ -27,25 +55,62 @@ Live-verified against this repo's real Compose Postgres (`timescale/timescaledb:
 
 **Contract**: FastAPI service. Built so far: `GET /health` (`INGEST-007`); `POST /connectors/{source}/run` (`INGEST-008`, tenant-authenticated crawl trigger — see below); `GET /datasets`, `GET /datasets/{source}/series`, `GET /connectors/{source}/status` (`INGEST-009` revised — see below); `GET /connectors/credentials-status` (`INGEST-012`, tenant-authenticated credential-presence check — see below). Still planned: the upload API and the data-quality gate. See solution-design.md section 8.3 for the fuller planned REST surface. **There is deliberately no `GET /datasets/{id}` static-lookup endpoint** — the backlog's original sketch is superseded, see the `INGEST-009` note below.
 
-**`POST /connectors/{source}/run`** (`INGEST-008`, `src/app/routers/connectors.py`): tenant-authenticated
-(`Depends(naive_first_common.get_tenant_context)`, `X-Tenant-Id`) crawl trigger for one connector. `source`
-is the connector's own `connector.name` value, not an invented route-level name:
-`binance_price_btcusdt_1h`, `blockchain_info_hash-rate`, `blockchain_info_n-unique-addresses`,
-`reddit_vader_sentiment`. Resolves the tenant's watermark (`connectors/base.py`'s
-`latest_watermark_from_db`) and, for the Reddit source only, credentials (`CredentialRepository.
-get_credentials`) before calling `fetch()`; a tenant with no stored Reddit credentials gets a `422`
-naming the missing connector rather than an unhandled `500`. An unknown `source` is a `404`. Writes go
-through the exact same primitives `connectors/base.py`'s `run_incremental` DB-write branch already calls
-(`add_{price,onchain,sentiment}_records`, `record_crawl_run`) — called directly here (not through
-`run_incremental` itself) only because this handler needs the resolved `since`/`row_count`/`status`/
-`fetched_at` values back to answer the request, since `ConnectorRecordRepository` exposes no read-back
-method for the `crawl_runs` row it just wrote (disclosed simplification, not a new repository method).
-Synchronous execution, same accepted interim tradeoff `validation-service`'s `POST /runs` already
-discloses: returns `202` once the crawl has actually run, not immediately with a background-job
-reference. `app.dependencies.repositories.get_connector_record_repository`/`get_credential_repository`
-(new in this ticket) currently only resolve to the Postgres-backed repositories (`INGEST-003`/
-`INGEST-004`) — there is no SQLite fallback yet (tenant-scoped RLS session setup is Postgres-specific),
-so a real `DATABASE_URL` is required to exercise this route outside of tests.
+**`POST /connectors/{source}/run`** (`INGEST-008`, lock-gated and asynchronous since `INGEST-015`,
+`src/app/routers/connectors.py`): tenant-authenticated (`Depends(naive_first_common.get_tenant_context)`,
+`X-Tenant-Id`) crawl trigger for one connector. `source` is the connector's own `connector.name` value,
+not an invented route-level name: `binance_price_btcusdt_1h`, `blockchain_info_hash-rate`,
+`blockchain_info_n-unique-addresses`, `reddit_vader_sentiment`. An unknown `source` is a `404`; a
+malformed/out-of-range `since` override is a `422` (three cases, see below); for the Reddit source
+only, missing stored credentials (`CredentialRepository.get_credentials`) is also a `422`, rather than
+the `RuntimeError` that would otherwise surface mid-`fetch()` as an unhandled `500`. All of this
+validation happens *before* the per-`(tenant_id, source)` lock below is touched, so a bad request fails
+the same way whether or not a crawl happens to be in flight for that source.
+
+**Asynchronous, lock-gated execution** (`INGEST-015`, fixing two QA-reproduced bugs: a real ~70s/
+79,127-row Binance backfill blocking the request that long, and two concurrent requests for the same
+`(tenant_id, source)` independently resolving the same `since` watermark and both attempting to write
+the same rows — reproduced live as an unhandled `500` Postgres `UniqueViolation`). Once validation
+passes, the handler calls `registry.try_acquire(tenant_id, connector.name)`
+(`app.crawl_registry.CrawlRegistry`, `INGEST-014`); if a crawl for that `(tenant_id, source)` is already
+in flight, this returns `False` and the request gets an immediate `409` (`"crawl already in progress for
+connector <source>"`) with no DB read/write at all. If the lock is acquired, the handler resolves the
+watermark (`connectors/base.py`'s `latest_watermark_from_db`, falling back to the `since` override or
+each connector's `default_backfill_start()` on a first crawl — unchanged logic, now run under the lock,
+which is what actually closes the race), writes one `"queued"` `crawl_runs` row via the existing
+`record_crawl_run(...)` (a third status value alongside `"completed"`/`"failed"`, needing no schema
+change since `status` is a plain `String` column), schedules the fetch-and-write work as a
+`BackgroundTasks.add_task(_execute_crawl, ...)`, and returns `202` immediately with
+`ConnectorRunAcceptedResponse` — `{source, status: "queued", since, queued_at}`. This is a **breaking
+response-shape change**: the crawl's outcome (`row_count`/`fetched_at`/final `status`) is not known at
+response time and is no longer in this body — poll `GET /connectors/{source}/status` (`INGEST-009`,
+unchanged) for the outcome, keyed by the same `(tenant_id, source)` pair. If anything raises between a
+successful `try_acquire` and successfully scheduling the background task (e.g. the "queued" write
+itself failing), the lock is released before the exception propagates — no code path leaves
+`try_acquire` succeeding without a matching `release`.
+
+`_execute_crawl` (the background task body) calls `connector.fetch(since=since)`, writes rows through
+the same `add_{price,onchain,sentiment}_records` dispatch `connectors/base.py`'s `run_incremental`
+DB-write branch already uses, then calls `record_crawl_run(..., status="completed")`
+(`row_count=0` for an empty-but-successful fetch, same as before this ticket). On *any* exception —
+including one raised by `fetch()` itself, not only a subsequent write failure as before this ticket —
+it instead writes `record_crawl_run(..., status="failed")`. A `finally` block calls
+`registry.release(tenant_id, connector.name)` unconditionally, on every exit path, so a background-task
+exception never leaves a `(tenant_id, source)` permanently locked out of future crawls.
+`app.dependencies.repositories.get_connector_record_repository`/`get_credential_repository` currently
+only resolve to the Postgres-backed repositories (`INGEST-003`/`INGEST-004`) — there is no SQLite
+fallback yet (tenant-scoped RLS session setup is Postgres-specific), so a real `DATABASE_URL` is
+required to exercise this route outside of tests. `gateway-api`'s proxy (`GW-024`) and
+`dashboard-web`'s trigger-result fragment (`DASH-115`) are follow-up tickets sequenced after this one,
+since they consume the new `202` response shape.
+
+**Crawl mutual-exclusion primitive** (`INGEST-014`, `src/app/crawl_registry.py`, wired into
+`POST /connectors/{source}/run` by `INGEST-015` above): a per-`(tenant_id, source)` in-process lock
+(`CrawlRegistry.try_acquire`/`release`, backed by a single `threading.Lock` + `set[tuple[str, str]]`,
+exposed as a `get_crawl_registry()`/`CrawlRegistryDep` module-level singleton alongside
+`app/dependencies/repositories.py`'s existing `Engine` one). **Disclosed limitation**: this lock is
+process-local only, not shared across multiple `ingestion-service` replicas/processes — a known gap if
+this service is ever scaled horizontally, the same kind of disclosed limitation as the
+encryption-key-rotation gap noted above.
 
 `since` query parameter (`INGEST-013`): an optional ISO 8601 date/datetime, honored **only** on a
 tenant's first-ever crawl of `(tenant_id, source)` (`latest_watermark_from_db` returns `None`); on any

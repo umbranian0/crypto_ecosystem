@@ -24,45 +24,12 @@
 
 <h2>Last crawl status</h2>
 <p>Most recent ingestion connector run per source, for your own tenant. This is a plain
-run-status record only, not a claim about data quality or the source's usefulness.</p>
+run-status record only, not a claim about data quality or the source's usefulness. Refreshes
+automatically every 5 seconds while you are logged in.</p>
 {% if crawl_statuses is none %}
 <p>Log in to view your own ingestion status.</p>
-{% elif crawl_statuses|length == 0 %}
-<p>No ingested sources yet.</p>
 {% else %}
-<div class="table-scroll">
-<table>
-    <thead>
-        <tr>
-            <th>Source</th>
-            <th>Last crawl status</th>
-            <th>Last crawl timestamp</th>
-            <th>Row count</th>
-            <th>Trigger</th>
-        </tr>
-    </thead>
-    <tbody>
-        {% for entry in crawl_statuses %}
-        <tr>
-            <td>{{ entry.source }}</td>
-            <td>{{ entry.status }}</td>
-            <td>{{ entry.timestamp }}</td>
-            <td>{{ entry.row_count }}</td>
-            <td>
-                <form hx-post="/monitoring/connectors/{{ entry.source }}/run"
-                      hx-target="#crawl-trigger-result-{{ loop.index }}" hx-swap="innerHTML">
-                    <label for="since-{{ loop.index }}">Since (optional)</label>
-                    <input type="date" id="since-{{ loop.index }}" name="since">
-                    <p>Only takes effect on this tenant's first-ever crawl of this source; ignored otherwise.</p>
-                    <button type="submit">Run this tenant's {{ entry.source }} crawl now</button>
-                </form>
-                <div id="crawl-trigger-result-{{ loop.index }}"></div>
-            </td>
-        </tr>
-        {% endfor %}
-    </tbody>
-</table>
-</div>
+{% include "_crawl_status_panel.html" %}
 {% endif %}
 
 <h2>Generate a report</h2>

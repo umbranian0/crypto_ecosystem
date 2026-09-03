@@ -1,0 +1,56 @@
+{# DASH-115: crawl-status panel markup, extracted out of `monitoring.html` so
+   both that page's initial render and the polling `GET
+   /monitoring/crawl-status-fragment` route (`app.routers.operator
+   .crawl_status_fragment`) render the exact same file -- one implementation,
+   not two near-identical copies (ticket's own DRY check note, same
+   `{% include %}`-partial pattern `_dataset_macros.html` already established
+   in this module).
+
+   The outer `<div>` itself carries the HTMX polling attributes
+   (`hx-get`/`hx-trigger`/`hx-swap="outerHTML"`) -- since `hx-swap="outerHTML"`
+   replaces the element carrying those attributes on every poll, this
+   fragment's own response must repeat them on its own outer element, not
+   only `monitoring.html`'s initial render, or polling would fire once and
+   stop (ticket's Review acceptance criteria). Only rendered where
+   `crawl_statuses is not none` (a resolved tenant session) -- an anonymous
+   visitor never sees this div at all, matching `monitoring.html`'s own
+   pre-existing gate. #}
+<div id="crawl-status-panel" hx-get="/monitoring/crawl-status-fragment" hx-trigger="load, every 5s" hx-swap="outerHTML">
+{% if crawl_statuses|length == 0 %}
+<p>No ingested sources yet.</p>
+{% else %}
+<div class="table-scroll">
+<table>
+    <thead>
+        <tr>
+            <th>Source</th>
+            <th>Last crawl status</th>
+            <th>Last crawl timestamp</th>
+            <th>Row count</th>
+            <th>Trigger</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for entry in crawl_statuses %}
+        <tr>
+            <td>{{ entry.source }}</td>
+            <td>{{ entry.status }}</td>
+            <td>{{ entry.timestamp }}</td>
+            <td>{{ entry.row_count }}</td>
+            <td>
+                <form hx-post="/monitoring/connectors/{{ entry.source }}/run"
+                      hx-target="#crawl-trigger-result-{{ loop.index }}" hx-swap="innerHTML">
+                    <label for="since-{{ loop.index }}">Since (optional)</label>
+                    <input type="date" id="since-{{ loop.index }}" name="since">
+                    <p>Only takes effect on this tenant's first-ever crawl of this source; ignored otherwise.</p>
+                    <button type="submit">Run this tenant's {{ entry.source }} crawl now</button>
+                </form>
+                <div id="crawl-trigger-result-{{ loop.index }}"></div>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+</div>
+{% endif %}
+</div>

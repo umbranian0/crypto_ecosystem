@@ -15,6 +15,10 @@ to set a real tenant session cookie (`test_downstream.py`'s own established
 pattern, not a new fixture shape) for the "populated"/"empty" cases; the
 existing tests above set no cookie at all, proving the panel degrades to its
 login-prompt state rather than the whole page redirecting.
+
+DASH-115: `GET /monitoring/crawl-status-fragment` tests below reuse the same
+`_patch_transport` monkeypatch and tenant-session-cookie login helper -- no
+new mocking convention.
 """
 
 from __future__ import annotations
@@ -252,3 +256,111 @@ def test_monitoring_crawl_status_panel_empty_for_logged_in_tenant_with_no_datase
 
     assert response.status_code == 200
     assert "No ingested sources yet." in response.text
+
+
+# DASH-115: GET /monitoring/crawl-status-fragment
+
+
+def _crawl_status_handler(request: httpx.Request) -> httpx.Response:
+    if request.url.path == "/system/health":
+        return _health_response()
+    if request.url.path == "/ingestion/datasets":
+        return httpx.Response(
+            200,
+            json={
+                "items": [
+                    {
+                        "source": "binance_price_btcusdt_1h",
+                        "earliest_timestamp": "2026-01-01T00:00:00",
+                        "latest_timestamp": "2026-01-02T00:00:00",
+                        "row_count": 24,
+                    }
+                ]
+            },
+        )
+    if request.url.path == "/ingestion/connectors/binance_price_btcusdt_1h/status":
+        return httpx.Response(
+            200,
+            json={
+                "status": "queued",
+                "timestamp": "2026-01-02T00:00:00",
+                "row_count": None,
+            },
+        )
+    raise AssertionError(f"unexpected request: {request.url.path}")  # pragma: no cover
+
+
+def test_crawl_status_fragment_matches_monitoring_pages_own_panel_markup(monkeypatch) -> None:
+    """Proves the shared-partial DRY claim (ticket's own Test acceptance
+    criteria): for the same stubbed downstream state, the standalone fragment
+    route's response is the same `_crawl_status_panel.html` markup embedded in
+    `GET /monitoring`'s own initial render -- not two independently-maintained
+    copies.
+    """
+    _patch_transport(monkeypatch, _crawl_status_handler)
+
+    session_id = get_session_store().create(RAW_KEY)
+    client = TestClient(app)
+    client.cookies.set("session_id", session_id)
+
+    page_response = client.get("/monitoring")
+    fragment_response = client.get("/monitoring/crawl-status-fragment")
+
+    assert page_response.status_code == 200
+    assert fragment_response.status_code == 200
+
+    # Both responses render the same `_crawl_status_panel.html` file for the
+    # same downstream state -- the fragment's own rendered output must appear
+    # verbatim inside the full page's own render, proving one shared partial
+    # rather than two independently-maintained copies of the same markup.
+    assert fragment_response.text.strip() in page_response.text
+
+
+def test_crawl_status_fragment_carries_polling_attributes_on_its_own_response(
+    monkeypatch,
+) -> None:
+    """Review acceptance criteria: `hx-get`/`hx-trigger`/`hx-swap` must be
+    present on the fragment response's own outer element too, or polling
+    stops after the first `outerHTML` swap.
+    """
+    _patch_transport(monkeypatch, _crawl_status_handler)
+
+    session_id = get_session_store().create(RAW_KEY)
+    client = TestClient(app)
+    client.cookies.set("session_id", session_id)
+
+    response = client.get("/monitoring/crawl-status-fragment")
+
+    assert response.status_code == 200
+    assert 'id="crawl-status-panel"' in response.text
+    assert 'hx-get="/monitoring/crawl-status-fragment"' in response.text
+    assert 'hx-trigger="load, every 5s"' in response.text
+    assert 'hx-swap="outerHTML"' in response.text
+
+
+def test_crawl_status_fragment_requires_tenant_session() -> None:
+    client = TestClient(app)
+
+    response = client.get("/monitoring/crawl-status-fragment", follow_redirects=False)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/login"
+
+
+def test_crawl_status_fragment_downstream_failure_renders_small_error_fragment(
+    monkeypatch,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused", request=request)
+
+    _patch_transport(monkeypatch, handler)
+
+    session_id = get_session_store().create(RAW_KEY)
+    client = TestClient(app)
+    client.cookies.set("session_id", session_id)
+
+    response = client.get("/monitoring/crawl-status-fragment")
+
+    assert response.status_code == 502
+    assert "results currently unavailable" in response.text
+    assert "connection refused" not in response.text
