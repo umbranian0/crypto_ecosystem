@@ -1300,6 +1300,97 @@ against the real running Docker Compose stack, and the Tech Lead's final sprint 
 cross-cutting cancellation proof (a real triggered crawl, actually cancelled mid-flight, confirmed via a
 direct database read).
 
+# Sprint 24 — Crawl lifecycle control, part 2 (dashboard controls)
+
+Source: `docs/sprints/sprint-24.md`, `docs/product/backlog-crawl-lifecycle-control.md` (Epic 3 —
+Dashboard controls). Closes the backlog's full 13-story scope (Sprint 23 backend + this sprint's
+dashboard controls). No backend/proxy code required — Sprint 23's `INGEST-021`–`027`/`GW-027`/`GW-028`
+are all done and live-verified; every story below is `services/dashboard-web`-only.
+
+| Ticket | Story | Module | Depends on | Status |
+|---|---|---|---|---|
+| [DASH-117](DASH-117.md) | Restart button once a crawl is stopped/completed/failed (reuses existing `POST /monitoring/connectors/{source}/run` route unmodified) | dashboard-web | none beyond DASH-110/INGEST-021 | done |
+| [DASH-116](DASH-116.md) | Stop/cancel button on the crawl-status panel (new `POST /monitoring/connectors/{source}/cancel` route, calls GW-027) | dashboard-web | GW-027 (Sprint 23), DASH-117 (file-sequencing only) | done |
+| [DASH-118](DASH-118.md) | Richer progress display replacing the three-state badge (`rows_fetched_so_far`/`updated_at`, honest absence for blockchain.info) | dashboard-web | INGEST-024/025/026/027, GW-028 (Sprint 23), DASH-116 (file-sequencing only) | done |
+
+## Sequencing
+
+Strictly per `docs/sprints/sprint-24.md`: `DASH-117` first (cheapest, lowest-risk, early win, no
+backend/proxy work) → `DASH-116` (the literal "stop it mid-flight" ask, depends on `GW-027`) → `DASH-118`
+(Should priority, depends on the full Epic 2 backend chain, sequenced last purely to avoid two stories
+concurrently editing `_crawl_status_panel.html` — not a re-prioritization away from its own Should
+priority). All three run sequentially, not in parallel, since all three touch the same
+`_crawl_status_panel.html` file.
+
+**Sprint 24 outcome**: all 3 tickets done. `services/dashboard-web` full suite (`-m "not e2e"`, personally
+re-run by the Tech Lead): **167 passed, 5 deselected, 0 failed**, zero regressions.
+
+**Live stop/restart/progress proof, personally performed by the Tech Lead against the real, running
+Docker Compose stack** (gateway-api + ingestion-service + Postgres already up; `dashboard-web` started
+locally against that live `gateway-api`, not simulated): three fresh tenants were provisioned
+(`scripts/provision_tenant.py`) and driven entirely through `dashboard-web`'s own HTTP routes (the same
+requests its UI buttons fire) plus direct `psql` reads for independent confirmation.
+- **Stop mid-flight (tenant 2)**: triggered a real `binance_price_btcusdt_1h` full-historical crawl via
+  `POST /monitoring/connectors/.../run`, then immediately fired `POST /monitoring/connectors/.../cancel`
+  (the same request `DASH-116`'s button issues) while genuinely `"running"` — got back `202
+  {"status": "cancelling"}`. A direct `psql` read of `ingestion.crawl_runs` confirmed the real sequence
+  `queued → running (1000 rows) → cancelling → cancelled (row_count=1000)`, and `ingestion.price_ohlcv`
+  confirmed **exactly 1000 rows**, `count(*) == count(DISTINCT open_time)` (no duplicates/corruption).
+  Polling `GET /monitoring/crawl-status-fragment` (the same fragment the panel's 5-second HTMX polling
+  hits) confirmed the rendered HTML showed `"cancelled"`, row count `1000`, the restart button (with its
+  "continues from last saved checkpoint" copy) present, and the stop button correctly absent.
+- **Second stop mid-flight (tenant 3)**: repeated the same proof independently — cancelled a running
+  crawl at 61000 rows, confirmed via `psql` (`cancelled`, `row_count=61000`) and via direct
+  `GET /ingestion/connectors/{source}/status` through the real `gateway-api` proxy showing
+  `{"status": "running", "rows_fetched_so_far": 60000, "updated_at": "..."}` moments before the cancel —
+  the exact response shape `DASH-118`'s `_format_progress` unit tests already exercise, now confirmed to
+  be what the live backend genuinely returns.
+- **Restart (tenant 2)**: clicked "Restart" (`POST /monitoring/connectors/.../run` again) after the
+  `cancelled` state above; the request was accepted and used the DB-resolved watermark (not the
+  connector's default 2017 backfill start), confirming restart is mechanically a continuation call, not
+  a from-scratch trigger, exactly as `DASH-117` implements it (reusing the existing route/watermark
+  resolution unmodified).
+
+**One real, disclosed, NOT silently patched finding from this live verification, in `ingestion-service`,
+outside this sprint's own `dashboard-web`-only scope**: the restart in the tenant-2 case above did *not*
+actually continue from the last **data** checkpoint. `ingestion-service`'s watermark resolution
+(`latest_watermark_from_db` → `ConnectorRecordRepository.latest_fetched_at`) resolves `since` from the
+prior crawl run's `fetched_at` column (when that fetch executed) rather than from the actual maximum
+event-time of the rows it managed to write before being cancelled. For a crawl cancelled partway through
+a historical backfill, `fetched_at` is still stamped at (approximately) "now," so the very next crawl's
+`since` jumps to "now" instead of to the last row actually fetched — silently orphaning the entire
+un-fetched historical gap rather than continuing from it. Reproduced and confirmed directly: tenant 2's
+cancelled crawl wrote rows only through `2017-09-28`, but the subsequent "restart" resolved
+`since=2026-09-04T12:37:56Z` (the cancelled run's own `fetched_at`), fetched 0 new rows (nothing exists
+between "now" and the future), and completed — leaving `ingestion.price_ohlcv` permanently short the
+~77,000-row gap between 2017-09-28 and today for that tenant. This appears to be a real regression
+surfaced by Sprint 23's own cancellation feature (`INGEST-022`/`024`): before cancellation existed, a
+crawl always ran to completion (covering through "now"), so `fetched_at` was an accurate proxy for data
+coverage; now that a crawl can stop early, that proxy is wrong specifically for `cancelled` (and
+theoretically `failed`, mid-write) runs. **Not fixed in this sprint** — the fix belongs in
+`ingestion-service`'s watermark-resolution logic (likely: resolve from the actual max fetched event-time
+of committed data, or have the connector's `FetchResult` carry the true last-covered timestamp instead of
+"now"), which is outside `dashboard-web`'s module boundary and this sprint's ticket scope. Escalated here
+for the requester/PM to sequence a follow-up ticket (recommend `ingestion-service`, high priority — it
+silently breaks the exact "restart continues from checkpoint" guarantee `DASH-117`'s own UI copy promises
+for the cancelled-crawl case specifically; completed/failed-crawl restarts are unaffected since those
+already cover through "now" by construction).
+
+Separately, unrelated to the finding above and also disclosed: `dashboard-web`'s crawl-status panel
+(`_fetch_crawl_statuses`, `DASH-109`'s original design, unchanged by this sprint) enumerates sources to
+poll via `GET /ingestion/datasets`, which is itself backed by materialized views over *committed* rows
+(`INGEST-019`) — a tenant's very first-ever crawl of a brand-new source is invisible in the panel while
+`"running"` (no committed rows yet to summarize), only appearing once that crawl completes/is cancelled
+and at least one row lands. This pre-existing gap (not introduced or worsened by `DASH-116`/117/118) is
+why this sprint's live progress-column proof above used direct `GET /connectors/{source}/status` calls
+for the genuinely-first-crawl case rather than the panel itself — the panel's own live rendering was
+independently confirmed against an already-visible source (tenant 2, post-first-crawl). Flagged for a
+future ticket if first-crawl live visibility is wanted (e.g., enumerate in-flight sources from
+`crawl_runs` directly rather than only from completed datasets) — not actioned here, outside scope.
+
+`docs/product/backlog-crawl-lifecycle-control.md` has been updated to mark Epic 3 (and the full 13-story
+backlog) done.
+
 # Sprint 25 — Run submission safety (validation-service guardrail + dashboard-web guided submission)
 
 Source: `docs/sprints/sprint-25.md`, `docs/product/backlog-run-submission-safety.md` (RSS-001 through
@@ -1371,3 +1462,79 @@ credential-issuing actions), and finding (2) above independently would have bloc
 instead via full diff reads, independently re-run test suites, and — for RSS-002's formula specifically —
 a direct line-by-line arithmetic comparison against `generate_splits`'s real source plus a real
 Python-side cross-check test calling `generate_splits` itself.
+
+# Sprint 26 — Run analysis visualization, Epic A (dashboard-web audit charts, RAV-*)
+
+Source: `docs/sprints/sprint-26.md`, `docs/product/backlog-run-analysis-visualization.md` (RAV-001
+through RAV-003 in scope; RAV-004/005/009/010 deferred to a follow-up sprint per that plan's own
+reasoning; RAV-006/007/008 not scheduled, gated on a storage-sizing conversation that has not
+happened). All three in-scope tickets are pure `services/dashboard-web` presentation work against
+`gateway-api`'s already-existing, already-fired `GET /runs/{id}/splits` contract — no
+`libs/naive_first_engine`/`libs/common`/service-boundary change in any ticket.
+
+| Ticket | Story | Module | Depends on | Status |
+|---|---|---|---|---|
+| [RAV-001](RAV-001.md) | Decide dashboard-web's charting approach (server-rendered SVG, no new dependency) | dashboard-web | none | done |
+| [RAV-002](RAV-002.md) | Model-vs-Naive0 error comparison chart across a run's splits | dashboard-web | RAV-001 | done |
+| [RAV-003](RAV-003.md) | DM-test verdict visualization per split (incl. the `None`-DM "undefined" category) | dashboard-web | RAV-001, RAV-002 (sequenced, not parallel — both touch `run_detail.html`/`style.css`) | done |
+
+## Sequencing
+
+RAV-001 first (hard blocking decision, per the sprint plan). RAV-002 and RAV-003 both depend only on
+RAV-001's decision and use the same already-fetched data, but both touch `run_detail.html` and
+`style.css` — the Tech Lead's own file-collision review (per the sprint plan's explicit instruction)
+found real overlap risk in those two files, so RAV-003 was sequenced strictly after RAV-002's diff
+landed and was verified, reusing RAV-002's new `app/charting.py` module rather than running in
+parallel.
+
+See `docs/sprints/sprint-26.md` for the full sprint framing, and each ticket's own file for the
+complete Analysis/Design/DRY-check/Implementation/Test/Review/Documentation breakdown.
+
+**Sprint 26 outcome**: all 3 in-scope tickets (RAV-001, RAV-002, RAV-003) done and Tech-Lead-verified.
+`docs/adr/0006-dashboard-web-charting-server-rendered-svg.md` records the RAV-001 decision
+(server-rendered inline SVG, zero new frontend/JS or Python plotting dependency). RAV-002/RAV-003
+each add one pure-Python geometry function to the new shared `services/dashboard-web/src/app/
+charting.py` module (`build_error_chart`, `build_dm_verdict_chart`) plus one Jinja2 partial each
+(`_error_chart.html`, `_dm_verdict_chart.html`), both included from `run_detail.html`'s existing
+`{% if splits %}` branch, above the unchanged per-split table. `services/dashboard-web` full suite
+(default, `e2e`-excluded), re-run by the Tech Lead after both charts landed: **167 passed, 0
+failures, 5 deselected**, zero regressions. Live-stack verification (Tech Lead's own, not delegated):
+provisioned a fresh tenant against the live `gateway-api`/Postgres stack, submitted a real
+`POST /runs` (400-point inline series, 14 real splits, all real `dm_verdict="better"`), ran
+`dashboard-web` locally against that live stack, logged in, and fetched the real rendered
+`GET /runs/{id}` page — confirmed both `<svg>` charts present with real per-split `model_mae`/
+`naive0_mae`/`dm_verdict` values, the "undefined for this split" category rendering (at zero count in
+this particular real run, since it produced no null-DM split; the null-DM path itself is proven by
+each ticket's own fixture-based unit test per its Test acceptance criteria), zero occurrences of
+`prediction|forecast|signal|recommend` anywhere in the rendered page, and none of the four DM-verdict
+colors forming a canonical red/green pair. See RAV-002.md/RAV-003.md's own Status notes for the full
+verification detail and rendered-markup excerpts.
+
+RAV-004/005/009/010 left at their existing backlog priority/status with a note pointing at
+`docs/sprints/sprint-26.md`'s deferral reasoning (see backlog file); RAV-006/007/008 left explicitly
+flagged as blocked on the storage-sizing conversation, not scheduled into any sprint.
+
+**Concurrent-session collision with Sprint 24, disclosed** (see below) — resolved without data loss;
+flagged to the requester for a commit-timing decision, not silently absorbed.
+
+**Concurrent-session collision discovered mid-sprint (disclosed, not silently worked around)**: the
+sprint plan's own pre-check found no `DASH-116`/`117`/`118` ticket files at planning time and
+concluded "you have a clear run." During RAV-002's Review, the Tech Lead found `services/dashboard-web/
+src/app/routers/operator.py`, `_crawl_status_panel.html`, `tests/test_monitoring_triggers.py`, and
+shared sections of `README.md` had been modified with real Sprint 24 (`DASH-116`/`DASH-117`) content
+that was not part of RAV-002's ticket — first assumed to be the RAV-002 dev agent scope-creeping (and
+reverted on that assumption), then re-appeared with different wording on a second check, and
+`docs/tickets/DASH-116.md`/`117.md`/`118.md` were confirmed to now exist (they did not at this
+sprint's start). This means **Sprint 24 is actively being executed by a separate, concurrent session
+against this same working tree while Sprint 26 was in progress** — exactly the risk
+`docs/sprints/sprint-26.md`'s own "File-overlap / concurrent-work risk" section flagged as unlikely
+but asked the Tech Lead to confirm before starting. The Tech Lead stopped reverting that session's
+files once this was confirmed (its content is legitimate, not dev-agent hallucination) and verified
+the two sprints' changes coexist without breaking either: full `services/dashboard-web` suite passed
+144/144 (`-m "not e2e"`) with both sprints' tests included. RAV-002's own diff/tests/docs were
+independently verified as correct and complete regardless of the other session's presence. **Flagged
+to the requester**: confirm whether Sprint 24's session is still running before either sprint's work
+is committed, since both sprints touch `services/dashboard-web/README.md`'s shared status header and
+`operator.py`/`_crawl_status_panel.html` is Sprint 24's territory only — Sprint 26 did not and should
+not need to touch those two files at all going forward (RAV-003 is scoped to `run_detail.html`/
+`style.css`/`charting.py` only, per its own ticket).

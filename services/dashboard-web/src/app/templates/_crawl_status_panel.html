@@ -6,6 +6,22 @@
    `{% include %}`-partial pattern `_dataset_macros.html` already established
    in this module).
 
+   DASH-117: the per-row trigger `<form>` below is gated to
+   `entry.status in ("completed", "failed", "cancelled")` -- a crawl that has
+   actually stopped -- and relabeled as an explicit restart-from-checkpoint
+   action, never an unqualified "Restart" that could imply starting over.
+
+   DASH-116: the complementary "stop this crawl" button/form below is gated
+   to `entry.status in ("queued", "running", "cancelling")` -- the exact
+   complement of the restart gate above, so the six-value status vocabulary
+   (`queued`/`running`/`cancelling`/`cancelled`/`completed`/`failed`)
+   partitions cleanly and no row ever renders both a stop and a restart
+   control. While `entry.status == "cancelling"`, the button is rendered
+   `disabled` with a "Stopping..." label instead of the normal clickable
+   "Stop this crawl" label -- not hidden, and not left clickable (re-firing a
+   cancel against an already-cancelling crawl serves no purpose and would
+   legitimately hit the downstream's own `409`).
+
    The outer `<div>` itself carries the HTMX polling attributes
    (`hx-get`/`hx-trigger`/`hx-swap="outerHTML"`) -- since `hx-swap="outerHTML"`
    replaces the element carrying those attributes on every poll, this
@@ -14,7 +30,13 @@
    stop (ticket's Review acceptance criteria). Only rendered where
    `crawl_statuses is not none` (a resolved tenant session) -- an anonymous
    visitor never sees this div at all, matching `monitoring.html`'s own
-   pre-existing gate. #}
+   pre-existing gate.
+
+   DASH-118: the "Progress" column below renders `entry.progress_display`
+   for every row, no status-based special-casing here -- `_format_progress`
+   (`operator.py`) is the only place that decides between the honest-absence
+   string and a real row-count/"ago" string, for every status value
+   including `queued`/`cancelling`/`cancelled`/`failed`. #}
 <div id="crawl-status-panel" hx-get="/monitoring/crawl-status-fragment" hx-trigger="load, every 5s" hx-swap="outerHTML">
 {% if crawl_statuses|length == 0 %}
 <p>No ingested sources yet.</p>
@@ -27,6 +49,7 @@
             <th>Last crawl status</th>
             <th>Last crawl timestamp</th>
             <th>Row count</th>
+            <th>Progress</th>
             <th>Trigger</th>
         </tr>
     </thead>
@@ -37,15 +60,29 @@
             <td>{{ entry.status }}</td>
             <td>{{ entry.timestamp }}</td>
             <td>{{ entry.row_count }}</td>
+            <td>{{ entry.progress_display }}</td>
             <td>
+                {% if entry.status in ("completed", "failed", "cancelled") %}
                 <form hx-post="/monitoring/connectors/{{ entry.source }}/run"
                       hx-target="#crawl-trigger-result-{{ loop.index }}" hx-swap="innerHTML">
                     <label for="since-{{ loop.index }}">Since (optional)</label>
                     <input type="date" id="since-{{ loop.index }}" name="since">
                     <p>Only takes effect on this tenant's first-ever crawl of this source; ignored otherwise.</p>
-                    <button type="submit">Run this tenant's {{ entry.source }} crawl now</button>
+                    <button type="submit">Restart {{ entry.source }} crawl (continues from last saved checkpoint)</button>
                 </form>
                 <div id="crawl-trigger-result-{{ loop.index }}"></div>
+                {% endif %}
+                {% if entry.status in ("queued", "running", "cancelling") %}
+                <form hx-post="/monitoring/connectors/{{ entry.source }}/cancel"
+                      hx-target="#crawl-cancel-result-{{ loop.index }}" hx-swap="innerHTML">
+                    {% if entry.status == "cancelling" %}
+                    <button type="submit" disabled>Stopping...</button>
+                    {% else %}
+                    <button type="submit">Stop this crawl</button>
+                    {% endif %}
+                </form>
+                <div id="crawl-cancel-result-{{ loop.index }}"></div>
+                {% endif %}
             </td>
         </tr>
         {% endfor %}

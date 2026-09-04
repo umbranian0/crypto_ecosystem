@@ -1,0 +1,49 @@
+{# RAV-002: model-vs-Naive0 error-by-split chart, server-rendered inline SVG
+   per ADR-0006 (docs/adr/0006-dashboard-web-charting-server-rendered-svg.md)
+   -- no client-side charting library, no Python plotting library. `error_chart`
+   is `app/charting.py`'s `build_error_chart(splits)` output, computed by
+   `run_detail`'s handler (charting.py has no Jinja2 import; this partial is
+   the only place its geometry becomes markup). MAE only this ticket -- RAV-004
+   (a metric selector for the other model/naive0 metric pairs) is out of scope
+   here. Colors are the two named CSS variables only (`--color-accent` for the
+   model series, `--color-accent-2` for Naive0), applied via the `bar-model`/
+   `bar-naive0` classes below (style.css) -- never a hardcoded hex value, and
+   never a green/red pairing. #}
+<div class="chart-container">
+    <p class="chart-title">Model vs. Naive0 error by split (MAE)</p>
+    <svg
+        class="error-chart-svg"
+        viewBox="0 0 {{ error_chart.width }} {{ error_chart.height }}"
+        role="img"
+        aria-label="Model versus Naive0 mean absolute error by split"
+    >
+        <line
+            class="chart-axis"
+            x1="0"
+            y1="{{ error_chart.plot_bottom }}"
+            x2="{{ error_chart.width }}"
+            y2="{{ error_chart.plot_bottom }}"
+        />
+        {% for split in error_chart.splits %}
+        <rect
+            class="bar-model"
+            x="{{ split.model.x }}"
+            y="{{ split.model.y }}"
+            width="{{ split.model.width }}"
+            height="{{ split.model.height }}"
+        ><title>Split {{ split.split_index }} -- model MAE: {{ split.model.value }}</title></rect>
+        <rect
+            class="bar-naive0"
+            x="{{ split.naive0.x }}"
+            y="{{ split.naive0.y }}"
+            width="{{ split.naive0.width }}"
+            height="{{ split.naive0.height }}"
+        ><title>Split {{ split.split_index }} -- Naive0 MAE: {{ split.naive0.value }}</title></rect>
+        <text class="chart-axis-label" x="{{ split.label_x }}" y="{{ error_chart.plot_bottom + 16 }}" text-anchor="middle">{{ split.split_index }}</text>
+        {% endfor %}
+    </svg>
+    <div class="chart-legend">
+        <span><span class="chart-legend-swatch model"></span>Model MAE</span>
+        <span><span class="chart-legend-swatch naive0"></span>Naive0 MAE</span>
+    </div>
+</div>

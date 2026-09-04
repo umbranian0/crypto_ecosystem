@@ -516,6 +516,113 @@ main > table th {
   font-family: var(--font-mono);
 }
 
+/* Error-by-split chart (RAV-002): server-rendered inline SVG, per
+   docs/adr/0006-dashboard-web-charting-server-rendered-svg.md. Bar colors
+   come from the two named CSS variables only, never a hardcoded hex value --
+   same "no green/red bull/bear pairing" constraint the file header states. */
+
+.chart-container {
+  margin-bottom: var(--space-5);
+}
+
+.chart-title {
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+  margin-bottom: var(--space-2);
+}
+
+.error-chart-svg {
+  display: block;
+  width: 100%;
+  max-width: 640px;
+  height: auto;
+}
+
+.error-chart-svg .bar-model {
+  fill: var(--color-accent);
+}
+
+.error-chart-svg .bar-naive0 {
+  fill: var(--color-accent-2);
+}
+
+.error-chart-svg .chart-axis {
+  stroke: var(--color-border-strong);
+  stroke-width: 1;
+}
+
+.error-chart-svg .chart-axis-label {
+  fill: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.chart-legend {
+  display: flex;
+  gap: var(--space-4);
+  margin-top: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+}
+
+.chart-legend-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: var(--space-1);
+  border-radius: 2px;
+  vertical-align: middle;
+}
+
+.chart-legend-swatch.model {
+  background-color: var(--color-accent);
+}
+
+.chart-legend-swatch.naive0 {
+  background-color: var(--color-accent-2);
+}
+
+/* DM-test verdict-by-split chart (RAV-003): server-rendered inline SVG, per
+   docs/adr/0006-dashboard-web-charting-server-rendered-svg.md. Four category
+   colors reuse existing, already-status-neutral variables rather than
+   inventing new hex values -- teal/orange/blue-gray/gray, never a
+   green="better"/red="worse" bull/bear pairing. */
+
+.dm-verdict-chart-svg {
+  display: block;
+  width: 100%;
+  max-width: 640px;
+  height: auto;
+}
+
+.dm-verdict-chart-svg .verdict-bar-better {
+  fill: var(--color-status-completed-text);
+}
+
+.dm-verdict-chart-svg .verdict-bar-worse {
+  fill: var(--color-status-failed-text);
+}
+
+.dm-verdict-chart-svg .verdict-bar-no-sig-diff {
+  fill: var(--color-status-running-text);
+}
+
+.dm-verdict-chart-svg .verdict-bar-undefined {
+  fill: var(--color-text-muted);
+}
+
+.dm-verdict-chart-svg .chart-category-label {
+  font-size: 9px;
+}
+
+.chart-caption {
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+  margin-bottom: var(--space-2);
+}
+
 /* Status badge */
 
 .status {

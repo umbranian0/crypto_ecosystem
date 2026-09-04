@@ -113,9 +113,33 @@ is the fix: a small polling route the panel's own `<div>`
 5s"`/`hx-swap="outerHTML"`, re-rendering the same shared partial
 `monitoring`'s own initial render includes -- one file, not two
 near-identical templates (ticket's own DRY check note).
+
+DASH-117: the per-source trigger `<form>` in `_crawl_status_panel.html` is
+gated to `entry.status in ("completed", "failed", "cancelled")` -- a crawl
+that has actually stopped -- and relabeled as an explicit restart-from-
+checkpoint action. No backend route change: `trigger_crawl` below is
+byte-for-byte unchanged, only the template's own gating/copy changed.
+
+DASH-116: `POST /monitoring/connectors/{source}/cancel` is the complementary
+"stop this crawl" action for `queued`/`running`/`cancelling` rows in the
+crawl-status panel. Calls gateway-api's real `GW-027` proxy (`POST
+/ingestion/connectors/{source}/cancel`, itself forwarding `INGEST-024`) via
+the exact same `DownstreamHeadersDep`/`_call_downstream`/
+`_render_error_for_status` seam `trigger_crawl` above already uses -- no new
+transport mechanism, no new header-construction code. On a `202`, renders
+`_crawl_cancel_result.html` with the forwarded `{source, status:
+"cancelling"}` body verbatim -- it only ever confirms the stop request was
+accepted, never that the crawl has already stopped, since the real
+`"cancelling"` -> `"cancelled"` transition is surfaced by the existing
+`crawl_status_fragment` polling route above, unchanged by this ticket. A
+downstream `404` (unknown source) or `409` (nothing in flight to cancel) is
+forwarded unmodified via `_render_error_for_status`, same as every other
+non-2xx/transport-failure path in this file.
 """
 
 from __future__ import annotations
+
+from datetime import datetime, timezone
 
 import httpx
 from fastapi import APIRouter, Form, Request
@@ -170,6 +194,50 @@ def operator_login_submit(
     return redirect
 
 
+def _format_progress(entry: dict, now: datetime) -> str:
+    """DASH-118: render-side-only formatting of a `crawl_statuses` entry's
+    `rows_fetched_so_far`/`updated_at` fields -- both already present on the
+    entry via `_fetch_crawl_statuses`'s existing pass-through spread of the
+    forwarded status dict (`INGEST-024`/`GW-028`), so this is a pure
+    presentation helper, no new fetch-side logic.
+
+    `rows_fetched_so_far is None` (`blockchain_info_*` sources, per
+    `INGEST-027`'s documented before/after-only progress ceiling, or any
+    source with no progress recorded yet) is an honest absence, never a
+    fabricated `0` -- the literal string below is always returned for that
+    case. `now` is an explicit parameter, not read internally via
+    `datetime.now()`, so this function is deterministically unit-testable
+    without a clock-mocking library.
+    """
+    rows = entry.get("rows_fetched_so_far")
+    if rows is None:
+        return "no live progress for this source"
+
+    base = f"{rows} rows fetched so far"
+
+    updated_at_raw = entry.get("updated_at")
+    if not updated_at_raw:
+        return base
+
+    try:
+        updated_at = datetime.fromisoformat(updated_at_raw)
+        delta_seconds = (now - updated_at).total_seconds()
+    except (TypeError, ValueError):
+        # Defensive only, not expected from a correct backend -- degrade to
+        # the row count alone rather than fabricate a wrong "ago" value.
+        return base
+
+    delta_seconds = max(delta_seconds, 0)
+    if delta_seconds < 60:
+        ago = f"{int(delta_seconds)}s ago"
+    elif delta_seconds < 3600:
+        ago = f"{int(delta_seconds // 60)}m ago"
+    else:
+        ago = f"{int(delta_seconds // 3600)}h ago"
+
+    return f"{base}, updated {ago}"
+
+
 def _fetch_crawl_statuses(client: httpx.Client, headers: dict[str, str]) -> list[dict] | None:
     """DASH-109: one row per source the calling tenant has ingested, `{source,
     status, timestamp, row_count}` -- lists sources via `GET /ingestion/
@@ -183,6 +251,14 @@ def _fetch_crawl_statuses(client: httpx.Client, headers: dict[str, str]) -> list
     skipped rather than failing the whole panel, the same "one bad downstream
     must not fail the whole aggregate" principle GW-022's own `system.py`
     already established for the health row above.
+
+    DASH-118: the forwarded status dict is spread in full (`**status_response
+    .json()`), so `rows_fetched_so_far`/`updated_at` (`INGEST-024`/`GW-028`)
+    are already present on each entry with zero change to this loop; a
+    `progress_display` key is added afterward via `_format_progress`, one
+    call site for both `monitoring()`'s initial render and
+    `crawl_status_fragment`'s polling render (both already share this
+    function unmodified).
     """
     datasets_response, transport_status = _call_downstream(
         client.get, "/ingestion/datasets", headers=headers
@@ -200,6 +276,10 @@ def _fetch_crawl_statuses(client: httpx.Client, headers: dict[str, str]) -> list
         if status_transport_status is not None or status_response.status_code != 200:
             continue
         statuses.append({"source": source, **status_response.json()})
+
+    now = datetime.now(timezone.utc)
+    for entry in statuses:
+        entry["progress_display"] = _format_progress(entry, now)
 
     return statuses
 
@@ -315,6 +395,46 @@ def trigger_crawl(
 
     return templates.TemplateResponse(
         request, "_crawl_trigger_result.html", {"source": source, "result": result}
+    )
+
+
+@router.post("/monitoring/connectors/{source}/cancel")
+def cancel_crawl(
+    request: Request,
+    source: str,
+    headers: DownstreamHeadersDep,
+    base_url: GatewayApiUrlDep,
+):
+    """DASH-116: "stop this crawl" button, one per `queued`/`running`/
+    `cancelling` source row in the crawl-status panel above. Calls `GW-027`'s
+    proxy (`POST /ingestion/connectors/{source}/cancel`) via the same
+    `DownstreamHeadersDep`/`_call_downstream` seam `trigger_crawl` above
+    already uses -- no hand-rolled `Authorization` header, no new transport
+    mechanism. Returns a small fragment (`_crawl_cancel_result.html`)
+    acknowledging the resulting `status` for HTMX to swap into that source
+    row's own result `<div>` -- the response only ever confirms the stop
+    request was accepted (`202 {source, status: "cancelling"}`), never that
+    the crawl has actually stopped; the real transition to `"cancelled"` is
+    surfaced by `crawl_status_fragment`'s existing polling, unchanged by this
+    route. Any transport failure or non-`202` response (including the
+    downstream's own `404` unknown-source/`409` nothing-to-cancel outcomes)
+    reuses `_render_error_for_status` unmodified -- no re-interpretation.
+    """
+    with httpx.Client(base_url=base_url) as client:
+        response, transport_status = _call_downstream(
+            client.post,
+            f"/ingestion/connectors/{source}/cancel",
+            headers=headers,
+        )
+        if transport_status is not None:
+            return _render_error_for_status(request, transport_status)
+        if response.status_code != 202:
+            return _render_error_for_status(request, response.status_code)
+
+        result = response.json()
+
+    return templates.TemplateResponse(
+        request, "_crawl_cancel_result.html", {"source": source, "result": result}
     )
 
 

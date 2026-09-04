@@ -60,6 +60,16 @@ SPLIT_BODY = {
     "dm_verdict": "no significant difference",
 }
 
+# RAV-003: a second split, with a documented-undefined DM statistic (a
+# single-test-point split -- both dm_statistic and dm_pvalue null).
+UNDEFINED_DM_SPLIT_BODY = {
+    **SPLIT_BODY,
+    "split_index": 1,
+    "dm_statistic": None,
+    "dm_pvalue": None,
+    "dm_verdict": "no significant difference",
+}
+
 
 def _login(client: TestClient) -> None:
     session_store = get_session_store()
@@ -107,6 +117,12 @@ def test_run_detail_success_with_splits(monkeypatch) -> None:
     assert "no significant difference" in response.text
     assert "1.1" in response.text
 
+    # RAV-002: the error-by-split chart renders as inline SVG (ADR-0006) and
+    # its bars carry the real model_mae/naive0_mae values from this fixture.
+    assert "<svg" in response.text
+    assert "1.1" in response.text  # model_mae
+    assert "1.0" in response.text  # naive0_mae
+
 
 def test_run_detail_running_with_no_splits(monkeypatch) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
@@ -127,6 +143,11 @@ def test_run_detail_running_with_no_splits(monkeypatch) -> None:
     assert response.status_code == 200
     assert "running" in response.text
     assert "No per-split validation results yet" in response.text
+
+    # RAV-002: a zero-split run must not render the chart -- the new
+    # `{% include %}` lives inside the existing `{% if splits %}` branch, not
+    # before it.
+    assert "<svg" not in response.text
 
 
 def test_run_detail_404(monkeypatch) -> None:
@@ -233,3 +254,134 @@ def test_run_detail_template_has_no_banned_positioning_words() -> None:
 
     for banned in ("prediction", "forecast", "signal", "recommendation"):
         assert banned not in text, f"banned positioning word {banned!r} found in run_detail.html"
+
+
+def test_error_chart_partial_has_no_banned_positioning_words() -> None:
+    """RAV-002: `_error_chart.html` is a new template this ticket adds, so it
+    gets its own copy of `run_detail.html`'s existing banned-word scan rather
+    than assuming inclusion into an already-checked template is enough
+    (Jinja `{% include %}` output isn't re-scanned by the test above, since
+    that test reads the template *source* file, not the rendered response).
+    """
+    template_path = (
+        __import__("pathlib").Path(__file__).parent.parent
+        / "src"
+        / "app"
+        / "templates"
+        / "_error_chart.html"
+    )
+    text = template_path.read_text(encoding="utf-8").lower()
+
+    for banned in ("prediction", "forecast", "signal", "recommendation"):
+        assert banned not in text, f"banned positioning word {banned!r} found in _error_chart.html"
+
+
+def test_dm_verdict_chart_partial_has_no_banned_positioning_words() -> None:
+    """RAV-003: same banned-word scan pattern as RAV-002's above, applied to
+    the new `_dm_verdict_chart.html` partial.
+    """
+    template_path = (
+        __import__("pathlib").Path(__file__).parent.parent
+        / "src"
+        / "app"
+        / "templates"
+        / "_dm_verdict_chart.html"
+    )
+    text = template_path.read_text(encoding="utf-8").lower()
+
+    for banned in ("prediction", "forecast", "signal", "recommendation"):
+        assert banned not in text, (
+            f"banned positioning word {banned!r} found in _dm_verdict_chart.html"
+        )
+
+
+def test_run_detail_renders_dm_verdict_chart_with_undefined_category(monkeypatch) -> None:
+    """RAV-003: a run with one real-verdict split and one split whose
+    dm_statistic/dm_pvalue are both null renders both the real verdict string
+    and the "undefined for this split" copy -- the null case is never dropped
+    or silently merged into "no significant difference".
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == f"/runs/{RUN_ID}":
+            return httpx.Response(200, json=RUN_DETAIL_BODY)
+        if request.url.path == f"/runs/{RUN_ID}/splits":
+            return httpx.Response(200, json=[SPLIT_BODY, UNDEFINED_DM_SPLIT_BODY])
+        raise AssertionError(f"unexpected path {request.url.path}")
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get(f"/runs/{RUN_ID}")
+
+    assert response.status_code == 200
+    assert "no significant difference" in response.text
+    assert "undefined for this split" in response.text
+    assert "dm-verdict-chart-svg" in response.text
+
+
+def test_run_detail_running_with_no_splits_renders_neither_chart(monkeypatch) -> None:
+    """RAV-003: extends the existing zero-splits assertion (RAV-002's own
+    `test_run_detail_running_with_no_splits`) to also confirm this ticket's
+    new chart is absent, not just RAV-002's.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == f"/runs/{RUN_ID}":
+            body = {**RUN_DETAIL_BODY, "status": "running", "completed_at": None}
+            return httpx.Response(200, json=body)
+        if request.url.path == f"/runs/{RUN_ID}/splits":
+            return httpx.Response(200, json=[])
+        raise AssertionError(f"unexpected path {request.url.path}")
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get(f"/runs/{RUN_ID}")
+
+    assert response.status_code == 200
+    assert "<svg" not in response.text
+    assert "dm-verdict-chart-svg" not in response.text
+    assert "error-chart-svg" not in response.text
+
+
+def test_style_css_dm_verdict_colors_never_pair_pure_red_and_pure_green() -> None:
+    """RAV-003 color-safety check: reads the actual CSS variable values used
+    by the four DM-verdict categories and confirms none is a canonical pure
+    red paired with a canonical pure green (the exact bull/bear pairing
+    CLAUDE.md's positioning constraint forbids).
+    """
+    import re
+
+    style_path = (
+        __import__("pathlib").Path(__file__).parent.parent
+        / "src"
+        / "app"
+        / "static"
+        / "style.css"
+    )
+    text = style_path.read_text(encoding="utf-8")
+
+    variable_values = dict(re.findall(r"(--color-[\w-]+):\s*(#[0-9a-fA-F]{3,8})", text))
+
+    verdict_vars = [
+        "--color-status-completed-text",  # "better"
+        "--color-status-failed-text",  # "worse"
+        "--color-status-running-text",  # "no significant difference"
+        "--color-text-muted",  # "undefined for this split"
+    ]
+    hex_values = [variable_values[var].lower() for var in verdict_vars]
+
+    _pure_red = {"#f00", "#ff0000"}
+    _pure_green = {"#0f0", "#00ff00"}
+
+    assert not (set(hex_values) & _pure_red), "a verdict color is canonical pure red"
+    assert not (set(hex_values) & _pure_green), "a verdict color is canonical pure green"
+    # No pairing of a red-family and green-family hex among the four at all.
+    reds = [v for v in hex_values if v in _pure_red]
+    greens = [v for v in hex_values if v in _pure_green]
+    assert not (reds and greens), "verdict colors pair a pure red with a pure green"

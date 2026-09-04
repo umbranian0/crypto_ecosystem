@@ -1,0 +1,49 @@
+{# RAV-003: DM-test verdict-by-split chart, server-rendered inline SVG per
+   ADR-0006 (docs/adr/0006-dashboard-web-charting-server-rendered-svg.md) --
+   no client-side charting library, no Python plotting library. `dm_verdict_chart`
+   is `app/charting.py`'s `build_dm_verdict_chart(splits)` output, computed by
+   `run_detail`'s handler (charting.py has no Jinja2 import; this partial is
+   the only place its geometry becomes markup). Each split's `dm_verdict`
+   field is shown verbatim -- no recomputation of the verdict here, the
+   Harvey et al. (1997)-corrected DM test already ran upstream in
+   `naive_first_engine`/`validation-service`. "Better"/"worse" describe this
+   split's own out-of-sample error relative to Naive0 under that test, never
+   "the model recommends" or "predicts." A split whose `dm_statistic`/
+   `dm_pvalue` are both null (a single-test-point split's genuinely undefined
+   DM statistic) is its own distinct "undefined for this split" category,
+   never dropped or folded into "no significant difference." Colors are four
+   named CSS variables only (`.verdict-bar-better`, `.verdict-bar-worse`,
+   `.verdict-bar-no-sig-diff`, `.verdict-bar-undefined` -- style.css), chosen
+   to be status-neutral and never a green="better"/red="worse" pairing. #}
+<div class="chart-container">
+    <p class="chart-title">DM-test verdict by split (vs. Naive0)</p>
+    <p class="chart-caption">"Better"/"worse" describe this split's own out-of-sample error
+    relative to the Naive0 baseline, under the Harvey-corrected Diebold-Mariano test already
+    applied upstream. A split whose DM statistic is undefined (a single-test-point split has
+    zero variance to test) is shown separately, not merged into "no significant difference."</p>
+    <svg
+        class="dm-verdict-chart-svg"
+        viewBox="0 0 {{ dm_verdict_chart.width }} {{ dm_verdict_chart.height }}"
+        role="img"
+        aria-label="Diebold-Mariano test verdict count by category, across this run's splits"
+    >
+        <line
+            class="chart-axis"
+            x1="0"
+            y1="{{ dm_verdict_chart.plot_bottom }}"
+            x2="{{ dm_verdict_chart.width }}"
+            y2="{{ dm_verdict_chart.plot_bottom }}"
+        />
+        {% for bar in dm_verdict_chart.bars %}
+        <rect
+            class="verdict-bar-{{ bar.css_slug }}"
+            x="{{ bar.x }}"
+            y="{{ bar.y }}"
+            width="{{ bar.width }}"
+            height="{{ bar.height }}"
+        ><title>{{ bar.category }}: {{ bar.count }} split(s)</title></rect>
+        <text class="chart-axis-label" x="{{ bar.label_x }}" y="{{ dm_verdict_chart.plot_bottom + 16 }}" text-anchor="middle">{{ bar.count }}</text>
+        <text class="chart-axis-label chart-category-label" x="{{ bar.label_x }}" y="{{ dm_verdict_chart.plot_bottom + 32 }}" text-anchor="middle">{{ bar.category }}</text>
+        {% endfor %}
+    </svg>
+</div>

@@ -1,0 +1,7 @@
+{# DASH-116: `POST /ingestion/connectors/{source}/cancel` (`GW-027`) returns
+   `202 {source, status: "cancelling"}` immediately -- the crawl has not
+   actually stopped yet, only accepted the stop request. This fragment must
+   not claim otherwise; the real `"cancelling"` -> `"cancelled"` transition is
+   surfaced by the existing `crawl_status_fragment` polling route, not by
+   this one-shot result. #}
+<p>Stop request for {{ source }} accepted -- <span class="status status-{{ result.status }}">{{ result.status }}</span>.</p>

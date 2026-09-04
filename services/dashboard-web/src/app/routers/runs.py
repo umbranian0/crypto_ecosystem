@@ -118,6 +118,19 @@ selection mechanism. The "Trigger a crawl" link per row points at
 `/monitoring` -- a forward-compatible placeholder only, since DASH-110 (the
 ticket that would wire up an actual per-source crawl trigger from this page)
 is not yet built; this ticket does not build that functionality itself.
+
+RAV-002: `run_detail` now also passes `splits` through `app.charting`'s
+`build_error_chart` (a pure function, no I/O) and hands the resulting
+`ErrorChartData` to `run_detail.html` as `error_chart`, rendered by the new
+`_error_chart.html` partial (per RAV-001's server-rendered-SVG decision,
+docs/adr/0006-dashboard-web-charting-server-rendered-svg.md). No new
+downstream call -- the same `GET /runs/{id}/splits` response this handler
+already fetches is reused.
+
+RAV-003: `run_detail` likewise passes the same `splits` list through
+`app.charting`'s `build_dm_verdict_chart` and hands the resulting
+`DmVerdictChartData` to `run_detail.html` as `dm_verdict_chart`, rendered by
+`_dm_verdict_chart.html`. No new downstream call here either.
 """
 
 from __future__ import annotations
@@ -137,6 +150,7 @@ from naive_first_common.contracts import (
 )
 from pydantic import ValidationError
 
+from app.charting import build_dm_verdict_chart, build_error_chart
 from app.dependencies.downstream import DownstreamHeadersDep, GatewayApiUrlDep
 from app.main import templates
 
@@ -440,5 +454,12 @@ def run_detail(
         )
 
     return templates.TemplateResponse(
-        request, "run_detail.html", {"run": run, "splits": splits}
+        request,
+        "run_detail.html",
+        {
+            "run": run,
+            "splits": splits,
+            "error_chart": build_error_chart(splits),
+            "dm_verdict_chart": build_dm_verdict_chart(splits),
+        },
     )

@@ -1,5 +1,22 @@
 # Backlog — Crawl lifecycle control (stop / live progress / restart-from-checkpoint)
 
+**STATUS: CLOSED — all 13 stories done (Sprint 23: Epic 1 + Epic 2, backend, `INGEST-021`–`027`/
+`GW-027`/`GW-028`; Sprint 24: Epic 3, dashboard controls, `DASH-116`/`117`/`118`).** See
+`docs/tickets/README.md`'s "Sprint 23" and "Sprint 24" sections for the full ticket-by-ticket record and
+live-verification detail. **One real, disclosed gap surfaced during Sprint 24's own live verification,
+not yet fixed, tracked as a recommended follow-up ticket against `ingestion-service` (outside this
+backlog's `dashboard-web`-only Epic 3 scope)**: restarting a *cancelled* crawl does not actually continue
+from the last row of data it wrote — `latest_watermark_from_db`/`latest_fetched_at` resolves the next
+`since` from the cancelled run's own `fetched_at` (approximately "now," when the fetch executed) rather
+than from the true last-covered event-time, silently skipping the entire un-fetched historical gap
+instead of continuing through it. Confirmed live: a crawl cancelled after writing rows through
+`2017-09-28` was "restarted" with `since` resolved to the cancellation moment (2026), fetched zero new
+rows, and left the ~77,000-row gap between `2017-09-28` and today permanently unfetched. Completed/failed
+crawls are unaffected (their `fetched_at` already reflects real coverage through "now"). This appears to
+be a real regression introduced by Sprint 23's own cancellation feature (a crawl could not previously
+stop early, so `fetched_at` was always an accurate coverage proxy) — recommended as a high-priority
+follow-up ticket against `ingestion-service`'s watermark-resolution logic, not silently patched here.
+
 Source: `CLAUDE.md` (root — non-negotiable positioning: validation/audit infrastructure, never a
 trading/prediction product; no service reads another service's DB schema directly; `dashboard-web`
 calls `gateway-api` only); `docs/solution-design.md` section 8 (ingestion pipeline: per-tenant
@@ -372,9 +389,9 @@ Depends on: INGEST-024, INGEST-025.
 
 ---
 
-## Epic 3 — Dashboard controls (frontend)
+## Epic 3 — Dashboard controls (frontend) — DONE (Sprint 24)
 
-### DASH-116 — Stop/cancel button on the crawl-status panel [Must]
+### DASH-116 — Stop/cancel button on the crawl-status panel [Must] — done
 
 **As** a tenant watching their own crawl in `/monitoring` **I want** a "stop this crawl" button that
 only appears while a crawl for that source is actually running **so that** I can interrupt a
@@ -403,7 +420,7 @@ Rationale for priority: Must — this is the literal, named ask ("stop it mid-fl
 frontend, not just via curl").
 Depends on: GW-027.
 
-### DASH-117 — Restart button once a crawl is stopped/completed/failed [Must]
+### DASH-117 — Restart button once a crawl is stopped/completed/failed [Must] — done
 
 **As** a tenant whose crawl has stopped (cancelled, completed, or failed) **I want** a "restart" button
 in the same row **so that** I can trigger a fresh crawl that naturally continues from the last saved
@@ -433,7 +450,7 @@ status-vocabulary display work is in place.
 Depends on: none beyond existing `DASH-110`/`INGEST-021` (for the `cancelled` status value to trigger
 the button's visibility condition).
 
-### DASH-118 — Richer progress display, replacing the three-state badge [Should]
+### DASH-118 — Richer progress display, replacing the three-state badge [Should] — done
 
 **As** a tenant watching `/monitoring` **I want** the crawl-status panel to show a real progress
 indicator (e.g. "run 143,000 rows fetched so far, updated 3s ago") when the backend has one, and an

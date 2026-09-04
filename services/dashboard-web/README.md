@@ -32,6 +32,17 @@
 **Sprint 11 goal: a tenant logs in with a gateway-api API key, submits a validation run through a**
 **form, and views that run's status and per-split results -- the minimum submit -> view loop. See**
 **docs/sprints/sprint-11.md and docs/tickets/README.md for live ticket status.**
+**`RAV-001` (Sprint 26) decided this service's charting approach ahead of RAV-002/RAV-003 -- server-**
+**rendered inline SVG, no new frontend/JS or Python plotting dependency -- see**
+**`docs/adr/0006-dashboard-web-charting-server-rendered-svg.md` for the full decision and rationale.**
+**`RAV-002` (Sprint 26) built the first real chart on top of that decision -- a model-vs-Naive0**
+**error-by-split chart on `GET /runs/{id}` -- see "Run detail error chart (RAV-002)" below (123**
+**unit tests passing as of this ticket, up from 113, plus the same 5 e2e). `DASH-117`/`DASH-116`**
+**(Sprint 24) gated the crawl-status panel's trigger form to a restart action for stopped crawls and**
+**added a "stop this crawl" action, respectively -- see "Restart action (DASH-117)" and "Stop action**
+**(DASH-116)" below. `DASH-118` (Sprint 24, last of that trio against the same file) added a "Progress"**
+**column to that same panel, a plain count of rows already fetched -- see "Progress column (DASH-118)"**
+**below (167 unit tests passing as of this ticket, up from 144, plus the same 5 e2e).**
 
 Formerly `dashboard/`. See [../../docs/solution-design.md](../../docs/solution-design.md) section 3.6.
 
@@ -437,6 +448,116 @@ the same call `run_new_form`'s (DASH-108) "Stored dataset" dropdown already make
 - Zero datasets renders the same "No ingested datasets yet -- run a crawl first." message `run_new.html`
   already shows for this case, not an error.
 
+## Run detail error chart (RAV-002)
+
+`GET /runs/{run_id}` (`src/app/routers/runs.py`, DASH-004's existing handler, unchanged in scope
+otherwise) now also renders a model-vs-Naive0 error-by-split chart above the existing per-split
+table, using the exact same `GET /runs/{id}/splits` response the handler already fetches -- no new
+backend call, no new field:
+
+- **`app/charting.py`** (new, per `RAV-001`'s decision, docs/adr/0006-dashboard-web-charting-server-
+  rendered-svg.md) gained its first real function, `build_error_chart(splits: list
+  [SplitResultResponse]) -> ErrorChartData` -- a pure function (no I/O, no Jinja2 import) that
+  pre-computes `<rect>` bar geometry (x/y/width/height, plus the raw `model_mae`/`naive0_mae` value
+  each bar represents) for every split, both series sharing one y-scale so relative bar heights are
+  directly comparable. An empty `splits` list returns an empty, zero-height chart rather than
+  raising, though `run_detail`'s own caller never invokes it for a zero-split run in practice (see
+  below). Unit-tested standalone in `tests/test_charting.py` -- no HTTP, no template rendering.
+- **DRY note for RAV-003**: `app/charting.py` is the one shared module RAV-003 (the DM-verdict
+  chart, backlog `docs/product/backlog-run-analysis-visualization.md`, not yet built) must also add
+  its chart-geometry function to, per ADR-0006's own "Consequence for future readers" -- not a
+  second, per-ticket chart-building module.
+- **`app/templates/_error_chart.html`** (new partial, `{% include %}`-ed from `run_detail.html`,
+  mirroring the existing `_dataset_macros.html`/`_crawl_status_panel.html` shared-partial precedent)
+  renders the inline `<svg>` from `build_error_chart`'s output. `run_detail.html` includes it
+  *inside* the existing `{% if splits %}` branch, above the (unchanged) per-split table -- a
+  zero-split run still renders the pre-existing "No per-split validation results yet" message, with
+  no chart and no second zero-splits check added.
+- **Colors**: the model series uses `--color-accent`, the Naive0 series uses `--color-accent-2`
+  (`style.css`'s existing two accent variables, applied via `.bar-model`/`.bar-naive0` CSS classes,
+  never a hardcoded hex value) -- the same no-green/red-bull/bear-pairing constraint this file's own
+  header already states. MAE only this ticket -- RAV-004 (a metric selector for the other six
+  model/naive0 metric pairs) is out of scope here.
+- **Positioning**: the chart's title/legend read "Model vs. Naive0 error by split (MAE)" / "Model
+  MAE" / "Naive0 MAE" only, matching `run_detail.html`'s existing "validation results"/"benchmark
+  comparison"/"per-split metrics" vocabulary -- never "prediction," "forecast," "signal," or
+  "recommendation" (CLAUDE.md's core positioning constraint). The chart sits inside the same
+  `{% if splits %}` branch as the existing "Benchmark comparison of the model against the Naive0
+  baseline... These are validation/audit metrics only." paragraph, so that disclaimer already
+  covers the chart -- no second, independently-worded caveat was invented for it (data-analyst
+  skill rule 6).
+- **Tests**: `tests/test_charting.py` covers `build_error_chart` as a pure function (empty splits,
+  relative bar-height correctness against relative MAE values, non-overlapping bars within a split,
+  zero-error splits not dividing by zero). `tests/test_runs_detail.py`'s existing
+  `test_run_detail_success_with_splits` now also asserts the rendered response contains `<svg` and
+  the fixture's real `model_mae`/`naive0_mae` values; its existing
+  `test_run_detail_running_with_no_splits` now also asserts `<svg` is absent. A new
+  `test_error_chart_partial_has_no_banned_positioning_words` mirrors the existing
+  `test_run_detail_template_has_no_banned_positioning_words` test, scanning `_error_chart.html`
+  for the same banned words.
+
+## DM-test verdict chart (RAV-003)
+
+`GET /runs/{run_id}` (`src/app/routers/runs.py`, unchanged in scope otherwise beyond the one new
+context value below) now also renders a DM-test-verdict-by-split chart, alongside RAV-002's error
+chart, using the same `GET /runs/{id}/splits` response the handler already fetches -- no new
+backend call, no new field:
+
+- **`app/charting.py`** gained a second function, `build_dm_verdict_chart(splits: list
+  [SplitResultResponse]) -> DmVerdictChartData` -- a pure function (no I/O, no Jinja2 import) that
+  buckets each split's existing `dm_verdict` field (verbatim, never recomputed) into one of four
+  categories: the three real `Verdict` values from `naive_first_engine.dm_test` ("better", "worse",
+  "no significant difference") plus a fourth sentinel, `UNDEFINED_VERDICT_CATEGORY` ("undefined for
+  this split"), for the documented case where `dm_statistic`/`dm_pvalue` are both `None` (a
+  single-test-point split's genuinely undefined DM statistic --
+  `SplitResultResponse`'s own docstring, `libs/common/src/naive_first_common/contracts.py`). That
+  `None`/`None` check runs regardless of whatever raw string happens to be in `dm_verdict` for that
+  row, so it is never silently dropped or merged into "no significant difference". Returns
+  pre-computed `<rect>` bar geometry for a categorical count-of-splits-per-category chart (all four
+  categories always rendered, even a zero count).
+- **DRY note**: `build_error_chart` (RAV-002) has no reusable "scale a value to pixel range" helper
+  to share -- it scales a continuous raw metric value per split, while this chart scales an integer
+  count over a fixed four-category domain, a different scaling problem. No helper was extracted; this
+  is a disclosed non-duplication, not a DRY violation.
+- **`app/templates/_dm_verdict_chart.html`** (new partial, same `{% include %}` pattern as
+  `_error_chart.html`) renders the inline `<svg>` from `build_dm_verdict_chart`'s output.
+  `run_detail.html` includes it inside the same existing `{% if splits %}` branch, below RAV-002's
+  error chart and above the (unchanged) per-split table -- no second, parallel zero-splits check was
+  added.
+- **`app/routers/runs.py`**: `run_detail` now also passes `splits` through `build_dm_verdict_chart`
+  and hands the result to `run_detail.html` as `dm_verdict_chart` (same pattern as RAV-002's
+  `error_chart`) -- required for the template to have a value to render; the ticket's own file list
+  did not enumerate this file, but wiring the pure function's output into the route context is
+  necessary for the chart to function at all, and stays within `dashboard-web`'s own module boundary.
+- **Colors**, none inventing a new hex value: `--color-status-completed-text` (`#5fd3c4`, teal) for
+  "better", `--color-status-failed-text` (`#e0a06a`, orange) for "worse",
+  `--color-status-running-text` (`#8fa3c9`, blue-gray) for "no significant difference", and
+  `--color-text-muted` (`#8694a8`, gray) for "undefined for this split" -- confirmed none of these
+  four pairs a canonical pure red with a canonical pure green (no green="better"/red="worse"
+  bull/bear pairing), per `tests/test_runs_detail.py`'s new
+  `test_style_css_dm_verdict_colors_never_pair_pure_red_and_pure_green`.
+- **Positioning**: the chart's caption states plainly that "better"/"worse" describe *this split's
+  own out-of-sample error relative to Naive0*, under the Harvey et al. (1997)-corrected
+  Diebold-Mariano test already applied upstream -- never "the model recommends" or a forecast. The
+  chart sits in the same `{% if splits %}` branch as the existing "Benchmark comparison... These are
+  validation/audit metrics only" paragraph, so that disclaimer already covers it too (data-analyst
+  skill rule 6) -- no new, independently-worded caveat was invented beyond the DM-specific
+  Harvey-correction sentence this chart itself needs.
+- **`None`-DM-split handling**: a split whose `dm_statistic`/`dm_pvalue` are both `None` renders in
+  its own "undefined for this split" bar, visibly distinct from "no significant difference" -- proven
+  by `tests/test_charting.py`'s `test_build_dm_verdict_chart_none_dm_never_merged_into_no_sig_diff`
+  (using a fixture whose raw `dm_verdict` string is itself "no significant difference", to confirm
+  the categorization is driven by the `None`/`None` check, not the raw string) and
+  `tests/test_runs_detail.py`'s `test_run_detail_renders_dm_verdict_chart_with_undefined_category`.
+- **Tests**: `tests/test_charting.py` covers `build_dm_verdict_chart` as a pure function (empty
+  splits, all four categories bucketed correctly from a mixed fixture, the `None`-DM case never
+  merged into "no significant difference", and bar heights scaling to the max single-category
+  count). `tests/test_runs_detail.py` adds a route-level test with a fixture including a
+  `dm_statistic=None, dm_pvalue=None` split, asserting both the real verdict strings and the
+  "undefined for this split" copy render; extends the zero-splits test to assert neither this chart
+  nor RAV-002's renders; adds `test_dm_verdict_chart_partial_has_no_banned_positioning_words`
+  (mirroring RAV-002's own pattern); and adds the color-safety regex check above.
+
 ## Operator login and monitoring (DASH-113)
 
 Minimal slice of the sibling backlog's `SETUP-003` (setup wizard)/`SETUP-012` (tenant-management
@@ -591,6 +712,126 @@ already own -- not a new router module, per the ticket's own Design section: "ex
   date) renders via the existing `_render_error_for_status` fragment, unchanged. See `INGEST-013`/
   `GW-023` for the underlying `since` override semantics and validation rules (not re-documented here).
 
+### Restart action (DASH-117)
+
+Sprint 24's first ticket, sequenced ahead of `DASH-116`/`DASH-118` against this same file
+(`docs/sprints/sprint-24.md`): the per-source trigger `<form>` above (`hx-post="/monitoring/connectors/
+{source}/run"`, still the same `trigger_crawl` route/`_crawl_trigger_result.html` fragment, byte-for-byte
+unchanged -- no backend change) is now gated in `_crawl_status_panel.html` to only render for a row whose
+`entry.status` is `completed`/`failed`/`cancelled` (`{% if entry.status in (...) %}` around the existing
+`{% for entry in crawl_statuses %}` loop, not a second loop or template file), and its button copy changed
+from "Run this tenant's {source} crawl now" to "Restart {source} crawl (continues from last saved
+checkpoint)" -- plain-language honesty per `docs/product/backlog-crawl-lifecycle-control.md`'s decision
+#1: a "restart" of an already-once-crawled source is just a normal new crawl trigger (the existing
+`latest_watermark_from_db`-first resolution `ingestion-service` already does), never a second "resume"
+code path, and never an unqualified "Restart" that could imply starting over from scratch.
+
+- **Disclosed gap, closed by `DASH-116` immediately below**: `queued`/`running`/`cancelling` rows render a
+  stop control instead of a restart form (see "Stop action (DASH-116)" below) -- the two gates partition
+  the six-value status vocabulary with no overlap.
+- The `since` date input and its "only takes effect on this tenant's first-ever crawl" helper text are
+  unchanged -- a restart of an already-once-crawled source still ignores `since` exactly as before this
+  ticket (`INGEST-013`'s existing semantics, no behavior change here).
+- `tests/test_monitoring_triggers.py` extends the existing
+  `test_monitoring_page_renders_trigger_forms_for_logged_in_tenant` test and adds
+  `test_monitoring_page_shows_restart_form_for_stopped_statuses` (parameterized over `completed`/
+  `failed`/`cancelled`) and `test_monitoring_page_hides_restart_form_for_in_progress_statuses`
+  (parameterized over `queued`/`running`).
+
+### Stop action (DASH-116)
+
+Sprint 24's complementary ticket to `DASH-117` above, run immediately after it against the same file
+(`_crawl_status_panel.html`) per that file-collision-avoidance sequencing (`docs/sprints/sprint-24.md`) --
+this ticket's own diff lands on top of `DASH-117`'s already-merged restart-gating change, not concurrently
+with it. Adds a "stop this crawl" control, wired to `gateway-api`'s already-existing, already-live-verified
+`GW-027` proxy (`POST /ingestion/connectors/{source}/cancel`, itself forwarding `INGEST-024`) -- backend
+capability already done; this ticket is UI-only.
+
+- **`POST /monitoring/connectors/{source}/cancel`** (`cancel_crawl`, `src/app/routers/operator.py`,
+  placed immediately after `trigger_crawl`): depends on `DASH-003`'s `DownstreamHeadersDep`/
+  `GatewayApiUrlDep` (redirect-to-`/login` for a missing/expired session, same seam every other action
+  route in this file already uses) and calls `_call_downstream`/`_render_error_for_status` (imported from
+  `runs.py`, same as `trigger_crawl`/`trigger_report_generation`) -- no new transport-error pattern, no
+  hand-rolled `httpx.Client` try/except. On `202`, renders `_crawl_cancel_result.html`
+  (`src/app/templates/`, mirrors `_crawl_trigger_result.html`'s one-line-confirmation shape) with the
+  forwarded `{source, status: "cancelling"}` body verbatim; on a transport failure or any non-`202`
+  (including the downstream's own `404` unknown-source and `409` nothing-to-cancel outcomes), forwards
+  `_render_error_for_status` unmodified -- no re-interpretation of either status code.
+- **The fragment never claims the crawl has already stopped** -- only that the stop request was accepted
+  (`"cancelling"`). The real `"cancelling"` -> `"cancelled"` transition is surfaced by the existing 5-second
+  polling fragment (`crawl_status_fragment`, `DASH-115`, unchanged by this ticket -- zero lines added to
+  that route or its `hx-trigger`/`hx-swap` wiring), not by this one-shot result.
+- **`_crawl_status_panel.html`** gains a stop `<form>`/button (`hx-post="/monitoring/connectors/
+  {{ entry.source }}/cancel"`, same per-row result-`<div>` convention the restart form already uses) for a
+  row whose `entry.status` is `queued`/`running`/`cancelling`. While `entry.status == "cancelling"`, the
+  button renders `disabled` with a "Stopping..." label instead of the normal clickable "Stop this crawl"
+  label -- not hidden, and not left re-clickable (a redundant cancel against an already-cancelling crawl
+  serves no purpose and would legitimately hit the downstream's own `409`).
+- **Mutual exclusivity with `DASH-117`'s restart button, by construction**: `DASH-117`'s restart form is
+  gated to `entry.status in ("completed", "failed", "cancelled")`; this ticket's stop form is gated to the
+  complementary `entry.status in ("queued", "running", "cancelling")`. Those two conditions partition the
+  six-value status vocabulary with no overlap, so no row ever renders both controls -- verified explicitly
+  in `tests/test_monitoring_triggers.py` for all six status values, not assumed from the two gates' own
+  logic alone.
+- `tests/test_monitoring_triggers.py` adds unit tests for `cancel_crawl`'s success/`404`/`409`/transport-
+  failure/session-required paths (same `_patch_transport`/`_login` convention every other route in this
+  file's tests already use) and template-gating tests covering the stop button's presence, its disabled
+  state while `cancelling`, and the six-value stop/restart mutual-exclusivity partition -- 144 unit tests
+  passing as of this ticket, up from 123, plus the same 5 e2e (unaffected -- the Selenium suite never
+  exercises `/monitoring`).
+
+### Progress column (DASH-118)
+
+Sprint 24's last ticket against `_crawl_status_panel.html` (after `DASH-117`/`DASH-116` above): a new
+"Progress" table column showing a plain count of what has already been fetched for a source's most
+recent crawl -- never a fabricated number, and never an implied prediction of remaining time/rows.
+
+- **Zero fetch-side change**: `INGEST-024`/`025`/`026`/`027`/`GW-028` already added `rows_fetched_so_far`/
+  `updated_at` to `GET /connectors/{source}/status`, forwarded unmodified through `GET /ingestion/
+  connectors/{source}/status`; `_fetch_crawl_statuses` (`src/app/routers/operator.py`) already spreads
+  the full forwarded status dict (`**status_response.json()`) into each entry, so both fields were
+  already present on every `crawl_statuses` entry before this ticket. This ticket is a render-side
+  addition only.
+- **`_format_progress(entry: dict, now: datetime) -> str`** (`src/app/routers/operator.py`, new) is the
+  one place that decides the display string, called once from `_fetch_crawl_statuses` to add a
+  `progress_display` key to every entry before it's returned -- a single call site serves both
+  `monitoring()`'s initial render and `crawl_status_fragment`'s polling render (both already share
+  `_fetch_crawl_statuses` unmodified), no second progress-formatting implementation. `now` is passed in
+  as an explicit parameter (`datetime.now(timezone.utc)`, read once in `_fetch_crawl_statuses` and reused
+  for every entry), not read internally via `datetime.now()`, so the helper is deterministically
+  unit-testable without a clock-mocking library.
+- **Honest-absence string**: if `rows_fetched_so_far` is `None` -- which `blockchain_info_*` sources
+  always report while running, per `INGEST-027`'s documented before/after-only progress ceiling (no
+  natural mid-fetch checkpoint for that connector family), or any source with no progress recorded yet --
+  `_format_progress` returns the literal string `"no live progress for this source"`. Never a blank cell,
+  never a fabricated `"0 rows"`.
+- **Present-progress string**: if `rows_fetched_so_far` is present, the string contains the row count and
+  a relative "updated Ns ago"/"Nm ago"/"Nh ago" derived from `updated_at` (parsed via
+  `datetime.fromisoformat`), e.g. `"143000 rows fetched so far, updated 3s ago"`. If the row count is
+  present but `updated_at` is missing, unparseable, or not comparable to `now` (a defensive case, not
+  expected from a correct backend), the helper still returns the row count alone -- it never raises and
+  never fabricates a wrong "ago" value.
+- **No status-based special-casing in the template**: `_crawl_status_panel.html`'s new "Progress" `<td>`
+  renders `entry.progress_display` verbatim for every row, including `queued`/`cancelling`/`cancelled`/
+  `failed` -- only `_format_progress` decides which string a given entry gets.
+- **No implied prediction, restated**: this is a plain count of what has already been fetched, never an
+  estimate of remaining time or rows. No string this helper can return, and no copy in
+  `_crawl_status_panel.html`'s new column, may contain "eta," "estimated completion," "time remaining,"
+  "prediction," or "forecast" (case-insensitive) -- CLAUDE.md's core no-prediction-implied positioning
+  rule, restated here explicitly so a future editor of this column doesn't casually add an ETA. Proven by
+  `tests/test_crawl_progress.py`'s literal banned-word check against `_format_progress`'s own output
+  space and against the template file's static text.
+- **Tests**: `tests/test_crawl_progress.py` (new) covers `_format_progress` directly -- the `None`-rows
+  honest-absence case, a present row count with a recent/minutes-old/hours-old `updated_at`, a present
+  row count with a missing/unparseable/naive-vs-aware-mismatched `updated_at` (degrades to the row count
+  alone, never raises), and the banned-word absence check above -- plus two route-level tests proving a
+  `blockchain_info_*`-shaped stubbed status response (progress fields `null`) renders "no live progress
+  for this source" in `GET /monitoring`'s response body, and a Binance-shaped stubbed response (progress
+  fields present) renders the row count -- 159 unit tests passing as of this ticket, up from 144 (a
+  pre-existing, unrelated `test_run_detail_success_with_splits` failure from in-progress, uncommitted
+  `RAV-003` work was present before this ticket's own changes and is outside this ticket's scope), plus
+  the same 5 e2e (unaffected -- the Selenium suite never exercises `/monitoring`).
+
 ## Settings: connector credential status (DASH-112)
 
 `GET /settings/connectors` (`src/app/routers/settings.py`, new router module -- not added to
@@ -666,7 +907,14 @@ status: "queued", since, queued_at}` shape -- 109 unit tests passing as of this 
 plus the same 5 e2e (unaffected -- the Selenium suite never exercises `/monitoring`). `RSS-002` (see
 "Live split-count estimate (RSS-002)" above) added two more tests to `tests/test_runs_submit.py` --
 113 unit tests passing as of this ticket, up from 111 (still `-m "not e2e"` by default), plus the same
-5 e2e.
+5 e2e. `RAV-002` (Sprint 26, see "Run detail error chart (RAV-002)" above) added
+`tests/test_charting.py` plus extensions to `tests/test_runs_detail.py` -- 123 unit tests passing as of
+this ticket, up from 113, plus the same 5 e2e. `DASH-117` (Sprint 24) extended
+`tests/test_monitoring_triggers.py` with the restart-form-gating tests described in "Restart action
+(DASH-117)" above. `DASH-116` (Sprint 24, run immediately after `DASH-117`) extended the same file with
+`cancel_crawl`'s success/`404`/`409`/transport-failure/session-required tests and the stop/restart
+six-value mutual-exclusivity template tests described in "Stop action (DASH-116)" above -- 144 unit tests
+passing as of this ticket, up from 123, plus the same 5 e2e.
 
 **DASH-009 -- Selenium E2E suite** (`tests/e2e/`, the first browser-level suite in this platform): run
 separately via `uv run pytest -m e2e` -- 5 tests, exercising login (valid + invalid key), submit-a-run
