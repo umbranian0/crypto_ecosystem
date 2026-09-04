@@ -14,7 +14,8 @@
             {% if request.cookies.get('session_id') %}
             <nav class="main-nav">
                 <a href="/runs/new" class="{{ 'active' if request.url.path == '/runs/new' else '' }}">Submit a run</a>
-                <a href="/runs" class="{{ 'active' if request.url.path == '/runs' or (request.url.path.startswith('/runs/') and request.url.path != '/runs/new') else '' }}">Runs</a>
+                <a href="/runs" class="{{ 'active' if request.url.path == '/runs' or (request.url.path.startswith('/runs/') and request.url.path != '/runs/new' and request.url.path != '/runs/horizon-summary') else '' }}">Runs</a>
+                <a href="/runs/horizon-summary" class="{{ 'active' if request.url.path == '/runs/horizon-summary' else '' }}">Horizon summary</a>
                 <a href="/datasets" class="{{ 'active' if request.url.path == '/datasets' else '' }}">Datasets</a>
                 <form method="post" action="/logout" class="logout-form">
                     <button type="submit" class="nav-logout">Log out</button>

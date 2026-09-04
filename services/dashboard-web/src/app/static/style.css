@@ -623,6 +623,27 @@ main > table th {
   margin-bottom: var(--space-2);
 }
 
+/* Per-horizon validation summary panel (FHS-003): reuses the same four
+   status-neutral verdict-category variables RAV-003 established above --
+   text color only here, no new hex values, no green="better"/red="worse"
+   pairing. */
+
+.verdict-label-better {
+  color: var(--color-status-completed-text);
+}
+
+.verdict-label-worse {
+  color: var(--color-status-failed-text);
+}
+
+.verdict-label-no-sig-diff {
+  color: var(--color-status-running-text);
+}
+
+.verdict-label-undefined {
+  color: var(--color-text-muted);
+}
+
 /* Status badge */
 
 .status {

@@ -42,6 +42,10 @@ Each `dev` agent call must be self-contained: point it at its ticket file, the s
 
 For each ticket: verify the acceptance criteria are actually met (read the diff/new files yourself, don't just trust the dev agent's summary — the tool instructions are explicit that a subagent's report describes intent, not necessarily what happened). Run the module's test suite if one exists — this is the Test phase's actual verification, not just the dev agent's self-report of it. Confirm the Documentation acceptance criterion landed (README/status updated). Update ticket status in the index (`in-review` while you're checking, `done` only after verification passes). If a ticket failed or is incomplete, decide whether to re-delegate with corrective instructions or flag it back to the requester — don't silently mark it done.
 
+## QA handoff
+
+Once every ticket in the sprint is verified `done` by you, raise a `qa` subagent (see `/qa-validation`) to independently validate the whole batch before it's treated as production-ready — point it at the sprint plan and every ticket file, not just your own summary. This is required for any sprint touching leakage-sensitive logic, lifecycle/state-machine code, or anything rendering a number to an end user; for pure-docs or decision-only sprints, note in your final report that QA was skipped and why. Treat QA's bug reports the same way you treat a failed self-review: re-delegate the fix to a `dev` agent and get QA to re-verify, don't mark the ticket done over an open QA finding.
+
 ## Final report
 
-Summarize to the requester: tickets completed vs. blocked, what got built (file paths), test results, and anything that deviated from the sprint plan and why. Do not start a new sprint or invoke the Product Owner/PM yourself — that's the requester's call.
+Summarize to the requester: tickets completed vs. blocked, what got built (file paths), test results, the QA agent's go/no-go verdict (or why QA was skipped), and anything that deviated from the sprint plan and why. Do not start a new sprint or invoke the Product Owner/PM yourself — that's the requester's call.

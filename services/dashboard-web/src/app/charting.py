@@ -222,6 +222,18 @@ def _verdict_category(split: SplitResultResponse) -> str:
     return split.dm_verdict
 
 
+def verdict_category_and_css_slug(split: SplitResultResponse) -> tuple[str, str]:
+    """FHS-003: exposes the same per-split category/slug mapping
+    `build_dm_verdict_chart` uses internally, for the new per-horizon
+    validation summary panel (`_forecast_horizon_summary_panel.html`), which
+    needs a per-split (not aggregated-count) verdict category -- reuses
+    `_verdict_category`/`_CATEGORY_CSS_SLUGS`/`UNDEFINED_VERDICT_CATEGORY`
+    rather than re-deriving the None-DM-value rule a second time.
+    """
+    category = _verdict_category(split)
+    return category, _CATEGORY_CSS_SLUGS[category]
+
+
 def build_dm_verdict_chart(splits: list[SplitResultResponse]) -> DmVerdictChartData:
     """Pre-computes bar geometry for a DM-verdict-count-by-category chart.
 

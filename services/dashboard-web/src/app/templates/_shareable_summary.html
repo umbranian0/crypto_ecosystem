@@ -1,0 +1,36 @@
+{# FHS-004: "copy summary" affordance -- a readonly plain-text block built
+   server-side by `app.routers.runs.build_shareable_summary_text` (the same
+   already-fetched run/splits data FHS-003's panel renders), plus a Copy
+   button. The textarea is `readonly`: no form submits a modified version of
+   it back, so no UI path can strip or alter the caveat sentence before
+   copying. No new JS framework -- a minimal inline `<script>` calling
+   `navigator.clipboard.writeText`, matching run_new.html's existing
+   RSS-001/002 inline-script precedent. This block summarizes backtested
+   validation results only -- it never implies a future market outcome or
+   advises a course of action. #}
+<div class="chart-container">
+    <p class="chart-title">Shareable validation summary</p>
+    <p class="chart-caption">A plain-text copy of this run's validation results, including the
+    honesty caveat below, for sharing outside this dashboard.</p>
+    <textarea id="shareable-summary-text" readonly rows="12" style="width: 100%;">{{ shareable_summary_text }}</textarea>
+    <p class="form-status" id="shareable-summary-status" role="status"></p>
+    <button type="button" id="shareable-summary-copy-button">Copy summary</button>
+</div>
+<script>
+(function () {
+    var textarea = document.getElementById("shareable-summary-text");
+    var button = document.getElementById("shareable-summary-copy-button");
+    var status = document.getElementById("shareable-summary-status");
+
+    button.addEventListener("click", function () {
+        navigator.clipboard.writeText(textarea.value).then(
+            function () {
+                status.textContent = "Copied to clipboard.";
+            },
+            function () {
+                status.textContent = "Copy failed -- select the text manually.";
+            }
+        );
+    });
+})();
+</script>

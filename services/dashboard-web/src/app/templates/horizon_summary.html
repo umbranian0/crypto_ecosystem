@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Horizon summary -- dashboard-web{% endblock %}
+{% block content %}
+<h2>Horizon summary</h2>
+
+<p>Select a horizon (in days) to list this tenant's completed validation runs at that horizon.
+The conversion assumes the one hourly-sampled source available today -- see this feature's
+architecture decision record, ADR-0007.</p>
+
+<nav class="horizon-selector">
+    <a href="/runs/horizon-summary?days=7" class="{{ 'active' if days == 7 else '' }}">7 days</a>
+    <a href="/runs/horizon-summary?days=15" class="{{ 'active' if days == 15 else '' }}">15 days</a>
+    <a href="/runs/horizon-summary?days=30" class="{{ 'active' if days == 30 else '' }}">30 days</a>
+</nav>
+
+{% if days is not none %}
+    {% if runs %}
+    <p>Completed runs at horizon {{ horizon }} ({{ days }} days), most recent first.</p>
+    <div class="table-scroll">
+    <table>
+        <thead>
+            <tr>
+                <th>Run</th>
+                <th>Status</th>
+                <th>Dataset</th>
+                <th>Horizon</th>
+                <th>Created at</th>
+                <th>Completed at</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for run in runs %}
+            <tr>
+                <td><a href="/runs/{{ run.id }}">{{ run.id }}</a></td>
+                <td><span class="status status-{{ run.status }}">{{ run.status }}</span></td>
+                <td>{{ run.dataset_id }}</td>
+                <td>{{ run.horizon }}</td>
+                <td>{{ run.created_at }}</td>
+                <td>{{ run.completed_at if run.completed_at else "--" }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    {% else %}
+    <p>No completed runs at this horizon yet. <a href="/runs/new">Submit a run</a> to create one.</p>
+    {% endif %}
+{% endif %}
+{% endblock %}

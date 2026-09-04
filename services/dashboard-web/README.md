@@ -37,7 +37,24 @@
 **`docs/adr/0006-dashboard-web-charting-server-rendered-svg.md` for the full decision and rationale.**
 **`RAV-002` (Sprint 26) built the first real chart on top of that decision -- a model-vs-Naive0**
 **error-by-split chart on `GET /runs/{id}` -- see "Run detail error chart (RAV-002)" below (123**
-**unit tests passing as of this ticket, up from 113, plus the same 5 e2e). `DASH-117`/`DASH-116`**
+**unit tests passing as of this ticket, up from 113, plus the same 5 e2e). `FHS-001` (Sprint 27)**
+**decided this feature's horizon unit (dataset-sampling-interval-relative; hourly today, per**
+**`binance_price_btcusdt_1h`) and scope (select among a tenant's existing completed runs, no**
+**backend change) -- see `docs/adr/0007-forecast-horizon-summary-unit-and-scope.md` for the full**
+**decision. `FHS-003` (Sprint 27) added a per-split validation summary panel**
+**(`_forecast_horizon_summary_panel.html`) to `GET /runs/{id}`, above the existing per-split table**
+**and RAV-002/003's charts -- see "Per-horizon validation summary panel (FHS-003)" below. `FHS-002`**
+**(Sprint 27) added a new `/runs/horizon-summary` page with a 7/15/30-day selector filtering the**
+**tenant's own completed runs by ADR-0007's conversion -- see "Horizon summary selector (FHS-002)"**
+**below (178 unit tests passing as of these two tickets, up from 167, plus the same 5 e2e).**
+**`FHS-004` (Sprint 27) added a "copy summary" affordance to `GET /runs/{id}` -- a readonly**
+**`<textarea>` plus Copy button rendering a fixed-format plain-text block (dataset/run identifier,**
+**horizon in the user-facing day unit, naive-first baseline and candidate-model metrics per split,**
+**DM verdict/p-value, and the fixed honesty-caveat sentence verbatim) -- see "Shareable validation**
+**summary export (FHS-004)" below (185 unit tests passing as of this sprint, up from 178, plus the**
+**same 5 e2e -- includes one post-review QA-found bug fix in FHS-002's `runs_horizon_summary`**
+**status filter, see docs/tickets/FHS-002.md and docs/tickets/README.md's Sprint 27 section).**
+**`DASH-117`/`DASH-116`**
 **(Sprint 24) gated the crawl-status panel's trigger form to a restart action for stopped crawls and**
 **added a "stop this crawl" action, respectively -- see "Restart action (DASH-117)" and "Stop action**
 **(DASH-116)" below. `DASH-118` (Sprint 24, last of that trio against the same file) added a "Progress"**
@@ -558,6 +575,104 @@ backend call, no new field:
   nor RAV-002's renders; adds `test_dm_verdict_chart_partial_has_no_banned_positioning_words`
   (mirroring RAV-002's own pattern); and adds the color-safety regex check above.
 
+## Per-horizon validation summary panel (FHS-003)
+
+`GET /runs/{run_id}` (`src/app/routers/runs.py`) now also renders a per-split validation-evidence
+summary panel, above the existing per-split table and RAV-002/003's charts (not a replacement for
+either), using the same already-fetched `GET /runs/{id}/splits` response -- no new backend call, no
+new field:
+
+- **`app/templates/_forecast_horizon_summary_panel.html`** (new partial, same `{% include %}`
+  pattern as `_error_chart.html`/`_dm_verdict_chart.html`) renders, per split, `model_mae` next to
+  `naive0_mae` (and the run's other already-persisted metric pairs -- RMSE, sMAPE, MASE, DA, F1,
+  OOS R2) plus `dm_pvalue` and the DM benchmark-comparison verdict, at the same per-split
+  granularity as `run_detail.html`'s existing table (no separate aggregation scheme). `run_detail.html`
+  includes it inside the existing `{% if splits %}` branch, above RAV-002/003's charts -- no second,
+  parallel zero-splits check was added; a zero-split run continues to render the existing "No
+  per-split validation results yet" message and the panel does not render in that branch.
+- **`app/charting.py`** gained `verdict_category_and_css_slug(split: SplitResultResponse) -> tuple[str,
+  str]`, a thin wrapper over the same `_verdict_category`/`_CATEGORY_CSS_SLUGS` mapping
+  `build_dm_verdict_chart` (RAV-003) already uses internally -- this panel needs a per-split (not
+  aggregated-count) category, so the existing None-DM-value rule is reused rather than re-derived. A
+  split whose `dm_statistic`/`dm_pvalue` are both `None` maps to the same `UNDEFINED_VERDICT_CATEGORY`
+  sentinel RAV-003 already established ("undefined for this split") -- no second sentinel name for
+  the same concept.
+- **`app/routers/runs.py`**: `run_detail` now also builds `horizon_summary_rows` (the same `splits`
+  list zipped with `verdict_category_and_css_slug(split)` per split) and hands it to
+  `run_detail.html` as `horizon_summary_rows` -- same "necessary route-context wiring, not scope
+  creep" rationale RAV-003's own README subsection already recorded for `dm_verdict_chart`.
+- **Colors**: no new hex values or CSS variables -- reuses the exact same four RAV-003
+  status-neutral variables (`--color-status-completed-text` for "better",
+  `--color-status-failed-text` for "worse", `--color-status-running-text` for "no significant
+  difference", `--color-text-muted` for "undefined for this split"), applied here as text color via
+  four new `.verdict-label-*` classes in `style.css` (RAV-003's own `.verdict-bar-*` classes set
+  SVG `fill`, not usable for this panel's plain-text verdict label, so new class *names* were added,
+  but no new color values) -- no green="better"/red="worse" bull/bear pairing.
+- **`None`-DM-split handling**: a split whose `dm_statistic`/`dm_pvalue` are both `None` renders its
+  own explicit "undefined for this split" row in this panel too, distinct from "no significant
+  difference" -- proven by
+  `tests/test_runs_detail.py`'s `test_run_detail_forecast_horizon_summary_panel_renders_undefined_category`.
+- **Positioning**: panel copy uses only "backtested performance"/"validation result"/"benchmark
+  comparison" vocabulary; the words "prediction," "forecast" (as product-copy usage; the
+  `{% include %}` statement referencing the partial's own filename is excluded from the
+  banned-word scan, since a structural template reference is not rendered copy), "signal,"
+  "target," and "recommendation" do not appear in the panel's own rendered copy, per
+  `tests/test_runs_detail.py`'s `test_forecast_horizon_summary_panel_partial_has_no_banned_positioning_words`.
+- **Tests**: `tests/test_runs_detail.py` adds a route-level test asserting the panel renders the
+  fixture's real `model_mae`/`naive0_mae`/`dm_pvalue` values; a dedicated test for the
+  `dm_statistic=None, dm_pvalue=None` fixture split rendering the `UNDEFINED_VERDICT_CATEGORY` label
+  as its own row, never merged into "no significant difference" and never dropped; a zero-split test
+  confirming the panel does not render; and the banned-word scan for the new partial. The existing
+  `test_run_detail_template_has_no_banned_positioning_words` was extended to strip `{% include %}`
+  statements before scanning `run_detail.html`, since this ticket's own feature name ("Forecast
+  Horizon Summary") legitimately makes the new partial's filename contain "forecast" as a structural
+  reference, not product copy.
+
+## Shareable validation summary export (FHS-004)
+
+`GET /runs/{run_id}` (`src/app/routers/runs.py`) now also renders a "copy summary" affordance next
+to FHS-003's per-horizon validation summary panel, using the same already-fetched `run`/`splits`
+data -- no new backend call, no server-side persistence of the exported text (pure render-and-copy,
+per the backlog's own explicit scope limit):
+
+- **`app/routers/runs.py`** gained `build_shareable_summary_text(run: RunDetailResponse, splits:
+  list[SplitResultResponse]) -> str` (pure function, no I/O, unit-testable standalone) -- produces a
+  fixed-format plain-text block: dataset/run identifier, the horizon in the user-facing day unit
+  (`_HORIZON_TO_DAY_LABEL`, the reverse of `_horizon_for_days`'s ADR-0007 conversion -- `horizon`
+  168/360/720 map to "7/15/30 days"; any other `horizon` value shows the raw integer with no
+  fabricated day label, per the ADR's own "no silent generalization" note), naive-first baseline
+  metrics and candidate-model metrics **per split** (the same per-split granularity FHS-003's panel
+  already ships, not a second aggregation scheme), the DM verdict and p-value per split, and the
+  fixed caveat sentence (`CAVEAT_SENTENCE`) appended verbatim at the end. `run_detail` calls this
+  function and passes the result to the template as `shareable_summary_text`.
+- **The exact caveat sentence, verbatim:**
+
+  > This is a backtested validation result, not a forecast of future performance. Under this
+  > platform's own published research, no machine learning model has beaten a naive statistical
+  > baseline in a stable, significant way at any tested horizon -- treat any deviation shown here as
+  > unproven until independently reconfirmed.
+
+- **`app/templates/_shareable_summary.html`** (new partial, `{% include %}`-ed from `run_detail.html`
+  next to FHS-003's panel) renders a `readonly` `<textarea>` pre-filled with `shareable_summary_text`
+  plus a "Copy summary" button, with a minimal inline `<script>` calling
+  `navigator.clipboard.writeText` -- the same "small inline `<script>`" precedent `run_new.html`'s
+  RSS-001/002 already established, no new JS framework dependency. The `<textarea>` is `readonly` and
+  the caveat sentence is generated by the same server-side function as the rest of the text -- no
+  client-editable field, and no UI path (including the textarea itself) can strip or alter the
+  caveat before copying.
+- **No persistence**: the generated text is computed per-request and handed straight to the
+  template; nothing new is written to any DB/session/storage.
+- **Positioning**: copy vocabulary matches FHS-003's constraint -- no "prediction"/"forecast"/
+  "signal"/"target"/"recommendation" anywhere in the new partial except inside the caveat sentence's
+  own required wording (the negated "not a forecast of future performance" usage), per
+  `tests/test_runs_detail.py`'s `test_shareable_summary_partial_has_no_banned_positioning_words_outside_caveat`.
+- **Tests**: `tests/test_runs_detail.py` adds an exact-string-match test for `CAVEAT_SENTENCE`
+  (written before the rendering code, per this ticket's own test-first instruction) that fails if any
+  word is altered or dropped; a unit test for `build_shareable_summary_text`'s real
+  dataset/run/metric/DM-verdict values; a `horizon=168` -> "7 days" test and an unmatched-horizon ->
+  raw-value-only test; a route-level test confirming the `<textarea>` and caveat render in
+  `GET /runs/{run_id}`; and the extended banned-word scan for the new partial.
+
 ## Operator login and monitoring (DASH-113)
 
 Minimal slice of the sibling backlog's `SETUP-003` (setup wizard)/`SETUP-012` (tenant-management
@@ -940,3 +1055,40 @@ against a real running `dashboard-web` subprocess.
 
 **CI**: not yet wired into `.github/workflows/ci.yml` (OPS-001) -- planned as a follow-up once this
 service's Sprint 11 scope is done and stable.
+
+## Horizon summary selector (FHS-002)
+
+A new page, `GET /runs/horizon-summary` (`src/app/routers/runs.py`), lets a tenant select a horizon
+in days (7/15/30) and lists their own completed validation runs whose `horizon` matches, most
+recent first -- no new backend/gateway-api/validation-service call beyond the existing `GET /runs`
+(GW-016), per `docs/adr/0007-forecast-horizon-summary-unit-and-scope.md` (FHS-001)'s scope decision:
+
+- **Day-to-`horizon` conversion**: `horizon` is a count of the dataset's own sampling steps, not a
+  fixed time unit (ADR-0007 (a)). This feature hardcodes the one real hourly-sampled source today
+  (`binance_price_btcusdt_1h`) via two named, commented constants in `runs.py` --
+  `HOURS_PER_DAY = 24` and `ASSUMED_SAMPLING_INTERVAL_HOURS = 1` -- combined in `_horizon_for_days`
+  to resolve 7/15/30 days to `horizon` 168/360/720. This is a disclosed, hourly-only assumption, not
+  a platform-wide guarantee: the first thing to revisit if a non-hourly-sampled source is ever added
+  (ADR-0007's own "Consequence for future readers" section).
+- **Filtering**: `runs_horizon_summary` calls the exact same `GET /runs` `runs_list` (DASH-005-01)
+  already calls, reusing `_call_downstream`/`_render_error_for_status` unchanged, then filters the
+  parsed `RunSummaryResponse` list client-side by `run.horizon == _horizon_for_days(days)`. The
+  response already comes back `created_at DESC` (DASH-005-01's existing convention) -- no client
+  re-sort. `days` is unset on first render (selector only, no runs listed, no locally invented
+  default), matching `runs_list`'s own convention.
+- **Empty-state behavior**: a selected horizon with zero matching completed runs renders an explicit
+  "No completed runs at this horizon yet." message with a link to `/runs/new` -- never a silent
+  empty table, never a fallback to a different horizon's runs (ADR-0007 (c); expected to be the
+  common case initially, per that ADR's own note).
+- **Template**: `app/templates/horizon_summary.html` (new) reuses `runs_list.html`'s table column
+  layout for the matching-runs table; `app/templates/base.html` gained a "Horizon summary" nav link
+  next to the existing `/runs`/`/datasets` links.
+- **Positioning**: copy uses only "validation runs"/"completed runs at this horizon" vocabulary --
+  never "prediction," "forecast," "signal," "target," or "recommendation" anywhere on this page
+  (CLAUDE.md's core positioning constraint), grep-checked by
+  `test_horizon_summary_template_has_no_banned_positioning_words`.
+- **Tests**: `tests/test_runs_horizon_summary.py` (new, mirrors `tests/test_runs_detail.py`'s
+  `httpx.MockTransport` convention) covers the no-`days` selector-only render, `?days=7`/`?days=30`
+  showing disjoint matching sets, the zero-match empty state (asserting the `/runs/new` link and the
+  absence of a `<table`, not just presence of the empty-state text), a `502` from `GET /runs` reusing
+  `error.html` (no second error template), the session-required redirect, and the banned-word scan.

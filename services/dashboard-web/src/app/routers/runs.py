@@ -131,6 +131,37 @@ RAV-003: `run_detail` likewise passes the same `splits` list through
 `app.charting`'s `build_dm_verdict_chart` and hands the resulting
 `DmVerdictChartData` to `run_detail.html` as `dm_verdict_chart`, rendered by
 `_dm_verdict_chart.html`. No new downstream call here either.
+
+FHS-003: `run_detail` also builds `horizon_summary_rows` -- the same `splits`
+list zipped with `app.charting.verdict_category_and_css_slug(split)` per
+split -- and hands it to `run_detail.html` as `horizon_summary_rows`, rendered
+by the new `_forecast_horizon_summary_panel.html` partial. Reuses the same
+per-split None-DM-value rule `build_dm_verdict_chart` already established
+(`UNDEFINED_VERDICT_CATEGORY`) rather than re-deriving it in the template. No
+new downstream call.
+
+FHS-002: `GET /runs/horizon-summary` (this same file, same "no second router
+module" precedent DASH-005-01/DASH-111 set) presents a 7/15/30-day horizon
+selector and filters the tenant's own `GET /runs` (the exact same call
+`runs_list` above makes -- no new backend endpoint, per
+`docs/adr/0007-forecast-horizon-summary-unit-and-scope.md`) client-side by
+`run.horizon`. `_horizon_for_days` below converts the selector's `days` value
+to `horizon` using the ADR's disclosed, hourly-only-for-now conversion
+constants (`HOURS_PER_DAY`, `ASSUMED_SAMPLING_INTERVAL_HOURS`), named and
+commented rather than inlined as a magic number. Registered before
+`run_detail`'s `/runs/{run_id}` (a Starlette literal-segment route must
+precede a same-position path-param route it would otherwise be shadowed by,
+same ordering rule DASH-006's docstring above already states for
+`/runs/new`). Reuses `_call_downstream`/`_render_error_for_status` -- no new
+transport-failure handling. A `days` value with zero matching runs renders an
+explicit empty state (never a silent empty table, never a fallback to a
+different horizon), per the ADR's (c) decision.
+
+FHS-004: `run_detail` also builds `shareable_summary_text` via the new
+`build_shareable_summary_text` (pure function, no I/O, below) -- the same
+already-fetched `run`/`splits` this handler already has, rendered by the new
+`_shareable_summary.html` partial as a readonly `<textarea>` plus a "Copy"
+button. No new downstream call, no persistence of the generated text.
 """
 
 from __future__ import annotations
@@ -150,7 +181,11 @@ from naive_first_common.contracts import (
 )
 from pydantic import ValidationError
 
-from app.charting import build_dm_verdict_chart, build_error_chart
+from app.charting import (
+    build_dm_verdict_chart,
+    build_error_chart,
+    verdict_category_and_css_slug,
+)
 from app.dependencies.downstream import DownstreamHeadersDep, GatewayApiUrlDep
 from app.main import templates
 
@@ -162,6 +197,95 @@ _MISSING_DATASET_REFERENCE_ERROR = (
     "for the dataset reference."
 )
 _INVALID_INLINE_JSON_ERROR = "Inline payload must be valid JSON."
+
+# FHS-002 / docs/adr/0007-forecast-horizon-summary-unit-and-scope.md: `horizon`
+# is a count of the dataset's own sampling steps, not a fixed time unit
+# (ADR-0007 (a)). The one real price source today
+# (`binance_price_btcusdt_1h`) samples hourly, so this feature's day-based
+# selector hardcodes that assumption rather than doing a per-dataset lookup
+# (explicitly flagged in the ADR as the thing to revisit if a non-hourly
+# source is ever added -- YAGNI until then).
+HOURS_PER_DAY = 24
+ASSUMED_SAMPLING_INTERVAL_HOURS = 1
+
+# The selector's only supported day values (ADR-0007 (b)) -> converted
+# `horizon` values, for the one real hourly source today.
+HORIZON_SUMMARY_DAY_OPTIONS = (7, 15, 30)
+
+# FHS-004: ADR-0007's forward conversion (`_horizon_for_days`) reversed --
+# only the three `horizon` values that conversion can actually produce
+# (168/360/720, for the one real hourly source today) are given a day label;
+# any other `horizon` shows the raw integer with no fabricated unit (the
+# ADR's own "no silent generalization" rule).
+_HORIZON_TO_DAY_LABEL = {168: "7 days", 360: "15 days", 720: "30 days"}
+
+# FHS-004: the exact caveat sentence (backlog-mandated, verbatim) appended to
+# every generated shareable summary -- the one string this ticket's test
+# suite regression-proofs against silent weakening. The word "forecast" here
+# is the single permitted usage (negated: "not a forecast of future
+# performance") the banned-positioning-words scan must distinguish from any
+# other, affirmative usage elsewhere in this module's templates.
+CAVEAT_SENTENCE = (
+    "This is a backtested validation result, not a forecast of future performance. "
+    "Under this platform's own published research, no machine learning model has "
+    "beaten a naive statistical baseline in a stable, significant way at any tested "
+    "horizon -- treat any deviation shown here as unproven until independently "
+    "reconfirmed."
+)
+
+
+def build_shareable_summary_text(
+    run: RunDetailResponse, splits: list[SplitResultResponse]
+) -> str:
+    """FHS-004: a pure function (no I/O) producing a fixed-format plain-text
+    block for the "copy summary" affordance -- dataset/run identifier, the
+    horizon in the user-facing day unit (`_HORIZON_TO_DAY_LABEL`'s reverse of
+    `_horizon_for_days`, falling back to the raw `horizon` value for an
+    unrecognized value), naive-first baseline metric(s) and candidate-model
+    metric(s) per split (the same per-split granularity FHS-003's panel
+    already ships -- not a second aggregation), the DM verdict/p-value per
+    split, and `CAVEAT_SENTENCE` verbatim appended at the end. Reuses the same
+    already-fetched `run`/`splits` data FHS-003's panel renders -- no new
+    downstream call.
+    """
+    horizon_label = _HORIZON_TO_DAY_LABEL.get(run.horizon, str(run.horizon))
+
+    lines = [
+        f"Validation run: {run.id}",
+        f"Dataset: {run.dataset_id}",
+        f"Horizon: {horizon_label}",
+        "",
+    ]
+
+    for split in splits:
+        lines.append(f"Split {split.split_index}:")
+        lines.append(f"  Model MAE: {split.model_mae}  |  Naive0 MAE: {split.naive0_mae}")
+        lines.append(f"  Model RMSE: {split.model_rmse}  |  Naive0 RMSE: {split.naive0_rmse}")
+        lines.append(
+            f"  Model sMAPE: {split.model_smape}  |  Naive0 sMAPE: {split.naive0_smape}"
+        )
+        lines.append(f"  Model MASE: {split.model_mase}  |  Naive0 MASE: {split.naive0_mase}")
+        lines.append(f"  Model DA: {split.model_da}  |  Naive0 DA: {split.naive0_da}")
+        lines.append(f"  Model F1: {split.model_f1}  |  Naive0 F1: {split.naive0_f1}")
+        lines.append(
+            f"  Model OOS R2: {split.model_oos_r2}  |  Naive0 OOS R2: {split.naive0_oos_r2}"
+        )
+        dm_pvalue = split.dm_pvalue if split.dm_pvalue is not None else "--"
+        lines.append(f"  DM p-value: {dm_pvalue}  |  Benchmark comparison verdict: {split.dm_verdict}")
+        lines.append("")
+
+    lines.append(CAVEAT_SENTENCE)
+
+    return "\n".join(lines)
+
+
+def _horizon_for_days(days: int) -> int:
+    """ADR-0007's `horizon_for(days, source_sampling_interval_hours)`
+    conversion, hardcoded to the one real hourly source today
+    (`ASSUMED_SAMPLING_INTERVAL_HOURS = 1`) -- resolves 7/15/30 days to
+    horizon 168/360/720.
+    """
+    return days * HOURS_PER_DAY // ASSUMED_SAMPLING_INTERVAL_HOURS
 
 
 def _call_downstream(fn, *args, **kwargs) -> tuple[httpx.Response | None, int | None]:
@@ -269,6 +393,54 @@ def datasets_list(request: Request, headers: DownstreamHeadersDep, base_url: Gat
         datasets = _fetch_ingestion_datasets(client, headers)
 
     return templates.TemplateResponse(request, "datasets.html", {"datasets": datasets})
+
+
+@router.get("/runs/horizon-summary")
+def runs_horizon_summary(
+    request: Request,
+    headers: DownstreamHeadersDep,
+    base_url: GatewayApiUrlDep,
+    days: int | None = None,
+):
+    """FHS-002: see this module's own docstring for the full note. `days` is
+    unset on first render (shows only the selector, no locally invented
+    default, matching `runs_list`'s own convention); when set, calls the
+    exact same `GET /runs` `runs_list` calls and filters the parsed
+    `RunSummaryResponse` list by `run.horizon == _horizon_for_days(days)` AND
+    `run.status == "completed"` (a `running`/`failed` run at the matching
+    horizon is not evidence of anything yet and must not appear on a page
+    framed as backtested validation results), most recent first (the
+    response already comes back `created_at DESC` per DASH-005-01 -- no
+    client re-sort).
+    """
+    if days is None:
+        return templates.TemplateResponse(
+            request,
+            "horizon_summary.html",
+            {"days": None, "horizon": None, "runs": None},
+        )
+
+    horizon = _horizon_for_days(days)
+
+    with httpx.Client(base_url=base_url) as client:
+        response, transport_status = _call_downstream(client.get, "/runs", headers=headers)
+        if transport_status is not None:
+            return _render_error_for_status(request, transport_status)
+        if response.status_code != 200:
+            return _render_error_for_status(request, response.status_code)
+
+        body = response.json()
+        all_runs = [RunSummaryResponse(**item) for item in body["items"]]
+
+    matching_runs = [
+        run for run in all_runs if run.horizon == horizon and run.status == "completed"
+    ]
+
+    return templates.TemplateResponse(
+        request,
+        "horizon_summary.html",
+        {"days": days, "horizon": horizon, "runs": matching_runs},
+    )
 
 
 @router.get("/runs/new")
@@ -453,6 +625,20 @@ def run_detail(
             else []
         )
 
+    # FHS-003: per-split (category, css_slug) pairs for the new validation
+    # summary panel -- reuses `app.charting.verdict_category_and_css_slug`
+    # (itself a thin wrapper over `build_dm_verdict_chart`'s own per-split
+    # category rule), so the None-DM "undefined for this split" rule is
+    # derived once, not re-implemented in the template.
+    horizon_summary_rows = [
+        (split, *verdict_category_and_css_slug(split)) for split in splits
+    ]
+
+    # FHS-004: the "copy summary" affordance's plain-text block, built from
+    # the same already-fetched run/splits data -- no new downstream call, no
+    # persistence.
+    shareable_summary_text = build_shareable_summary_text(run, splits)
+
     return templates.TemplateResponse(
         request,
         "run_detail.html",
@@ -461,5 +647,7 @@ def run_detail(
             "splits": splits,
             "error_chart": build_error_chart(splits),
             "dm_verdict_chart": build_dm_verdict_chart(splits),
+            "horizon_summary_rows": horizon_summary_rows,
+            "shareable_summary_text": shareable_summary_text,
         },
     )

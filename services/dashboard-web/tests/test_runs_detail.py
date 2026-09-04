@@ -16,6 +16,8 @@ from fastapi.testclient import TestClient
 
 from app.dependencies.session import get_session_store
 from app.main import app
+from app.routers.runs import CAVEAT_SENTENCE, build_shareable_summary_text
+from naive_first_common.contracts import RunDetailResponse, SplitResultResponse
 
 RAW_KEY = "super-secret-raw-api-key-do-not-leak"
 RUN_ID = "11111111-1111-1111-1111-111111111111"
@@ -243,6 +245,16 @@ def test_run_detail_requires_session(monkeypatch) -> None:
 
 
 def test_run_detail_template_has_no_banned_positioning_words() -> None:
+    """FHS-003's new partial's own *filename*
+    (`_forecast_horizon_summary_panel.html`) is `{% include %}`-ed here, and
+    the internal ticket/feature name ("Forecast Horizon Summary") legitimately
+    contains the word "forecast" -- that is a structural template reference,
+    not rendered product copy, so `{% include ... %}` statements are stripped
+    before scanning (the new partial's own *content* gets its own,
+    non-stripped scan below).
+    """
+    import re
+
     template_path = (
         __import__("pathlib").Path(__file__).parent.parent
         / "src"
@@ -250,7 +262,7 @@ def test_run_detail_template_has_no_banned_positioning_words() -> None:
         / "templates"
         / "run_detail.html"
     )
-    text = template_path.read_text(encoding="utf-8").lower()
+    text = re.sub(r"\{%\s*include\s+.*?%\}", "", template_path.read_text(encoding="utf-8")).lower()
 
     for banned in ("prediction", "forecast", "signal", "recommendation"):
         assert banned not in text, f"banned positioning word {banned!r} found in run_detail.html"
@@ -347,6 +359,224 @@ def test_run_detail_running_with_no_splits_renders_neither_chart(monkeypatch) ->
     assert "<svg" not in response.text
     assert "dm-verdict-chart-svg" not in response.text
     assert "error-chart-svg" not in response.text
+
+
+def test_forecast_horizon_summary_panel_partial_has_no_banned_positioning_words() -> None:
+    """FHS-003: same banned-word scan pattern as RAV-002/003's above, applied
+    to the new `_forecast_horizon_summary_panel.html` partial.
+    """
+    template_path = (
+        __import__("pathlib").Path(__file__).parent.parent
+        / "src"
+        / "app"
+        / "templates"
+        / "_forecast_horizon_summary_panel.html"
+    )
+    text = template_path.read_text(encoding="utf-8").lower()
+
+    for banned in ("prediction", "forecast", "signal", "target", "recommendation"):
+        assert banned not in text, (
+            f"banned positioning word {banned!r} found in "
+            "_forecast_horizon_summary_panel.html"
+        )
+
+
+def test_run_detail_renders_forecast_horizon_summary_panel_with_real_metrics(
+    monkeypatch,
+) -> None:
+    """FHS-003: the panel renders the fixture's real model_mae/naive0_mae and
+    the real dm_verdict/dm_pvalue for a split with a defined DM statistic.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == f"/runs/{RUN_ID}":
+            return httpx.Response(200, json=RUN_DETAIL_BODY)
+        if request.url.path == f"/runs/{RUN_ID}/splits":
+            return httpx.Response(200, json=[SPLIT_BODY])
+        raise AssertionError(f"unexpected path {request.url.path}")
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get(f"/runs/{RUN_ID}")
+
+    assert response.status_code == 200
+    assert "horizon-summary-table" in response.text
+    assert "Per-split validation summary" in response.text
+    assert "verdict-label-no-sig-diff" in response.text
+    assert "0.42" in response.text  # dm_pvalue
+
+
+def test_run_detail_forecast_horizon_summary_panel_renders_undefined_category(
+    monkeypatch,
+) -> None:
+    """FHS-003: a split with dm_statistic=None, dm_pvalue=None renders the
+    UNDEFINED_VERDICT_CATEGORY label in the panel, distinct from -- not
+    merged into -- "no significant difference", and not dropped.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == f"/runs/{RUN_ID}":
+            return httpx.Response(200, json=RUN_DETAIL_BODY)
+        if request.url.path == f"/runs/{RUN_ID}/splits":
+            return httpx.Response(200, json=[SPLIT_BODY, UNDEFINED_DM_SPLIT_BODY])
+        raise AssertionError(f"unexpected path {request.url.path}")
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get(f"/runs/{RUN_ID}")
+
+    assert response.status_code == 200
+    assert 'class="verdict-label-undefined"' in response.text
+    assert "undefined for this split" in response.text
+    # both categories present, and each on its own row -- undefined split's
+    # verdict is never coerced into the defined split's "no significant
+    # difference" label.
+    assert response.text.count('class="verdict-label-no-sig-diff"') >= 1
+    assert response.text.count('class="verdict-label-undefined"') >= 1
+
+
+def test_run_detail_running_with_no_splits_does_not_render_horizon_summary_panel(
+    monkeypatch,
+) -> None:
+    """FHS-003: a zero-split run continues to render the existing "no
+    results yet" state, not a broken/empty summary panel.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == f"/runs/{RUN_ID}":
+            body = {**RUN_DETAIL_BODY, "status": "running", "completed_at": None}
+            return httpx.Response(200, json=body)
+        if request.url.path == f"/runs/{RUN_ID}/splits":
+            return httpx.Response(200, json=[])
+        raise AssertionError(f"unexpected path {request.url.path}")
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get(f"/runs/{RUN_ID}")
+
+    assert response.status_code == 200
+    assert "No per-split validation results yet" in response.text
+    assert "horizon-summary-table" not in response.text
+
+
+def test_build_shareable_summary_text_contains_caveat_verbatim() -> None:
+    """FHS-004: the regression-proof test the ticket's own instruction calls
+    for -- exact string match of the caveat sentence, not a substring/keyword
+    check, so a future edit that silently weakens the wording is caught.
+    """
+    run = RunDetailResponse(**RUN_DETAIL_BODY)
+    split = SplitResultResponse(**SPLIT_BODY)
+
+    text = build_shareable_summary_text(run, [split])
+
+    assert CAVEAT_SENTENCE in text
+    assert (
+        CAVEAT_SENTENCE == "This is a backtested validation result, not a forecast of "
+        "future performance. Under this platform's own published research, no machine "
+        "learning model has beaten a naive statistical baseline in a stable, significant "
+        "way at any tested horizon -- treat any deviation shown here as unproven until "
+        "independently reconfirmed."
+    )
+
+
+def test_build_shareable_summary_text_contains_real_identifiers_and_metrics() -> None:
+    """FHS-004: the returned text contains the real dataset/run identifier,
+    the real naive/model metric values, and the real DM verdict/p-value.
+    """
+    run = RunDetailResponse(**RUN_DETAIL_BODY)
+    split = SplitResultResponse(**SPLIT_BODY)
+
+    text = build_shareable_summary_text(run, [split])
+
+    assert RUN_ID in text
+    assert "dataset-1" in text
+    assert "1.1" in text  # model_mae
+    assert "1.0" in text  # naive0_mae
+    assert "no significant difference" in text
+    assert "0.42" in text  # dm_pvalue
+
+
+def test_build_shareable_summary_text_horizon_168_shows_7_days() -> None:
+    """FHS-004: horizon=168 (ADR-0007's reverse conversion) shows "7 days"."""
+    run = RunDetailResponse(**{**RUN_DETAIL_BODY, "horizon": 168})
+    split = SplitResultResponse(**SPLIT_BODY)
+
+    text = build_shareable_summary_text(run, [split])
+
+    assert "7 days" in text
+
+
+def test_build_shareable_summary_text_unknown_horizon_shows_raw_value_only() -> None:
+    """FHS-004: a horizon not matching 168/360/720 shows the raw value, no
+    fabricated day label (ADR-0007's "no silent generalization" note).
+    """
+    run = RunDetailResponse(**{**RUN_DETAIL_BODY, "horizon": 42})
+    split = SplitResultResponse(**SPLIT_BODY)
+
+    text = build_shareable_summary_text(run, [split])
+
+    assert "42" in text
+    assert "days" not in text
+
+
+def test_run_detail_renders_shareable_summary_textarea(monkeypatch) -> None:
+    """FHS-004: `GET /runs/{run_id}` includes the `<textarea>` with the
+    summary text when splits exist.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == f"/runs/{RUN_ID}":
+            return httpx.Response(200, json=RUN_DETAIL_BODY)
+        if request.url.path == f"/runs/{RUN_ID}/splits":
+            return httpx.Response(200, json=[SPLIT_BODY])
+        raise AssertionError(f"unexpected path {request.url.path}")
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get(f"/runs/{RUN_ID}")
+
+    assert response.status_code == 200
+    assert "<textarea" in response.text
+    assert "readonly" in response.text
+    import html
+
+    assert CAVEAT_SENTENCE in html.unescape(response.text)
+
+
+def test_shareable_summary_partial_has_no_banned_positioning_words_outside_caveat() -> None:
+    """FHS-004: banned-positioning-words scan, extended for the new partial --
+    permits only the caveat's own negated "forecast" usage, flags any other
+    occurrence of the banned words.
+    """
+    import re
+
+    template_path = (
+        __import__("pathlib").Path(__file__).parent.parent
+        / "src"
+        / "app"
+        / "templates"
+        / "_shareable_summary.html"
+    )
+    text = template_path.read_text(encoding="utf-8").lower()
+    text_without_caveat = text.replace(CAVEAT_SENTENCE.lower(), "")
+
+    for banned in ("prediction", "forecast", "signal", "target", "recommendation"):
+        assert banned not in text_without_caveat, (
+            f"banned positioning word {banned!r} found in _shareable_summary.html "
+            "outside the caveat sentence"
+        )
 
 
 def test_style_css_dm_verdict_colors_never_pair_pure_red_and_pure_green() -> None:

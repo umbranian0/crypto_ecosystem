@@ -1,0 +1,72 @@
+{# FHS-003: per-horizon validation summary panel -- a side-by-side
+   benchmark-comparison summary, above the existing per-split table and
+   RAV-002/003's charts, not a replacement for either. `horizon_summary_rows`
+   is `run_detail`'s handler zipping the already-fetched `splits` list with
+   `app.charting.verdict_category_and_css_slug(split)` per split (a thin
+   wrapper over the same per-split category rule `_dm_verdict_chart.html`'s
+   `build_dm_verdict_chart` already established) -- no new backend call, no
+   recomputation of the DM verdict itself. A split whose `dm_statistic`/
+   `dm_pvalue` are both null (a single-test-point split's genuinely undefined
+   DM statistic) renders its own explicit category label, never merged into
+   "no significant difference" and never dropped. Colors are the same four
+   named CSS classes RAV-003 already established for verdict categories
+   (`.verdict-label-better`, `.verdict-label-worse`,
+   `.verdict-label-no-sig-diff`, `.verdict-label-undefined` -- style.css),
+   status-neutral, never a green="better"/red="worse" pairing. This panel
+   summarizes backtested performance / validation results / benchmark
+   comparisons only -- it never implies a future market outcome or advises
+   a course of action. #}
+<div class="chart-container">
+    <p class="chart-title">Per-split validation summary (model vs. Naive0)</p>
+    <p class="chart-caption">Backtested performance of the model against the Naive0 baseline for
+    each walk-forward split, with the Diebold-Mariano benchmark-comparison verdict shown alongside
+    each pair. This is a validation/audit summary only.</p>
+    <div class="table-scroll">
+    <table class="horizon-summary-table">
+        <thead>
+            <tr>
+                <th>Split</th>
+                <th>Model MAE</th>
+                <th>Naive0 MAE</th>
+                <th>Model RMSE</th>
+                <th>Naive0 RMSE</th>
+                <th>Model sMAPE</th>
+                <th>Naive0 sMAPE</th>
+                <th>Model MASE</th>
+                <th>Naive0 MASE</th>
+                <th>Model DA</th>
+                <th>Naive0 DA</th>
+                <th>Model F1</th>
+                <th>Naive0 F1</th>
+                <th>Model OOS R2</th>
+                <th>Naive0 OOS R2</th>
+                <th>DM p-value</th>
+                <th>Benchmark comparison verdict</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for split, verdict_category, verdict_css_slug in horizon_summary_rows %}
+            <tr>
+                <td>{{ split.split_index }}</td>
+                <td>{{ split.model_mae }}</td>
+                <td>{{ split.naive0_mae }}</td>
+                <td>{{ split.model_rmse }}</td>
+                <td>{{ split.naive0_rmse }}</td>
+                <td>{{ split.model_smape }}</td>
+                <td>{{ split.naive0_smape }}</td>
+                <td>{{ split.model_mase }}</td>
+                <td>{{ split.naive0_mase }}</td>
+                <td>{{ split.model_da }}</td>
+                <td>{{ split.naive0_da }}</td>
+                <td>{{ split.model_f1 }}</td>
+                <td>{{ split.naive0_f1 }}</td>
+                <td>{{ split.model_oos_r2 }}</td>
+                <td>{{ split.naive0_oos_r2 }}</td>
+                <td>{{ split.dm_pvalue if split.dm_pvalue is not none else "--" }}</td>
+                <td><span class="verdict-label-{{ verdict_css_slug }}">{{ verdict_category }}</span></td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>

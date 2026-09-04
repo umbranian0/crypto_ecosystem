@@ -19,6 +19,8 @@
 {% if splits %}
 <p>Benchmark comparison of the model against the Naive0 baseline for each walk-forward split.
 These are validation/audit metrics only.</p>
+{% include "_forecast_horizon_summary_panel.html" %}
+{% include "_shareable_summary.html" %}
 {% include "_error_chart.html" %}
 {% include "_dm_verdict_chart.html" %}
 <div class="table-scroll">

@@ -823,6 +823,65 @@ manual page reload -- judged in-scope rather than a follow-up, since `INGEST-015
 mostly-cosmetic staleness of a snapshot-at-load panel materially worse (crawls no longer finish within
 the same request/response cycle).
 
+## Sprint 27
+
+| Ticket | Story | Depends on | Status |
+|---|---|---|---|
+| [FHS-001](FHS-001.md) | Resolve horizon-unit and cross-run-selection design questions | none | done |
+| [FHS-003](FHS-003.md) | Per-horizon validation summary panel on run detail | FHS-001 | done |
+| [FHS-002](FHS-002.md) | Horizon selector on a new "horizon summary" view | FHS-001 | done |
+| [FHS-004](FHS-004.md) | Exportable/shareable summary text with the honesty caveat | FHS-003 | done |
+
+See docs/sprints/sprint-27.md, docs/product/backlog-forecast-horizon-summary.md. FHS-001 is a hard
+blocking decision story (ADR-0007), run first, no chart/route/backend code before it closed.
+FHS-003 and FHS-002 both depend only on FHS-001 and touch disjoint files (`run_detail.html`/
+`_forecast_horizon_summary_panel.html` vs. the new `runs_horizon_summary` route/
+`horizon_summary.html`), confirmed no collision by the Tech Lead's own file-overlap check.
+FHS-003's file-overlap risk was against Sprint 26's RAV-002/003 edits to `run_detail.html`/
+`style.css`, which were confirmed committed clean on `main` before this ticket started. FHS-004
+strictly depends on FHS-003's shipped per-split granularity, run last.
+
+**Tech Lead review (personally performed, not trusted from dev-agent self-report) for FHS-002/003**:
+read the actual diffs of `routers/runs.py`, `templates/horizon_summary.html`,
+`templates/_forecast_horizon_summary_panel.html`, `templates/base.html`, `templates/run_detail.html`,
+and `static/style.css`; confirmed FHS-002 added zero new backend/gateway-api/validation-service call
+beyond the existing `GET /runs`, with the day-to-`horizon` conversion (`HOURS_PER_DAY`,
+`ASSUMED_SAMPLING_INTERVAL_HOURS`) named/commented per ADR-0007, not a magic number; confirmed
+FHS-003 reuses `app.charting`'s existing `UNDEFINED_VERDICT_CATEGORY` sentinel and the four
+RAV-003 verdict-category CSS variables (no new colors, no green/red bull-bear pairing); confirmed
+`run_detail.html`'s existing `{% if splits %}` nesting was extended, not duplicated; confirmed both
+new templates' banned-word grep tests (`prediction`/`forecast`/`signal`/`target`/`recommendation`)
+exist and pass. Full `services/dashboard-web` suite personally re-run: **178 passed, 5 deselected**
+(e2e), zero regressions, matching the dev agents' own reported count. Live-stack verification against
+a real running gateway-api was skipped this session (no stack running) — disclosed, not fabricated.
+
+**Tech Lead review (personally performed) for FHS-004**: read the actual diff of `routers/runs.py`
+(`build_shareable_summary_text`, `CAVEAT_SENTENCE`), the new `templates/_shareable_summary.html`
+partial, `templates/run_detail.html`'s include, and `tests/test_runs_detail.py`'s 8 new tests.
+Confirmed the caveat-sentence test does exact-string matching (not a loose substring check);
+confirmed the `<textarea>` is `readonly` with no form path able to submit a modified caveat back;
+confirmed no new storage/DB/session writes were introduced (pure render-and-copy, no new downstream
+call); confirmed the banned-positioning-words scan strips `{% include %}` statements before scanning
+so FHS-003's partial filename doesn't false-positive, and that the caveat's own negated "forecast"
+usage is the only occurrence in `run_detail.html`'s render tree. Full `services/dashboard-web` suite
+personally re-run: **184 passed, 5 deselected** (e2e), 0 failures — zero regressions, matching the dev
+agent's reported count exactly. Live-stack verification skipped this session (no stack running) —
+disclosed, not fabricated, same as FHS-002/003.
+
+**Bug found and fixed during independent QA (2026-09-04, post-review)**: FHS-002's
+`runs_horizon_summary` filtered only on `run.horizon`, never on `run.status == "completed"` —
+`running`/`failed` runs at a matching horizon wrongly appeared on a page framed and documented as
+"completed validation runs" evidence, contradicting FHS-002's own acceptance criterion and the
+already-shipped README subsection describing the (intended) behavior. Reproduced by QA with a
+mixed-status fixture; fixed by the Tech Lead (`and run.status == "completed"` added to the filter
+in `src/app/routers/runs.py`) plus a new regression test
+(`test_horizon_summary_excludes_non_completed_runs_at_matching_horizon`). Full suite re-confirmed:
+**185 passed, 5 deselected** (e2e), 0 failures. See `docs/tickets/FHS-002.md` for the full note.
+
+**Sprint 27 outcome**: all four in-scope stories (FHS-001, FHS-002, FHS-003, FHS-004) done, one
+post-review bug found by QA and fixed same-day (see FHS-002 note above). Final suite count: 185
+passed, 5 deselected (e2e), 0 failures.
+
 # services/reporting-service (RS-*)
 
 Source: docs/product/backlog-reporting-service.md, docs/sprints/sprint-12.md. Sprint goal: a `"validation_audit"` HTML
