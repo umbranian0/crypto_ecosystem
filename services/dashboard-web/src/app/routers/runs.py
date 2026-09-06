@@ -203,6 +203,28 @@ runs" -- a purely descriptive count of already-computed DM-test outcomes,
 never a probability or recommendation. Zero evaluable runs render a plain
 "no completed runs matched this selection" message, never a fabricated
 "0 of 0" ratio.
+
+DASH-119: fixes a live production bug -- `GET /runs/{run_id}` returned a bare
+"Internal Server Error" for a real run with 38,597 persisted splits (a run
+that predates RSS-004's 500-split guardrail on `POST /runs`, which is
+enforced only going forward and does not retroactively bound an existing
+run). Root cause: `run_detail` handed the full, unbounded `splits` list to
+`build_error_chart`/`build_dm_verdict_chart`, `run_detail.html`'s per-split
+table loop, and `build_shareable_summary_text`'s per-split text loop, all
+four of which are O(number of splits) synchronous work in one request -- at
+38.6k splits, unbounded SVG geometry/HTML rows/text lines, not a Python
+exception. Fix: `run_detail` now caps what it hands to all four at
+`MAX_RENDERED_SPLITS` (500, matching RSS-004's own ceiling but independently
+defined -- no cross-service import), showing the most recent
+`MAX_RENDERED_SPLITS` splits (list-order tail) plus an explicit "N of M
+splits shown" notice in `run_detail.html` when truncated -- never a silent
+truncation. The full split list remains fetchable via the unbounded, already-
+existing `GET /runs/{run_id}/splits` API this handler already calls; this fix
+touches only what gets rendered into the one HTML response, not what data
+exists or is reachable. A run at or under the cap (the vast majority) is
+unaffected: `rendered_splits is splits` and `splits_truncated` is `False`,
+so every downstream builder/template branch receives the exact same input,
+and therefore renders byte-identical output, to before this ticket.
 """
 
 from __future__ import annotations
@@ -277,6 +299,25 @@ CAVEAT_SENTENCE = (
     "horizon -- treat any deviation shown here as unproven until independently "
     "reconfirmed."
 )
+
+# DASH-119: a pre-RSS-004 run can carry an unbounded number of persisted splits
+# (RSS-004's 500-split guardrail on `POST /runs`, `services/validation-service/
+# src/app/routers/runs.py`'s own `MAX_SPLIT_COUNT`, is enforced only going
+# forward -- it does not retroactively bound a run that already exists, and
+# `GET /runs/{id}` has no upper bound of its own on what it will fetch/render).
+# `run_detail` below renders at most this many splits (the most recent ones,
+# by list order -- `GET /runs/{id}/splits`' own already-established order,
+# no client re-sort) into the chart-geometry builders, the per-split table,
+# and the shareable summary text, all three of which are otherwise O(number
+# of splits) synchronous work done in one request -- at ~38.6k splits (the
+# incident that prompted this ticket) that is unbounded SVG/HTML/text
+# generation in one request, not a Python exception with a stack trace, hence
+# the bare "Internal Server Error" this ticket fixes. This constant is not
+# imported from `validation-service` (no service imports another service's
+# code, CLAUDE.md) -- it is independently chosen here, at the same value, for
+# the same reason: not a cross-service contract, a coincidence of both
+# services picking the same practical ceiling.
+MAX_RENDERED_SPLITS = 500
 
 
 def build_shareable_summary_text(
@@ -743,30 +784,50 @@ def run_detail(
             else []
         )
 
+    # DASH-119: cap what actually renders to `MAX_RENDERED_SPLITS`, showing
+    # the most recent ones (list-order tail -- `GET /runs/{id}/splits`' own
+    # existing order, no client re-sort) rather than trying to render all of
+    # them cheaply. The vast majority of runs (under RSS-004's 500-split
+    # cap) are unaffected: `rendered_splits is splits` and `splits_truncated`
+    # is `False`, so every downstream builder/template branch below gets
+    # exactly the same input, and therefore the same output, as before this
+    # ticket. Only a pre-RSS-004 run whose persisted split count exceeds the
+    # cap is truncated for rendering -- the full data remains fetchable via
+    # the API (`GET /runs/{run_id}/splits`, unbounded, untouched by this
+    # ticket) regardless of what this page renders.
+    total_splits_count = len(splits)
+    splits_truncated = total_splits_count > MAX_RENDERED_SPLITS
+    rendered_splits = splits[-MAX_RENDERED_SPLITS:] if splits_truncated else splits
+
     # FHS-003: per-split (category, css_slug) pairs for the new validation
     # summary panel -- reuses `app.charting.verdict_category_and_css_slug`
     # (itself a thin wrapper over `build_dm_verdict_chart`'s own per-split
     # category rule), so the None-DM "undefined for this split" rule is
     # derived once, not re-implemented in the template.
     horizon_summary_rows = [
-        (split, *verdict_category_and_css_slug(split)) for split in splits
+        (split, *verdict_category_and_css_slug(split)) for split in rendered_splits
     ]
 
     # FHS-004: the "copy summary" affordance's plain-text block, built from
     # the same already-fetched run/splits data -- no new downstream call, no
-    # persistence.
-    shareable_summary_text = build_shareable_summary_text(run, splits)
+    # persistence. DASH-119: built from `rendered_splits`, not the full
+    # `splits`, for the same unbounded-synchronous-work reason as the chart
+    # builders below.
+    shareable_summary_text = build_shareable_summary_text(run, rendered_splits)
 
     return templates.TemplateResponse(
         request,
         "run_detail.html",
         {
             "run": run,
-            "splits": splits,
-            "error_chart": build_error_chart(splits, metric=metric),
+            "splits": rendered_splits,
+            "error_chart": build_error_chart(rendered_splits, metric=metric),
             "metric_options": METRIC_REGISTRY,
-            "dm_verdict_chart": build_dm_verdict_chart(splits),
+            "dm_verdict_chart": build_dm_verdict_chart(rendered_splits),
             "horizon_summary_rows": horizon_summary_rows,
             "shareable_summary_text": shareable_summary_text,
+            "splits_truncated": splits_truncated,
+            "total_splits_count": total_splits_count,
+            "rendered_splits_count": len(rendered_splits),
         },
     )

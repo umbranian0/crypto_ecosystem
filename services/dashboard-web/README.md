@@ -66,7 +66,11 @@
 **DM-verdict charts ("Client-baseline overlay (RAV-005)" below), added a new cross-run trend view**
 **at `GET /runs/trend` ("Cross-run trend view (RAV-009)" below), and added a "beat Naive0 in N of M**
 **completed runs" consistency indicator to that same page ("Consistency indicator (RAV-010)" below)**
-**-- 223 unit tests passing (up from 217), plus the same 5 e2e.**
+**-- 223 unit tests passing (up from 217), plus the same 5 e2e. `DASH-119` (urgent production bug**
+**fix) caps `GET /runs/{run_id}` at rendering the most recent 500 splits for a run that persisted far**
+**more than that (a real 38,597-split run predating RSS-004's guardrail was returning a bare**
+**"Internal Server Error") -- see "Run detail page: rendered-split cap for oversized runs (DASH-119)"**
+**below (228 unit tests passing, up from 223, plus the same 5 e2e).**
 
 Formerly `dashboard/`. See [../../docs/solution-design.md](../../docs/solution-design.md) section 3.6.
 
@@ -1301,3 +1305,43 @@ horizon)` group's completed runs, never a probability of future performance or a
 - **Live-stack verification**: not performed -- no live Docker Compose stack was available in the
   Tech Lead review session that implemented this ticket; documented as a known gap, same disclosure
   precedent RAV-005/RAV-009 set for their own live-stack checks.
+
+## Run detail page: rendered-split cap for oversized runs (DASH-119)
+
+`GET /runs/{run_id}` (`src/app/routers/runs.py`, DASH-004's handler) is capped at rendering
+`MAX_RENDERED_SPLITS` (500) splits per page -- a live production bug fix, not a scheduled feature.
+A real run (`cd34a47d1b554b8fa2095aeb31066f2c`, 38,597 persisted splits, predating
+`validation-service`'s RSS-004 500-split guardrail on `POST /runs`, which is enforced only going
+forward) made this route return a bare "Internal Server Error": the full, unbounded `splits` list
+was being handed to `build_error_chart`/`build_dm_verdict_chart` (RAV-002/003), the per-split
+`<table>` loop, and `build_shareable_summary_text` (FHS-004) -- four O(number-of-splits)
+synchronous-render operations in one request, ~38.6k SVG bar-groups/table rows/text lines at that
+run's real size.
+
+- **The fix caps what renders, not what exists**: when the fetched split count exceeds
+  `MAX_RENDERED_SPLITS`, `run_detail` renders only the most recent `MAX_RENDERED_SPLITS` splits
+  (the tail of the list, in `GET /runs/{id}/splits`'s own existing order -- no client re-sort) into
+  every one of the four render paths above, plus FHS-003's per-horizon summary panel. An explicit
+  notice renders above the per-split section: "Showing the most recent N of M splits below -- full
+  per-split detail for this run remains available via the API (`GET /runs/{run_id}/splits`)." --
+  never a silent truncation. The full split list stays fully reachable via that same, unbounded
+  `GET /runs/{run_id}/splits` call (through `dashboard-web` itself, or directly via `gateway-api`) --
+  this fix does not delete, hide, or bound any persisted data, only what one HTML response renders.
+- **`MAX_RENDERED_SPLITS` is independently defined**, not imported from `validation-service`'s own
+  `MAX_SPLIT_COUNT` (RSS-004) -- both happen to be 500, but this is not a cross-service contract (no
+  service imports another service's code, per CLAUDE.md's module-boundary rule).
+- **Zero behavior change for any normal-sized run** (the vast majority -- every run respecting
+  RSS-004's guardrail): when the fetched split count is at or under the cap, `rendered_splits is
+  splits` and `splits_truncated` is `False`, so the chart builders, the per-split table, the
+  per-horizon summary panel, and the shareable summary text all receive exactly the same input, and
+  therefore render byte-identical output, to before this ticket.
+- **Tests**: `tests/test_runs_detail.py` adds a 2,000-synthetic-split fixture proving (a) the route
+  returns `200`, not `500`, at a count well past the cap; (b) the truncation notice renders with the
+  real shown/total counts; (c) the rendered subset is the tail (index 1500-1999 present, index
+  0-1499 absent from the per-horizon table) -- proving "most recent," not an arbitrary or silent
+  subset; (d) the upstream `GET /runs/{id}/splits` call itself still fetches/receives the full,
+  untruncated response (this route bounds only its own render, not the API call); plus two
+  under-cap tests confirming no truncation notice renders and the exact fixture split count appears,
+  unchanged from pre-fix behavior.
+- See `docs/tickets/DASH-119.md` for the full incident writeup, root-cause diagnosis, and QA
+  verdict.

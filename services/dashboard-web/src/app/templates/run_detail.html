@@ -19,6 +19,11 @@
 {% if splits %}
 <p>Benchmark comparison of the model against the Naive0 baseline for each walk-forward split.
 These are validation/audit metrics only.</p>
+{% if splits_truncated %}
+<p class="form-status">Showing the most recent {{ rendered_splits_count }} of {{ total_splits_count }}
+splits below -- full per-split detail for this run remains available via the API
+(<code>GET /runs/{{ run.id }}/splits</code>).</p>
+{% endif %}
 {% include "_forecast_horizon_summary_panel.html" %}
 {% include "_shareable_summary.html" %}
 {% include "_error_chart.html" %}

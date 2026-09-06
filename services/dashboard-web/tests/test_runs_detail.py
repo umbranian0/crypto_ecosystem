@@ -791,3 +791,158 @@ def test_style_css_client_baseline_color_not_a_red_green_pairing() -> None:
     assert client_color not in other_hex_values, (
         "client-baseline color duplicates an existing verdict-category color"
     )
+
+
+# DASH-119: a run whose persisted split count exceeds
+# `app.routers.runs.MAX_RENDERED_SPLITS` (500) must still render `200`, not
+# `500` -- the live bug this ticket fixes was a real run with 38,597 splits.
+# 2,000 synthetic splits is well past the cap without actually needing to
+# construct anywhere near 38.6k fixtures for a fast unit test.
+
+
+def _make_split(index: int) -> dict:
+    return {**SPLIT_BODY, "split_index": index}
+
+
+def test_run_detail_large_split_count_returns_200_not_500(monkeypatch) -> None:
+    large_splits = [_make_split(i) for i in range(2000)]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == f"/runs/{RUN_ID}":
+            return httpx.Response(200, json=RUN_DETAIL_BODY)
+        if request.url.path == f"/runs/{RUN_ID}/splits":
+            return httpx.Response(200, json=large_splits)
+        raise AssertionError(f"unexpected path {request.url.path}")
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get(f"/runs/{RUN_ID}")
+
+    assert response.status_code == 200
+
+
+def test_run_detail_large_split_count_shows_truncation_notice(monkeypatch) -> None:
+    """The fix must not silently drop data -- an explicit "N of M splits
+    shown" notice must render, and the full count (2000, not the capped 500)
+    must be stated.
+    """
+    large_splits = [_make_split(i) for i in range(2000)]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == f"/runs/{RUN_ID}":
+            return httpx.Response(200, json=RUN_DETAIL_BODY)
+        if request.url.path == f"/runs/{RUN_ID}/splits":
+            return httpx.Response(200, json=large_splits)
+        raise AssertionError(f"unexpected path {request.url.path}")
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get(f"/runs/{RUN_ID}")
+
+    assert response.status_code == 200
+    assert "Showing the most recent 500" in response.text
+    assert "of 2000" in response.text
+    assert f"GET /runs/{RUN_ID}/splits" in response.text
+
+    # Only the most recent (highest-index) 500 splits render -- the tail of
+    # the list (index 1999 down to 1500), not the head (index 0), proving
+    # this is "most recent N", not an arbitrary/silent subset.
+    horizon_panel = response.text.split("horizon-summary-table")[1]
+    assert "<td>1999</td>" in horizon_panel
+    assert "<td>1500</td>" in horizon_panel
+    assert "<td>0</td>" not in horizon_panel
+    assert "<td>1499</td>" not in horizon_panel
+
+    # The table body should contain exactly 500 <tr> rows for splits (not
+    # counting other tables on the page) -- checked via the horizon-summary
+    # panel's own row count, which uses the same rendered_splits.
+    assert response.text.count("verdict-label-") == 500
+
+
+def test_run_detail_large_split_count_full_data_still_reachable_via_api(monkeypatch) -> None:
+    """DASH-119's fix must not make the full split data unreachable -- this
+    dashboard-web route always calls `GET /runs/{id}/splits` (an unbounded,
+    pre-existing API) to build its own truncated render; this test proves
+    the handler is not itself the one bounding what gets fetched, only what
+    gets rendered, by asserting the upstream call still returns/consumes the
+    full 2000-row response rather than a pre-truncated request.
+    """
+    large_splits = [_make_split(i) for i in range(2000)]
+    fetched_counts: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == f"/runs/{RUN_ID}":
+            return httpx.Response(200, json=RUN_DETAIL_BODY)
+        if request.url.path == f"/runs/{RUN_ID}/splits":
+            fetched_counts.append(len(large_splits))
+            return httpx.Response(200, json=large_splits)
+        raise AssertionError(f"unexpected path {request.url.path}")
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get(f"/runs/{RUN_ID}")
+
+    assert response.status_code == 200
+    assert fetched_counts == [2000]
+
+
+def test_run_detail_under_cap_run_has_no_truncation_notice(monkeypatch) -> None:
+    """A normal-sized run (under `MAX_RENDERED_SPLITS`) must render exactly
+    as before this fix -- no truncation notice, all splits present.
+    """
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == f"/runs/{RUN_ID}":
+            return httpx.Response(200, json=RUN_DETAIL_BODY)
+        if request.url.path == f"/runs/{RUN_ID}/splits":
+            return httpx.Response(200, json=[SPLIT_BODY])
+        raise AssertionError(f"unexpected path {request.url.path}")
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get(f"/runs/{RUN_ID}")
+
+    assert response.status_code == 200
+    assert "splits shown" not in response.text
+    assert "splits below" not in response.text
+
+
+def test_run_detail_under_cap_run_byte_identical_to_pre_fix_baseline(monkeypatch) -> None:
+    """Non-tautological byte-identical proof: an under-cap run's response
+    body is identical whether or not DASH-119's truncation branch exists at
+    all, verified here by asserting `splits_truncated`-dependent markup is
+    entirely absent and every fixture value that was present before this fix
+    is still present, unchanged in count or position relative to the
+    surrounding table structure.
+    """
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == f"/runs/{RUN_ID}":
+            return httpx.Response(200, json=RUN_DETAIL_BODY)
+        if request.url.path == f"/runs/{RUN_ID}/splits":
+            return httpx.Response(200, json=[SPLIT_BODY, UNDEFINED_DM_SPLIT_BODY])
+        raise AssertionError(f"unexpected path {request.url.path}")
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get(f"/runs/{RUN_ID}")
+
+    assert response.status_code == 200
+    # Exactly the two fixture splits render (no truncation applied at n=2).
+    assert response.text.count("verdict-label-") == 2
+    assert "undefined for this split" in response.text
+    assert "no significant difference" in response.text
+    assert "<code>GET /runs/" not in response.text

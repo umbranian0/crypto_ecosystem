@@ -1665,3 +1665,51 @@ missing tie-case unit test for `_run_beats_naive0` (`better == other`) as low-ri
 comparison logic (`better > other`) is simple and unambiguous — not added, since the acceptance
 criteria didn't call for it and the code path is already exercised by the "majority worse" and
 "majority better" tests.
+
+# DASH-119 — urgent production bug fix: `GET /runs/{run_id}` 500s on an oversized run (dashboard-web)
+
+| Ticket | Story | Depends on | Status |
+|---|---|---|---|
+| [DASH-119](DASH-119.md) | Cap what `GET /runs/{run_id}` renders per page so a run with an unbounded persisted split count (a real 38,597-split run, id `cd34a47d1b554b8fa2095aeb31066f2c`, predating RSS-004's guardrail) does not return a bare `Internal Server Error` | none (fixes a defect in DASH-004/RAV-002/RAV-003/FHS-003/FHS-004, all done) | done |
+
+Live incident, not a scheduled sprint item — handled directly by the Tech Lead as an urgent bug fix
+(root cause already diagnosed against the actual code and a real `psql` count against
+`validation.split_results` before this ticket was opened, not a hypothesis). Root cause: `run_detail`
+(`services/dashboard-web/src/app/routers/runs.py`) handed the full, unbounded `splits` list to
+`build_error_chart`/`build_dm_verdict_chart` (RAV-002/003), `run_detail.html`'s per-split table loop,
+and `build_shareable_summary_text` (FHS-004) — four O(number-of-splits) synchronous-render operations
+in one request, ~38.6k SVG bar-groups/table rows/text lines at that run's real size, consistent with
+a request timeout/resource exhaustion rather than a catchable Python exception (matching the bare,
+stack-trace-free "Internal Server Error" the browser showed). RSS-004's 500-split cap on `POST /runs`
+(`services/validation-service`) is enforced only going forward and does not retroactively bound this
+already-existing run.
+
+**Fix**: a new `MAX_RENDERED_SPLITS = 500` constant in `run_detail` caps all four render paths (plus
+FHS-003's per-horizon summary panel) to the most recent 500 splits (list-order tail, no client
+re-sort) whenever the fetched split count exceeds it, with an explicit "Showing the most recent N of
+M splits below — full per-split detail... available via the API" notice — never a silent truncation.
+The pre-existing, unbounded `GET /runs/{run_id}/splits` API (this handler's own upstream call,
+unchanged) remains the full-detail source of truth; this fix bounds only what one HTML response
+renders, not what data exists or is reachable. `MAX_RENDERED_SPLITS` is independently defined, not
+imported from `validation-service`'s `MAX_SPLIT_COUNT` (RSS-004) — same value, not a cross-service
+contract, per CLAUDE.md's module-boundary rule. A run at or under the cap (the vast majority) is
+completely unaffected — `rendered_splits is splits`, byte-identical rendered output to before this
+fix.
+
+**Outcome**: `services/dashboard-web`'s full suite re-run directly by the Tech Lead —
+`uv run pytest -m "not e2e" -q` → **228 passed**, 0 failed (223 Sprint 28 baseline + 5 new DASH-119
+tests), zero regressions. New tests in `tests/test_runs_detail.py`: a 2,000-synthetic-split fixture
+proving (a) `200` not `500` well past the cap, (b) the real shown/total counts render in the
+truncation notice, (c) the rendered subset is the tail (index 1500–1999 present, 0–1499 absent) —
+proving "most recent," not an arbitrary/silent subset, (d) the upstream `GET /runs/{id}/splits` call
+itself still receives/consumes the full untruncated response (this route bounds only its own render),
+plus two under-cap tests confirming no truncation notice renders and fixture data is unchanged from
+pre-fix behavior. `services/dashboard-web/README.md` gained a "Run detail page: rendered-split cap
+for oversized runs (DASH-119)" section and its status banner's test count.
+
+QA validation (independent `qa` subagent pass, synchronous, run after the Tech Lead's own
+implementation and test run): independently re-ran the full suite, independently verified (1) the
+full 38,597-split-equivalent data remains reachable via `GET /runs/{run_id}/splits` unmodified — no
+silent data loss, only a bounded render — and (2) no regression to any existing FHS-*/RAV-*
+functionality for normal (under-cap) runs. See `docs/tickets/DASH-119.md`'s Review section for the
+full verdict.
