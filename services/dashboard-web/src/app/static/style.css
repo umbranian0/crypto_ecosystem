@@ -29,6 +29,12 @@
   --color-accent-2: #8b7bff;
   --color-accent-2-glow: rgba(139, 123, 255, 0.3);
 
+  /* RAV-005: third series color for the optional client-supplied baseline
+     overlay (error chart's third bar) -- amber, status-neutral, deliberately
+     not a green/red pairing with any existing chart color. */
+  --color-accent-3: #e0a940;
+  --color-accent-3-glow: rgba(224, 169, 64, 0.3);
+
   --color-error-bg: #2a1418;
   --color-error-border: #6b3038;
   --color-error-text: #ef9a9a;
@@ -532,6 +538,15 @@ main > table th {
   margin-bottom: var(--space-2);
 }
 
+/* Metric selector (RAV-004): no new colors -- reuses the existing form/label
+   styling conventions already in this file. */
+.metric-selector-form {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
 .error-chart-svg {
   display: block;
   width: 100%;
@@ -545,6 +560,12 @@ main > table th {
 
 .error-chart-svg .bar-naive0 {
   fill: var(--color-accent-2);
+}
+
+/* RAV-005: optional third (client-supplied baseline) series -- only rendered
+   when the run was submitted with a client_prediction_reference (VS-017). */
+.error-chart-svg .bar-client {
+  fill: var(--color-accent-3);
 }
 
 .error-chart-svg .chart-axis {
@@ -582,6 +603,14 @@ main > table th {
 
 .chart-legend-swatch.naive0 {
   background-color: var(--color-accent-2);
+}
+
+.chart-legend-swatch.client {
+  background-color: var(--color-accent-3);
+}
+
+.client-baseline-disclaimer {
+  font-style: italic;
 }
 
 /* DM-test verdict-by-split chart (RAV-003): server-rendered inline SVG, per

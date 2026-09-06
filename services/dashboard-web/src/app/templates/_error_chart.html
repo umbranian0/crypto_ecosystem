@@ -1,21 +1,47 @@
 {# RAV-002: model-vs-Naive0 error-by-split chart, server-rendered inline SVG
    per ADR-0006 (docs/adr/0006-dashboard-web-charting-server-rendered-svg.md)
    -- no client-side charting library, no Python plotting library. `error_chart`
-   is `app/charting.py`'s `build_error_chart(splits)` output, computed by
-   `run_detail`'s handler (charting.py has no Jinja2 import; this partial is
-   the only place its geometry becomes markup). MAE only this ticket -- RAV-004
-   (a metric selector for the other model/naive0 metric pairs) is out of scope
-   here. Colors are the two named CSS variables only (`--color-accent` for the
-   model series, `--color-accent-2` for Naive0), applied via the `bar-model`/
-   `bar-naive0` classes below (style.css) -- never a hardcoded hex value, and
-   never a green/red pairing. #}
+   is `app/charting.py`'s `build_error_chart(splits, metric)` output, computed
+   by `run_detail`'s handler (charting.py has no Jinja2 import; this partial
+   is the only place its geometry becomes markup). Colors are the two named
+   CSS variables only (`--color-accent` for the model series, `--color-accent-2`
+   for Naive0), applied via the `bar-model`/`bar-naive0` classes below
+   (style.css) -- never a hardcoded hex value, and never a green/red pairing.
+
+   RAV-004: a single `<select>` control (plain link-based tab set would work
+   equally well per the ticket's Design section; a `<select>` was chosen to
+   keep this one control rather than seven separate tab links) switches
+   `error_chart`'s plotted metric among all seven `SplitResultResponse` pairs
+   -- reloads the page with `?metric=...` (server-rendered, no client-side
+   framework, ADR-0006). Options are built from `metric_options`
+   (`app.charting.METRIC_REGISTRY`, passed by `run_detail`'s handler) so this
+   template never hand-rolls the metric-key/label list itself. `da`/`f1`
+   read "Directional accuracy"/"F1" verbatim, per the registry's own labeling
+   -- never hit-rate/win-rate trading language.
+
+   RAV-005: a third `bar-client` series (color `--color-accent-3`, style.css)
+   renders only when `error_chart.has_client_baseline` is true (a run
+   submitted with an optional client-supplied reference baseline, VS-017) --
+   the common, no-client-baseline case renders byte-identical markup to
+   before this ticket. `error_chart.client_baseline_disclaimer` (verbatim,
+   never paraphrased) is shown as visible copy adjacent to the chart
+   whenever the series is shown. #}
 <div class="chart-container">
-    <p class="chart-title">Model vs. Naive0 error by split (MAE)</p>
+    <form class="metric-selector-form" method="get" action="">
+        <label for="metric-selector">Metric</label>
+        <select id="metric-selector" name="metric" onchange="this.form.submit()">
+            {% for key, (label, _model_attr, _naive0_attr) in metric_options.items() %}
+            <option value="{{ key }}" {% if key == error_chart.metric %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+        </select>
+        <noscript><button type="submit">Update chart</button></noscript>
+    </form>
+    <p class="chart-title">Model vs. Naive0 error by split ({{ error_chart.metric_label }})</p>
     <svg
         class="error-chart-svg"
         viewBox="0 0 {{ error_chart.width }} {{ error_chart.height }}"
         role="img"
-        aria-label="Model versus Naive0 mean absolute error by split"
+        aria-label="Model versus Naive0 {{ error_chart.metric_label }} by split"
     >
         <line
             class="chart-axis"
@@ -31,19 +57,34 @@
             y="{{ split.model.y }}"
             width="{{ split.model.width }}"
             height="{{ split.model.height }}"
-        ><title>Split {{ split.split_index }} -- model MAE: {{ split.model.value }}</title></rect>
+        ><title>Split {{ split.split_index }} -- model {{ error_chart.metric_label }}: {{ split.model.value }}</title></rect>
         <rect
             class="bar-naive0"
             x="{{ split.naive0.x }}"
             y="{{ split.naive0.y }}"
             width="{{ split.naive0.width }}"
             height="{{ split.naive0.height }}"
-        ><title>Split {{ split.split_index }} -- Naive0 MAE: {{ split.naive0.value }}</title></rect>
+        ><title>Split {{ split.split_index }} -- Naive0 {{ error_chart.metric_label }}: {{ split.naive0.value }}</title></rect>
+        {% if error_chart.has_client_baseline and split.client %}
+        <rect
+            class="bar-client"
+            x="{{ split.client.x }}"
+            y="{{ split.client.y }}"
+            width="{{ split.client.width }}"
+            height="{{ split.client.height }}"
+        ><title>Split {{ split.split_index }} -- client baseline {{ error_chart.metric_label }}: {{ split.client.value }}</title></rect>
+        {% endif %}
         <text class="chart-axis-label" x="{{ split.label_x }}" y="{{ error_chart.plot_bottom + 16 }}" text-anchor="middle">{{ split.split_index }}</text>
         {% endfor %}
     </svg>
     <div class="chart-legend">
-        <span><span class="chart-legend-swatch model"></span>Model MAE</span>
-        <span><span class="chart-legend-swatch naive0"></span>Naive0 MAE</span>
+        <span><span class="chart-legend-swatch model"></span>Model {{ error_chart.metric_label }}</span>
+        <span><span class="chart-legend-swatch naive0"></span>Naive0 {{ error_chart.metric_label }}</span>
+        {% if error_chart.has_client_baseline %}
+        <span><span class="chart-legend-swatch client"></span>Client baseline {{ error_chart.metric_label }}</span>
+        {% endif %}
     </div>
+    {% if error_chart.has_client_baseline %}
+    <p class="chart-caption client-baseline-disclaimer">{{ error_chart.client_baseline_disclaimer }}</p>
+    {% endif %}
 </div>

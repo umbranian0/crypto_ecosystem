@@ -127,6 +127,17 @@ docs/adr/0006-dashboard-web-charting-server-rendered-svg.md). No new
 downstream call -- the same `GET /runs/{id}/splits` response this handler
 already fetches is reused.
 
+RAV-004: `run_detail` reads an optional `metric` query param (default
+`"mae"`) and passes it through to `build_error_chart`. An unrecognized value
+is not re-validated here a second time -- `build_error_chart` itself already
+falls back to `"mae"` for any key not in `app.charting.METRIC_REGISTRY`, so
+this route just forwards the raw query value rather than duplicating that
+registry lookup (this is a display preference, not a form submission with a
+422 path, per this ticket's Design section). `error_chart.metric` (the
+resolved, possibly-fallen-back-to value `build_error_chart` returns) is what
+`run_detail.html`'s selector control uses to mark the active option, not the
+raw query param.
+
 RAV-003: `run_detail` likewise passes the same `splits` list through
 `app.charting`'s `build_dm_verdict_chart` and hands the resulting
 `DmVerdictChartData` to `run_detail.html` as `dm_verdict_chart`, rendered by
@@ -162,6 +173,36 @@ FHS-004: `run_detail` also builds `shareable_summary_text` via the new
 already-fetched `run`/`splits` this handler already has, rendered by the new
 `_shareable_summary.html` partial as a readonly `<textarea>` plus a "Copy"
 button. No new downstream call, no persistence of the generated text.
+
+RAV-009: `GET /runs/trend` (this same file, same "no second router module"
+precedent DASH-005-01/DASH-111/FHS-002 set) -- see this ticket's own Analysis
+section: no new backend endpoint is introduced, only client-side aggregation
+of the two already-existing `GET /runs` and `GET /runs/{id}/splits` calls.
+Registered before `run_detail`'s `/runs/{run_id}` (same literal-segment-
+before-path-param ordering rule `/runs/new`/`/runs/horizon-summary` already
+follow). First call is the exact same `GET /runs` `runs_list`/
+`runs_horizon_summary` already make, grouped client-side by
+`(dataset_id, horizon)` for the selector -- no group/metric selected yet
+renders only the selector, mirroring `runs_horizon_summary`'s own
+no-`days`-yet behavior. Once a group (`dataset_id`+`horizon`) and a metric
+are selected, only that group's `completed` runs (`running`/`failed` runs
+skipped -- a non-completed run is not evidence of anything yet, the same
+reasoning `runs_horizon_summary` already applies) each get their own
+`GET /runs/{id}/splits` call, and the resulting `(run, splits)` pairs are
+passed to `app.charting.build_trend_chart`. Framed throughout as "how this
+model configuration's validation results have varied across completed
+runs" -- never "trend" language implying a forecast of a future run's
+outcome (this ticket's Design section, CLAUDE.md's positioning constraint).
+
+RAV-010: the same `(run, splits)` pairs computed above (no second
+`GET /runs/{id}/splits` call) are also passed to
+`app.charting.compute_consistency_indicator`, which counts how many of those
+completed runs had a majority "better"-than-Naive0 verdict across their own
+splits. Rendered next to the trend chart as "beat Naive0 in N of M completed
+runs" -- a purely descriptive count of already-computed DM-test outcomes,
+never a probability or recommendation. Zero evaluable runs render a plain
+"no completed runs matched this selection" message, never a fabricated
+"0 of 0" ratio.
 """
 
 from __future__ import annotations
@@ -182,8 +223,12 @@ from naive_first_common.contracts import (
 from pydantic import ValidationError
 
 from app.charting import (
+    DEFAULT_METRIC,
+    METRIC_REGISTRY,
     build_dm_verdict_chart,
     build_error_chart,
+    build_trend_chart,
+    compute_consistency_indicator,
     verdict_category_and_css_slug,
 )
 from app.dependencies.downstream import DownstreamHeadersDep, GatewayApiUrlDep
@@ -592,12 +637,85 @@ def run_new_submit(
     return RedirectResponse(url=f"/runs/{run.id}", status_code=303)
 
 
+@router.get("/runs/trend")
+def runs_trend(
+    request: Request,
+    headers: DownstreamHeadersDep,
+    base_url: GatewayApiUrlDep,
+    dataset_id: str | None = None,
+    horizon: int | None = None,
+    metric: str = DEFAULT_METRIC,
+):
+    """RAV-009: see this module's own docstring for the full note. Grouping
+    is client-side over the same `GET /runs` response every other route in
+    this file already fetches -- no new backend endpoint (this ticket's
+    Analysis section).
+    """
+    with httpx.Client(base_url=base_url) as client:
+        response, transport_status = _call_downstream(client.get, "/runs", headers=headers)
+        if transport_status is not None:
+            return _render_error_for_status(request, transport_status)
+        if response.status_code != 200:
+            return _render_error_for_status(request, response.status_code)
+
+        body = response.json()
+        all_runs = [RunSummaryResponse(**item) for item in body["items"]]
+
+        groups: dict[tuple[str, int], list[RunSummaryResponse]] = {}
+        for run in all_runs:
+            groups.setdefault((run.dataset_id, run.horizon), []).append(run)
+
+        selected_group = (
+            (dataset_id, horizon) if dataset_id is not None and horizon is not None else None
+        )
+
+        trend_chart = None
+        consistency_indicator = None
+        if selected_group is not None and selected_group in groups:
+            completed_runs = [
+                run for run in groups[selected_group] if run.status == "completed"
+            ]
+            runs_with_splits: list[tuple[RunSummaryResponse, list[SplitResultResponse]]] = []
+            for run in completed_runs:
+                splits_response, splits_transport_status = _call_downstream(
+                    client.get, f"/runs/{run.id}/splits", headers=headers
+                )
+                if splits_transport_status is not None:
+                    return _render_error_for_status(request, splits_transport_status)
+                if splits_response.status_code in (502, 504):
+                    return _render_error_for_status(request, splits_response.status_code)
+                splits = (
+                    [SplitResultResponse(**item) for item in splits_response.json()]
+                    if splits_response.status_code == 200
+                    else []
+                )
+                runs_with_splits.append((run, splits))
+
+            trend_chart = build_trend_chart(runs_with_splits, metric=metric)
+            # RAV-010: reuses the same already-fetched `runs_with_splits` --
+            # no second `GET /runs/{id}/splits` call.
+            consistency_indicator = compute_consistency_indicator(runs_with_splits)
+
+    return templates.TemplateResponse(
+        request,
+        "runs_trend.html",
+        {
+            "groups": sorted(groups.keys()),
+            "selected_group": selected_group,
+            "metric_options": METRIC_REGISTRY,
+            "trend_chart": trend_chart,
+            "consistency_indicator": consistency_indicator,
+        },
+    )
+
+
 @router.get("/runs/{run_id}")
 def run_detail(
     request: Request,
     run_id: str,
     headers: DownstreamHeadersDep,
     base_url: GatewayApiUrlDep,
+    metric: str = "mae",
 ):
     with httpx.Client(base_url=base_url) as client:
         detail_response, transport_status = _call_downstream(
@@ -645,7 +763,8 @@ def run_detail(
         {
             "run": run,
             "splits": splits,
-            "error_chart": build_error_chart(splits),
+            "error_chart": build_error_chart(splits, metric=metric),
+            "metric_options": METRIC_REGISTRY,
             "dm_verdict_chart": build_dm_verdict_chart(splits),
             "horizon_summary_rows": horizon_summary_rows,
             "shareable_summary_text": shareable_summary_text,

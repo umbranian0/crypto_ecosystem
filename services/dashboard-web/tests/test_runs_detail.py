@@ -126,6 +126,72 @@ def test_run_detail_success_with_splits(monkeypatch) -> None:
     assert "1.0" in response.text  # naive0_mae
 
 
+def test_run_detail_metric_query_param_switches_chart(monkeypatch) -> None:
+    """RAV-004: `?metric=smape` re-renders the chart with sMAPE's own
+    model/naive0 values, not MAE's.
+    """
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == f"/runs/{RUN_ID}":
+            return httpx.Response(200, json=RUN_DETAIL_BODY)
+        if request.url.path == f"/runs/{RUN_ID}/splits":
+            return httpx.Response(200, json=[SPLIT_BODY])
+        raise AssertionError(f"unexpected path {request.url.path}")
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get(f"/runs/{RUN_ID}", params={"metric": "smape"})
+
+    assert response.status_code == 200
+    assert "sMAPE" in response.text
+    assert "3.3" in response.text  # model_smape
+    assert "3.0" in response.text  # naive0_smape
+
+
+def test_run_detail_invalid_metric_falls_back_to_mae(monkeypatch) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == f"/runs/{RUN_ID}":
+            return httpx.Response(200, json=RUN_DETAIL_BODY)
+        if request.url.path == f"/runs/{RUN_ID}/splits":
+            return httpx.Response(200, json=[SPLIT_BODY])
+        raise AssertionError(f"unexpected path {request.url.path}")
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get(f"/runs/{RUN_ID}", params={"metric": "not-a-real-metric"})
+
+    assert response.status_code == 200
+    assert "(MAE)" in response.text
+    assert "1.1" in response.text  # model_mae
+
+
+def test_run_detail_metric_selector_offers_all_seven_metrics(monkeypatch) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == f"/runs/{RUN_ID}":
+            return httpx.Response(200, json=RUN_DETAIL_BODY)
+        if request.url.path == f"/runs/{RUN_ID}/splits":
+            return httpx.Response(200, json=[SPLIT_BODY])
+        raise AssertionError(f"unexpected path {request.url.path}")
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get(f"/runs/{RUN_ID}")
+
+    assert response.status_code == 200
+    for value in ("mae", "rmse", "smape", "mase", "da", "f1", "oos_r2"):
+        assert f'value="{value}"' in response.text
+    assert "Directional accuracy" in response.text
+    assert ">F1<" in response.text
+
+
 def test_run_detail_running_with_no_splits(monkeypatch) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == f"/runs/{RUN_ID}":
@@ -615,3 +681,113 @@ def test_style_css_dm_verdict_colors_never_pair_pure_red_and_pure_green() -> Non
     reds = [v for v in hex_values if v in _pure_red]
     greens = [v for v in hex_values if v in _pure_green]
     assert not (reds and greens), "verdict colors pair a pure red with a pure green"
+
+
+CLIENT_BASELINE_DISCLAIMER = (
+    "This client-supplied baseline is shown for reference only and is not "
+    "validated by this platform."
+)
+
+CLIENT_BASELINE_BODY = {
+    "key": "client",
+    "mae": 0.9,
+    "rmse": 1.0,
+    "smape": 1.0,
+    "mase": 1.0,
+    "da": 0.5,
+    "f1": 0.5,
+    "oos_r2": 0.1,
+    "dm_statistic": -1.2,
+    "dm_pvalue": 0.03,
+    "dm_verdict": "better",
+    "disclaimer": CLIENT_BASELINE_DISCLAIMER,
+}
+
+SPLIT_BODY_WITH_CLIENT_BASELINE = {
+    **SPLIT_BODY,
+    "client_baseline": CLIENT_BASELINE_BODY,
+}
+
+
+def test_run_detail_renders_client_baseline_disclaimer_when_present(monkeypatch) -> None:
+    """RAV-005: `client_baseline.disclaimer` renders verbatim, adjacent to the
+    chart, when at least one split carries a `client_baseline`.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == f"/runs/{RUN_ID}":
+            return httpx.Response(200, json=RUN_DETAIL_BODY)
+        if request.url.path == f"/runs/{RUN_ID}/splits":
+            return httpx.Response(200, json=[SPLIT_BODY_WITH_CLIENT_BASELINE])
+        raise AssertionError(f"unexpected path {request.url.path}")
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get(f"/runs/{RUN_ID}")
+
+    assert response.status_code == 200
+    assert CLIENT_BASELINE_DISCLAIMER in response.text
+
+
+def test_run_detail_omits_client_baseline_disclaimer_when_absent(monkeypatch) -> None:
+    """No split carries a `client_baseline` (the common case) -- the
+    disclaimer copy must not render at all.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == f"/runs/{RUN_ID}":
+            return httpx.Response(200, json=RUN_DETAIL_BODY)
+        if request.url.path == f"/runs/{RUN_ID}/splits":
+            return httpx.Response(200, json=[SPLIT_BODY])
+        raise AssertionError(f"unexpected path {request.url.path}")
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get(f"/runs/{RUN_ID}")
+
+    assert response.status_code == 200
+    assert CLIENT_BASELINE_DISCLAIMER not in response.text
+    assert "bar-client" not in response.text
+
+
+def test_style_css_client_baseline_color_not_a_red_green_pairing() -> None:
+    """RAV-005 color-safety check, extended: the new third-series color token
+    (`--color-accent-3`) must not be a canonical pure red or pure green, and
+    must not pair with a pure red/green among the existing verdict colors.
+    """
+    import re
+
+    style_path = (
+        __import__("pathlib").Path(__file__).parent.parent
+        / "src"
+        / "app"
+        / "static"
+        / "style.css"
+    )
+    text = style_path.read_text(encoding="utf-8")
+
+    variable_values = dict(re.findall(r"(--color-[\w-]+):\s*(#[0-9a-fA-F]{3,8})", text))
+
+    _pure_red = {"#f00", "#ff0000"}
+    _pure_green = {"#0f0", "#00ff00"}
+
+    client_color = variable_values["--color-accent-3"].lower()
+    assert client_color not in _pure_red, "client-baseline color is canonical pure red"
+    assert client_color not in _pure_green, "client-baseline color is canonical pure green"
+
+    verdict_vars = [
+        "--color-status-completed-text",
+        "--color-status-failed-text",
+        "--color-status-running-text",
+        "--color-text-muted",
+    ]
+    other_hex_values = [variable_values[var].lower() for var in verdict_vars]
+    assert client_color not in other_hex_values, (
+        "client-baseline color duplicates an existing verdict-category color"
+    )

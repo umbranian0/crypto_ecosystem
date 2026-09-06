@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}Cross-run variation -- dashboard-web{% endblock %}
+{% block content %}
+<h2>Cross-run variation</h2>
+
+<p>Select a dataset/horizon configuration to see how this model configuration's validation results
+have varied across its completed runs. Each bar group is one already-completed run, most recent
+first as returned by <code>GET /runs</code> -- this is a backward-looking comparison of past,
+already-computed validation results only, never an indication of what a future run would show.</p>
+
+{% if groups %}
+<nav class="trend-group-selector">
+    {% for group_dataset_id, group_horizon in groups %}
+    <a
+        href="/runs/trend?dataset_id={{ group_dataset_id }}&horizon={{ group_horizon }}&metric={{ trend_chart.metric if trend_chart else "mae" }}"
+        class="{{ 'active' if selected_group == (group_dataset_id, group_horizon) else '' }}"
+    >{{ group_dataset_id }} / horizon {{ group_horizon }}</a>
+    {% endfor %}
+</nav>
+{% else %}
+<p>No validation runs yet.</p>
+{% endif %}
+
+{% if selected_group %}
+    <form class="metric-selector-form" method="get" action="/runs/trend">
+        <input type="hidden" name="dataset_id" value="{{ selected_group[0] }}">
+        <input type="hidden" name="horizon" value="{{ selected_group[1] }}">
+        <label for="trend-metric-selector">Metric</label>
+        <select id="trend-metric-selector" name="metric" onchange="this.form.submit()">
+            {% for key, (label, _model_attr, _naive0_attr) in metric_options.items() %}
+            <option value="{{ key }}" {% if trend_chart and key == trend_chart.metric %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+        </select>
+        <noscript><button type="submit">Update chart</button></noscript>
+    </form>
+{% endif %}
+
+<p class="consistency-indicator">
+{% if consistency_indicator and consistency_indicator.has_data %}
+    Beat Naive0 in {{ consistency_indicator.beat_count }} of {{ consistency_indicator.total_count }} completed runs
+    (majority of splits with a "better" DM verdict against Naive0, among runs with at least one
+    split whose DM statistic is defined). This is a plain count of already-completed, already-tested
+    runs -- not a statement about how any future run would turn out.
+{% else %}
+    No completed runs matched this selection.
+{% endif %}
+</p>
+
+{% if selected_group %}
+    {% if trend_chart and trend_chart.runs %}
+    <p class="chart-title">Model vs. Naive0 {{ trend_chart.metric_label }} across completed runs (mean per run)</p>
+    <svg
+        class="trend-chart-svg"
+        viewBox="0 0 {{ trend_chart.width }} {{ trend_chart.height }}"
+        role="img"
+        aria-label="Model versus Naive0 {{ trend_chart.metric_label }}, variation across completed runs"
+    >
+        <line
+            class="chart-axis"
+            x1="0"
+            y1="{{ trend_chart.plot_bottom }}"
+            x2="{{ trend_chart.width }}"
+            y2="{{ trend_chart.plot_bottom }}"
+        />
+        {% for run_bars in trend_chart.runs %}
+        <rect
+            class="bar-model"
+            x="{{ run_bars.model.x }}"
+            y="{{ run_bars.model.y }}"
+            width="{{ run_bars.model.width }}"
+            height="{{ run_bars.model.height }}"
+        ><title>Run {{ run_bars.run_id }} -- model {{ trend_chart.metric_label }}: {{ run_bars.model.value }}</title></rect>
+        <rect
+            class="bar-naive0"
+            x="{{ run_bars.naive0.x }}"
+            y="{{ run_bars.naive0.y }}"
+            width="{{ run_bars.naive0.width }}"
+            height="{{ run_bars.naive0.height }}"
+        ><title>Run {{ run_bars.run_id }} -- Naive0 {{ trend_chart.metric_label }}: {{ run_bars.naive0.value }}</title></rect>
+        <text class="chart-axis-label" x="{{ run_bars.label_x }}" y="{{ trend_chart.plot_bottom + 16 }}" text-anchor="middle">{{ run_bars.run_id[:8] }}</text>
+        {% endfor %}
+    </svg>
+    <div class="chart-legend">
+        <span><span class="chart-legend-swatch model"></span>Model {{ trend_chart.metric_label }}</span>
+        <span><span class="chart-legend-swatch naive0"></span>Naive0 {{ trend_chart.metric_label }}</span>
+    </div>
+    <ul class="trend-run-links">
+        {% for run_bars in trend_chart.runs %}
+        <li><a href="/runs/{{ run_bars.run_id }}">{{ run_bars.run_id }}</a></li>
+        {% endfor %}
+    </ul>
+    {% else %}
+    <p>No completed runs in this dataset/horizon configuration yet.</p>
+    {% endif %}
+{% endif %}
+{% endblock %}

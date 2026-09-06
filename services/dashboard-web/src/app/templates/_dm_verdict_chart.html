@@ -14,7 +14,20 @@
    never dropped or folded into "no significant difference." Colors are four
    named CSS variables only (`.verdict-bar-better`, `.verdict-bar-worse`,
    `.verdict-bar-no-sig-diff`, `.verdict-bar-undefined` -- style.css), chosen
-   to be status-neutral and never a green="better"/red="worse" pairing. #}
+   to be status-neutral and never a green="better"/red="worse" pairing.
+
+   RAV-005: a second, distinguishable bar group (`dm_verdict_chart.client_bars`)
+   renders below the platform's own verdict bars only when
+   `dm_verdict_chart.has_client_baseline` is true (a run submitted with an
+   optional client-supplied reference baseline, VS-017) -- reuses the same
+   four category
+   colors above (a second set of four bars, not a fifth color), since the
+   categories themselves are identical, just counted separately for the
+   client-supplied baseline. The common, no-client-baseline case renders
+   byte-identical markup to before this ticket.
+   `dm_verdict_chart.client_baseline_disclaimer` (verbatim, never paraphrased)
+   is shown as visible copy adjacent to the chart whenever the series is
+   shown. #}
 <div class="chart-container">
     <p class="chart-title">DM-test verdict by split (vs. Naive0)</p>
     <p class="chart-caption">"Better"/"worse" describe this split's own out-of-sample error
@@ -46,4 +59,33 @@
         <text class="chart-axis-label chart-category-label" x="{{ bar.label_x }}" y="{{ dm_verdict_chart.plot_bottom + 32 }}" text-anchor="middle">{{ bar.category }}</text>
         {% endfor %}
     </svg>
+    {% if dm_verdict_chart.has_client_baseline %}
+    <p class="chart-title">DM-test verdict by split (vs. Naive0) -- client-supplied baseline</p>
+    <svg
+        class="dm-verdict-chart-svg dm-verdict-chart-svg-client"
+        viewBox="0 0 {{ dm_verdict_chart.width }} {{ dm_verdict_chart.height }}"
+        role="img"
+        aria-label="Diebold-Mariano test verdict count by category, for the client-supplied baseline, across this run's splits"
+    >
+        <line
+            class="chart-axis"
+            x1="0"
+            y1="{{ dm_verdict_chart.plot_bottom }}"
+            x2="{{ dm_verdict_chart.width }}"
+            y2="{{ dm_verdict_chart.plot_bottom }}"
+        />
+        {% for bar in dm_verdict_chart.client_bars %}
+        <rect
+            class="verdict-bar-{{ bar.css_slug }}"
+            x="{{ bar.x }}"
+            y="{{ bar.y }}"
+            width="{{ bar.width }}"
+            height="{{ bar.height }}"
+        ><title>Client baseline -- {{ bar.category }}: {{ bar.count }} split(s)</title></rect>
+        <text class="chart-axis-label" x="{{ bar.label_x }}" y="{{ dm_verdict_chart.plot_bottom + 16 }}" text-anchor="middle">{{ bar.count }}</text>
+        <text class="chart-axis-label chart-category-label" x="{{ bar.label_x }}" y="{{ dm_verdict_chart.plot_bottom + 32 }}" text-anchor="middle">{{ bar.category }}</text>
+        {% endfor %}
+    </svg>
+    <p class="chart-caption client-baseline-disclaimer">{{ dm_verdict_chart.client_baseline_disclaimer }}</p>
+    {% endif %}
 </div>

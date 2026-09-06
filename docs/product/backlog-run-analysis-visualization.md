@@ -172,12 +172,12 @@ charts) to also cover `smape`, `mase`, `da`, `f1`, and `oos_r2` model-vs-naive0 
 limited to MAE/RMSE if a different metric matters more for their evaluation.
 
 Acceptance criteria:
-- [ ] A single control (dropdown/tab set) switches the RAV-002 chart's plotted metric among all seven pairs
+- [x] A single control (dropdown/tab set) switches the RAV-002 chart's plotted metric among all seven pairs
       already present on `SplitResultResponse` — no new backend field, no new endpoint.
-- [ ] Directional-accuracy (`da`) and F1 series are labeled with their statistical meaning ("directional accuracy,"
+- [x] Directional-accuracy (`da`) and F1 series are labeled with their statistical meaning ("directional accuracy,"
       "F1") and not reworded into anything resembling a hit-rate/win-rate trading framing.
-- [ ] Same status-neutral color/positioning constraints as RAV-002 apply to every metric pair, not only MAE/RMSE.
-- [ ] Test: switching the selector re-renders the correct series for each of the seven metric pairs against a
+- [x] Same status-neutral color/positioning constraints as RAV-002 apply to every metric pair, not only MAE/RMSE.
+- [x] Test: switching the selector re-renders the correct series for each of the seven metric pairs against a
       fixture split set.
 
 Rationale for priority: genuine incremental value (some tenants will care about DA/F1/OOS R2 over MAE/RMSE) but
@@ -185,10 +185,7 @@ not required for the minimum "audit a run visually" capability RAV-002/RAV-003 a
 next increment, not a blocker.
 Depends on: RAV-002
 
-**Status: deferred, not scheduled this sprint.** RAV-002/RAV-003 (Sprint 26) shipped the minimum coherent Epic A
-slice per `docs/sprints/sprint-26.md`'s own reasoning; this Should story is a candidate for a follow-up sprint
-(Sprint 27), not pulled in even though RAV-002's real `build_error_chart` implementation makes this look cheap
-now — sprint-scope changes go through the PM/approval path, not the Tech Lead's own ticket-breakdown call.
+**Status: DONE (Sprint 28, `docs/tickets/RAV-004.md`).**
 
 ### RAV-005 — Overlay the optional client-supplied baseline on existing charts [Should]
 **As** dashboard-web, **I want** RAV-002/RAV-003's charts to include a third series/category for `client_baseline`
@@ -197,24 +194,23 @@ model's predictions can visually compare it against both Naive0 and the platform
 place, not just in the existing table.
 
 Acceptance criteria:
-- [ ] When `SplitResultResponse.client_baseline` is present for a run's splits, RAV-002's error chart and RAV-003's
+- [x] When `SplitResultResponse.client_baseline` is present for a run's splits, RAV-002's error chart and RAV-003's
       verdict chart each gain a third, visually distinct series for it; when absent (the common case), both charts
       render exactly as RAV-002/RAV-003 already specify — no layout change for runs without a client baseline.
-- [ ] `client_baseline.disclaimer` (the mandatory audit disclaimer text already returned by the API, per VS-017)
+- [x] `client_baseline.disclaimer` (the mandatory audit disclaimer text already returned by the API, per VS-017)
       is rendered as visible copy adjacent to the chart whenever that series is shown — never omitted just because
       the information is now also in a chart.
-- [ ] A `client_baseline` split with `dm_statistic`/`dm_pvalue` both `None` (the documented single-point-split
+- [x] A `client_baseline` split with `dm_statistic`/`dm_pvalue` both `None` (the documented single-point-split
       case) renders the same "undefined for this split" treatment RAV-003 already defines for the platform's own
       baseline, not a different/inconsistent treatment for the third series.
-- [ ] Test: chart renders three series when `client_baseline` is present across a fixture split set; renders
+- [x] Test: chart renders three series when `client_baseline` is present across a fixture split set; renders
       exactly two (unchanged from RAV-002/003) when absent.
 
 Rationale for priority: real value for the subset of tenants using VS-017's bring-your-own-prediction path, but
 that path itself is optional/less-traveled than the always-present model/naive0 comparison — Should, not Must.
 Depends on: RAV-002, RAV-003
 
-**Status: deferred, not scheduled this sprint** — same Sprint 26/27 sequencing reasoning as RAV-004, per
-`docs/sprints/sprint-26.md`.
+**Status: DONE (Sprint 28, `docs/tickets/RAV-005.md`).**
 
 ## Epic B — Raw predicted-vs-actual visualization (requires new backend capability — prerequisite, not assumed)
 
@@ -307,25 +303,26 @@ consistently across runs/time, not just inspect one run in isolation — directl
 task's own framing (a tenant analyzing trends "on their own," not a single-run snapshot).
 
 Acceptance criteria:
-- [ ] Extends the existing `GET /runs` list view (`runs_list.html`/`DASH-005-01`) or adds an adjacent page, calling
+- [x] Extends the existing `GET /runs` list view (`runs_list.html`/`DASH-005-01`) or adds an adjacent page, calling
       only endpoints that already exist (`GET /runs` for the run list, `GET /runs/{id}/splits` per run) — no new
       backend aggregation endpoint invented here without first confirming, in the story's own investigation, that
       client-side aggregation of already-fetched per-run summaries is insufficient.
-- [ ] A tenant can select a subset of runs (e.g. same `dataset_id`/`horizon`) to compare on one chart — grouping is
+- [x] A tenant can select a subset of runs (e.g. same `dataset_id`/`horizon`) to compare on one chart — grouping is
       explicit and visible, never an implicit "all runs ever" chart that conflates unrelated configurations.
-- [ ] Chart/copy frames this as "how this model configuration's validation results have varied across runs" —
+- [x] Chart/copy frames this as "how this model configuration's validation results have varied across runs" —
       never "trend" language that implies a forecast of future runs' outcomes; this is a look backward at completed
       runs only.
-- [ ] Same status-neutral color constraint as every chart in this backlog.
-- [ ] Test: correct series rendered for a fixture set of runs sharing a `dataset_id`/`horizon`.
+- [x] Same status-neutral color constraint as every chart in this backlog.
+- [x] Test: correct series rendered for a fixture set of runs sharing a `dataset_id`/`horizon`.
 
 Rationale for priority: real value (surfaces instability or consistency across time, echoing CLAUDE.md's "honest
 instability reporting" positioning) but explicitly framed by the task as optional relative to the single-run views
 in Epic A — Should, not Must.
 Depends on: RAV-001, RAV-002
 
-**Status: deferred, not scheduled this sprint** — same Sprint 26/27 sequencing reasoning as RAV-004/005; this is
-also Epic C (a separate page-level epic), not an extension of the single-run Epic A slice Sprint 26 shipped.
+**Status: DONE (Sprint 28, `docs/tickets/RAV-009.md`).** Implemented as a new adjacent page
+(`GET /runs/trend`, `runs_trend.html`), not an extension of `runs_list.html` — dev's documented
+choice per this story's own "or adds an adjacent page" allowance.
 
 ### RAV-010 — Consistency indicator: how often has this configuration beaten Naive0 [Should]
 **As** dashboard-web, **I want** a simple aggregate indicator (e.g. "X of Y completed runs had a majority of
@@ -333,18 +330,17 @@ also Epic C (a separate page-level epic), not an extension of the single-run Epi
 summary of stability across runs without having to eyeball RAV-009's chart themselves.
 
 Acceptance criteria:
-- [ ] Computed client-side (dashboard-web) from already-fetched `dm_verdict` values across the selected runs'
+- [x] Computed client-side (dashboard-web) from already-fetched `dm_verdict` values across the selected runs'
       splits — no new backend statistic invented, and no new significance test computed outside
       `naive_first_engine`'s existing Harvey-corrected DM test.
-- [ ] Explicitly framed as a descriptive count/ratio of past outcomes ("beat Naive0 in N of M completed runs"),
+- [x] Explicitly framed as a descriptive count/ratio of past outcomes ("beat Naive0 in N of M completed runs"),
       never as a probability of future performance, a confidence score, or anything resembling a recommendation.
-- [ ] If zero runs match the selected grouping, states that plainly — never a fabricated 0/0 ratio rendered as
+- [x] If zero runs match the selected grouping, states that plainly — never a fabricated 0/0 ratio rendered as
       "0% beat naive," which reads as a false negative rather than "no data."
-- [ ] Test: indicator computes correctly against a fixture set of runs with known verdict distributions.
+- [x] Test: indicator computes correctly against a fixture set of runs with known verdict distributions.
 
 Rationale for priority: small, high-clarity addition to RAV-009's chart; Should, sequenced right after it since it
 reuses the same fetched data with no new capability.
 Depends on: RAV-009
 
-**Status: deferred, not scheduled this sprint** — blocked on RAV-009 itself being deferred; same Sprint 26/27
-sequencing reasoning.
+**Status: DONE (Sprint 28, `docs/tickets/RAV-010.md`).**

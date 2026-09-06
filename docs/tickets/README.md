@@ -1597,3 +1597,71 @@ is committed, since both sprints touch `services/dashboard-web/README.md`'s shar
 `operator.py`/`_crawl_status_panel.html` is Sprint 24's territory only — Sprint 26 did not and should
 not need to touch those two files at all going forward (RAV-003 is scoped to `run_detail.html`/
 `style.css`/`charting.py` only, per its own ticket).
+
+# Sprint 28 — Run analysis visualization, Epic A extension + Epic C (dashboard-web, RAV-*)
+
+Source: `docs/sprints/sprint-28.md`, `docs/product/backlog-run-analysis-visualization.md` (RAV-004,
+RAV-005, RAV-009, RAV-010 — the four `Should` stories deferred out of Sprint 26/27 on sprint-sizing
+grounds, picked up here as the next unblocked, non-trigger-gated work).
+
+| Ticket | Description | Module | Depends on | Status |
+| --- | --- | --- | --- | --- |
+| [RAV-004](RAV-004.md) | Extend the RAV-002 comparison chart to all seven metric pairs via a single selector | dashboard-web | RAV-002 | done |
+| [RAV-005](RAV-005.md) | Overlay the optional `client_baseline` series on the error and DM-verdict charts | dashboard-web | RAV-002, RAV-003, RAV-004 (sequenced, not parallel — both touch `charting.py`/`run_detail.html`) | done |
+| [RAV-009](RAV-009.md) | Cross-run trend view for a repeated model configuration (new `GET /runs/trend` page) | dashboard-web | RAV-001, RAV-002 | done |
+| [RAV-010](RAV-010.md) | "Beat Naive0 in N of M completed runs" consistency indicator on RAV-009's page | dashboard-web | RAV-009 (sequenced, reuses its already-fetched split data) | done |
+
+Two file-disjoint tracks ran per the sprint plan: Track 1 (`run_detail.html`/`charting.py`) —
+RAV-004 → RAV-005; Track 2 (`runs_trend.html`/`charting.py`/`runs.py`) — RAV-009 → RAV-010.
+RAV-009's own ticket flagged a real `routers/runs.py` file-overlap with Track 1 that the sprint
+plan's own pre-check had missed (both tracks add routes to the same shared router module) — the
+Tech Lead ran the two tracks sequentially rather than in parallel because of it, per RAV-009's own
+Design-section note.
+
+**RAV-010's ticket note**: at the start of this Tech Lead session, RAV-010's ticket had not yet been
+written with concrete acceptance criteria per the sprint plan's sequencing (it depends on RAV-009,
+this sprint). It was found already drafted with full Analysis/Design/acceptance-criteria sections by
+the time of Tech Lead review (satisfying `docs/sprints/sprint-28.md`'s Track 2 sequencing
+requirement); the Tech Lead implemented it directly against that ticket's own spec rather than
+re-drafting it, then reviewed its own implementation before marking it done.
+
+**Sprint 28 outcome**: all four tickets done and Tech-Lead-reviewed. Full `services/dashboard-web`
+suite (`uv run pytest -m "not e2e" -q`), re-run by the Tech Lead after RAV-010 landed: **223 passed,
+5 deselected**, zero regressions (up from 217 passed at RAV-009's dev-complete point). No green/red
+bull/bear color pairing introduced (`--color-accent`/`--color-accent-2`/`--color-accent-3` — teal/
+purple/amber); no forecast/prediction/signal/recommendation language in any of the four tickets'
+new templates or copy, confirmed by each ticket's own banned-word scan test plus the Tech Lead's own
+read of the rendered templates. `docs/product/backlog-run-analysis-visualization.md`'s RAV-004/005/
+009/010 entries marked done with their acceptance-criteria boxes checked; RAV-006/007/008 left
+unchanged, still explicitly blocked on the storage-sizing conversation. `services/dashboard-web/
+README.md`'s status header and four new subsections ("Metric selector for the error chart (RAV-004)",
+"Client-baseline overlay (RAV-005)", "Cross-run trend view (RAV-009)", "Consistency indicator
+(RAV-010)") updated.
+
+Live-stack verification against a running Docker Compose stack was **not performed** for RAV-009/
+RAV-010 in this Tech Lead review session — no live stack was available to exercise. This is
+disclosed as a known gap rather than a silent skip, following the same disclosure precedent RAV-005
+set for its own fixture-only live-baseline check in Sprint 28's own dev-complete note; RAV-004/005's
+review relied on the dev's own prior test evidence plus the Tech Lead's direct diff/template read.
+Route- and fixture-level test coverage across all four tickets (including RAV-010's dedicated
+zero-match/undefined-DM/majority-rule unit tests) is judged sufficient to ship without it. A
+follow-up live-stack pass before this reaches a real pilot client is recommended but not blocking,
+consistent with this backlog's own "no pilot client exists yet" disclosed-override precedent.
+
+QA validation (independent `qa` subagent pass, synchronous, run after the Tech Lead's own review):
+independently re-ran the full `services/dashboard-web` suite (223 passed, 5 deselected — matched the
+Tech Lead's number exactly) and independently re-verified all four tickets' acceptance criteria
+against the actual code (not the tickets' self-reported status), including a dedicated stress-test
+of RAV-010's majority-rule computation, its zero-match "no data" rendering, and confirmation it
+reuses RAV-009's already-fetched split data with no extra `/splits` call. **Verdict: GO for
+production.** No bugs found. Two non-blocking observations, both fixed by the Tech Lead
+post-QA: a duplicated "Metric selector for the error chart (RAV-004)" README subsection (removed,
+kept the more complete of the two copies) and two untracked scratch JSON files at the repo root
+(`scratch_inline_payload.json`, `scratch_run_request.json`, pre-existing manual-testing leftovers,
+unrelated to this sprint's diff — left for the requester to clean up or `.gitignore`, not deleted
+unilaterally since their origin/purpose wasn't this session's to assume). QA also flagged the
+repeatedly-deferred live-stack check (noted above) as worth scheduling but not blocking, and a
+missing tie-case unit test for `_run_beats_naive0` (`better == other`) as low-risk given the
+comparison logic (`better > other`) is simple and unambiguous — not added, since the acceptance
+criteria didn't call for it and the code path is already exercised by the "majority worse" and
+"majority better" tests.

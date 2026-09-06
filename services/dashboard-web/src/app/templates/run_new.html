@@ -40,6 +40,7 @@ signal.</p>
                   rows="4"
                   placeholder='{"timestamps": ["2026-01-01T00:00:00", "2026-01-01T01:00:00"], "values": [100.0, 101.2]}'>{{ values.dataset_reference_inline if values else '' }}</textarea>
         <small class="field-hint" id="reference-hint">Fill in exactly one of the two fields above -- not both, not neither.</small>
+        <p class="field-hint" id="estimated-splits" aria-live="polite"></p>
     </fieldset>
 
     <fieldset>
@@ -63,7 +64,6 @@ signal.</p>
             {% endfor %}
         </select>
         <p class="field-hint" id="dataset-source-summary" aria-live="polite"></p>
-        <p class="field-hint" id="estimated-splits" aria-live="polite"></p>
 
         <label for="dataset_reference_start">
             Start (optional)
@@ -180,26 +180,79 @@ signal.</p>
         sourceSummary.textContent = rowCountPhrase + ", " + earliest + " to " + latest + ".";
     }
 
-    function computeEstimatedSplits() {
-        if (!source || !estimatedSplits) {
-            return;
+    // Must match validation-service's MAX_SPLIT_COUNT (app/routers/runs.py) --
+    // this is a client-side early warning only, not the enforced limit.
+    var MAX_SPLITS = 500;
+
+    function rowCountFromInlinePayload() {
+        var raw = inline ? inline.value.trim() : "";
+        if (!raw) {
+            return null;
         }
-        var selected = source.options[source.selectedIndex];
+        var parsed;
+        try {
+            parsed = JSON.parse(raw);
+        } catch (e) {
+            return null;
+        }
+        if (Array.isArray(parsed)) {
+            return parsed.length;
+        }
+        if (parsed && Array.isArray(parsed.timestamps)) {
+            return parsed.timestamps.length;
+        }
+        return null;
+    }
+
+    function currentRowCount() {
+        var hasInline = !!(inline && inline.value.trim().length > 0);
+        if (hasInline) {
+            return { rowCount: rowCountFromInlinePayload(), mode: "inline" };
+        }
+        var hasPath = !!(path && path.value.trim().length > 0);
+        if (hasPath) {
+            return { rowCount: null, mode: "path" };
+        }
+        var selected = source ? source.options[source.selectedIndex] : null;
         var rowCountAttr = selected ? selected.getAttribute("data-row-count") : null;
-        if (!selected || !selected.value || !rowCountAttr) {
-            estimatedSplits.textContent = "Select a stored dataset to see an estimate.";
+        if (selected && selected.value && rowCountAttr) {
+            return { rowCount: Number(rowCountAttr), mode: "source" };
+        }
+        return { rowCount: null, mode: "none" };
+    }
+
+    function computeEstimatedSplits() {
+        if (!estimatedSplits) {
             return;
         }
-        var rowCount = Number(rowCountAttr);
+        estimatedSplits.classList.remove("form-status-warn", "form-status-ok");
+        var info = currentRowCount();
+        if (info.mode === "none") {
+            estimatedSplits.textContent = "Fill in a dataset reference to see a split-count estimate.";
+            return;
+        }
+        if (info.mode === "path") {
+            estimatedSplits.textContent = "No split-count estimate available for a local file path -- " +
+                "row count can't be read in the browser. The server will still reject the run " +
+                "before computing anything if it would exceed " + MAX_SPLITS + " splits.";
+            return;
+        }
+        if (info.rowCount === null || !isFinite(info.rowCount)) {
+            estimatedSplits.textContent = info.mode === "inline"
+                ? "Enter a valid inline JSON payload to see a split-count estimate."
+                : "Select a stored dataset to see an estimate.";
+            return;
+        }
+        var rowCount = info.rowCount;
         var train = Number(trainWindow ? trainWindow.value : "");
         var test = Number(testWindow ? testWindow.value : "");
         var gap = Number(purgeGapHours ? purgeGapHours.value : "");
         var stepValue = Number(step ? step.value : "");
         if (
-            !isFinite(rowCount) || !isFinite(train) || !isFinite(test) ||
+            !isFinite(train) || !isFinite(test) ||
             !isFinite(gap) || !isFinite(stepValue) || stepValue <= 0
         ) {
-            estimatedSplits.textContent = "Select a stored dataset to see an estimate.";
+            estimatedSplits.textContent = "Fill in horizon/purge gap/train window/test window/step to see a split-count estimate.";
             return;
         }
         // Same row-offset closed form as generate_splits's row-count branch
@@ -208,8 +261,18 @@ signal.</p>
         // a calendar-hour conversion (OQ-3, disclosed, out of scope this sprint).
         var numerator = rowCount - train - gap - test;
         var estimate = numerator < 0 ? 0 : Math.floor(numerator / stepValue) + 1;
-        estimatedSplits.textContent = "Approximately " + estimate +
-            " split(s) estimated for the whole selected source (not the post-filter row count).";
+        var sourceLabel = info.mode === "inline"
+            ? "the inline payload"
+            : "the whole selected source (not the post-filter row count)";
+        if (estimate > MAX_SPLITS) {
+            estimatedSplits.textContent = "Approximately " + estimate + " split(s) estimated for " +
+                sourceLabel + " -- this exceeds the " + MAX_SPLITS + "-split maximum per run. " +
+                "Increase 'step', narrow the date range, and/or reduce train/test window before submitting.";
+            estimatedSplits.classList.add("form-status-warn");
+        } else {
+            estimatedSplits.textContent = "Approximately " + estimate + " split(s) estimated for " + sourceLabel + ".";
+            estimatedSplits.classList.add("form-status-ok");
+        }
     }
 
     function checkReference() {
@@ -261,7 +324,9 @@ signal.</p>
     }
 
     path.addEventListener("input", checkReference);
+    path.addEventListener("input", computeEstimatedSplits);
     inline.addEventListener("input", checkReference);
+    inline.addEventListener("input", computeEstimatedSplits);
     if (source) {
         source.addEventListener("change", function () {
             checkReference();

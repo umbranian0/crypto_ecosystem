@@ -526,13 +526,16 @@ def test_run_new_form_wires_compute_estimated_splits(monkeypatch) -> None:
     assert response.status_code == 200
     assert "function computeEstimatedSplits" in html
     assert 'id="estimated-splits"' in html
-    assert "select a stored dataset to see an estimate" in html.lower()
+    assert "fill in a dataset reference to see a split-count estimate" in html.lower()
     # Re-render wiring: the four numeric fields on `input`, the dropdown on
-    # `change` -- not `horizon` (`generate_splits` takes no horizon param).
+    # `change`, and both dataset-reference fields (path/inline) -- not
+    # `horizon` (`generate_splits` takes no horizon param).
     assert 'purgeGapHours.addEventListener("input", computeEstimatedSplits)' in html
     assert 'trainWindow.addEventListener("input", computeEstimatedSplits)' in html
     assert 'testWindow.addEventListener("input", computeEstimatedSplits)' in html
     assert 'step.addEventListener("input", computeEstimatedSplits)' in html
+    assert 'path.addEventListener("input", computeEstimatedSplits)' in html
+    assert 'inline.addEventListener("input", computeEstimatedSplits)' in html
     assert "computeEstimatedSplits();" in html
     assert "horizon.addEventListener" not in html
     # This estimate must never gate submission -- `checkReference()` remains
@@ -541,6 +544,35 @@ def test_run_new_form_wires_compute_estimated_splits(monkeypatch) -> None:
         'form.addEventListener("submit", function (event) {\n'
         "        if (!checkReference()) {" in html
     )
+
+
+def test_run_new_form_estimates_splits_for_inline_and_path_modes(monkeypatch) -> None:
+    """RSS-002 originally only estimated splits for the 'stored dataset'
+    reference mode -- inline payload and local file path modes got no
+    client-side warning at all before hitting validation-service's 500-split
+    server cap blind. This closes that gap for inline (row count is
+    computable client-side from the parsed JSON) and gives an explicit
+    no-estimate-available message for file path (row count isn't readable in
+    the browser)."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/ingestion/datasets"
+        return httpx.Response(200, json={"items": []})
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get("/runs/new")
+    html = response.text
+
+    assert response.status_code == 200
+    assert "var MAX_SPLITS = 500;" in html
+    assert "function rowCountFromInlinePayload" in html
+    assert "function currentRowCount" in html
+    assert "exceeds the \" + MAX_SPLITS + \"-split maximum per run" in html
+    assert "No split-count estimate available for a local file path" in html
 
 
 def test_estimated_splits_formula_matches_generate_splits() -> None:

@@ -1,4 +1,4 @@
-# dashboard-web
+﻿# dashboard-web
 
 **Status: DASH-001 through DASH-009 done (Sprint 11 + Sprint 15) -- scaffold, login/session, the**
 **session-to-downstream-header DI seam, run detail view, submit-a-run form, logout, a real health**
@@ -60,6 +60,13 @@
 **(DASH-116)" below. `DASH-118` (Sprint 24, last of that trio against the same file) added a "Progress"**
 **column to that same panel, a plain count of rows already fetched -- see "Progress column (DASH-118)"**
 **below (167 unit tests passing as of this ticket, up from 144, plus the same 5 e2e).**
+**Sprint 28 (`RAV-004`/`RAV-005`/`RAV-009`/`RAV-010`, Tech-Lead-reviewed) extended the RAV-002 error**
+**chart to all seven metric pairs via a selector ("Metric selector for the error chart (RAV-004)"**
+**below), overlaid an optional client-supplied baseline as a third series on both the error and**
+**DM-verdict charts ("Client-baseline overlay (RAV-005)" below), added a new cross-run trend view**
+**at `GET /runs/trend` ("Cross-run trend view (RAV-009)" below), and added a "beat Naive0 in N of M**
+**completed runs" consistency indicator to that same page ("Consistency indicator (RAV-010)" below)**
+**-- 223 unit tests passing (up from 217), plus the same 5 e2e.**
 
 Formerly `dashboard/`. See [../../docs/solution-design.md](../../docs/solution-design.md) section 3.6.
 
@@ -1092,3 +1099,205 @@ recent first -- no new backend/gateway-api/validation-service call beyond the ex
   showing disjoint matching sets, the zero-match empty state (asserting the `/runs/new` link and the
   absence of a `<table`, not just presence of the empty-state text), a `502` from `GET /runs` reusing
   `error.html` (no second error template), the session-required redirect, and the banned-word scan.
+
+## Metric selector for the error chart (RAV-004)
+
+`RAV-002`'s `build_error_chart` (`src/app/charting.py`) generalizes from a hardcoded `model_mae`/
+`naive0_mae` pair to a `metric` parameter covering all seven `SplitResultResponse` model/naive0
+metric pairs -- no new backend field, no new endpoint, all seven already come back on the existing
+`GET /runs/{id}/splits` response `run_detail` fetches:
+
+- **`METRIC_REGISTRY`** (new, `app/charting.py`): a `dict[str, tuple[str, str, str]]` mapping metric
+  key -> (chart label, model attr name, naive0 attr name) for all seven keys (`mae`, `rmse`, `smape`,
+  `mase`, `da`, `f1`, `oos_r2`). `build_error_chart(splits, metric="mae")` looks up the triple and
+  reads values via `getattr(split, model_attr)`/`getattr(split, naive0_attr)` instead of the
+  hardcoded `.model_mae`/`.naive0_mae` access RAV-002 shipped -- the bar-geometry/scaling logic
+  itself is untouched (this ticket's own DRY check note: a value-lookup change, not a second
+  chart-building function). `metric` defaults to `"mae"`, so RAV-002's existing callers/tests keep
+  their exact original behavior unmodified (backward-compatible signature). `ErrorChartData` gained
+  two new fields, `metric`/`metric_label`, so the template never re-derives which metric is active or
+  what its label is.
+- **DA/F1 labeling**: `METRIC_REGISTRY["da"]`/`METRIC_REGISTRY["f1"]` map to the labels "Directional
+  accuracy"/"F1" -- their real statistical meaning, never hit-rate/win-rate trading language. This is
+  the one place that constraint is enforced, so neither the route nor the templates hand-roll their
+  own label strings for these two metrics (the two most likely to be misread as a trading signal if
+  mislabeled, per this ticket's Analysis section).
+- **`app/routers/runs.py`**: `run_detail` reads an optional `metric` query param (default `"mae"`)
+  and passes it straight through to `build_error_chart` -- it does not re-validate against the
+  registry itself; `build_error_chart` already falls back to `"mae"` for any key not in
+  `METRIC_REGISTRY`, so an unrecognized/malformed value degrades to the MAE default rather than
+  erroring (a display preference, not a form submission with a `422` path). The handler also passes
+  `METRIC_REGISTRY` itself to the template as `metric_options`, so `_error_chart.html` builds its
+  selector options from the registry rather than hand-rolling the metric-key/label list a second
+  time.
+- **`app/templates/_error_chart.html`**: gained a single `<select>` control (a plain GET form,
+  `onchange="this.form.submit()"`, reloading the page with `?metric=...` -- server-rendered per
+  ADR-0006, no client-side charting/JS framework) that switches the plotted metric among all seven
+  pairs; the currently-active option (`error_chart.metric`, the *resolved* value `build_error_chart`
+  returns, not the raw, possibly-invalid query param) is marked `selected`. The chart title/legend/
+  bar tooltips now read `error_chart.metric_label` (e.g. "Model vs. Naive0 error by split (sMAPE)")
+  instead of a hardcoded "(MAE)" string.
+- **Colors**: unchanged -- still `--color-accent`/`--color-accent-2` via `.bar-model`/`.bar-naive0`,
+  reused across all seven metrics, no new colors added (`style.css` gained only a small
+  `.metric-selector-form` flex-layout rule for the new control, no new CSS variables).
+- **Tests**: `tests/test_charting.py` adds `test_build_error_chart_metric_selector_all_seven_pairs`
+  (parametrized over all seven `METRIC_REGISTRY` keys, asserting bar values match the fixture's real
+  `model_<metric>`/`naive0_<metric>` values), `test_build_error_chart_default_metric_is_mae`, and
+  `test_build_error_chart_unrecognized_metric_falls_back_to_mae`.
+  `tests/test_runs_detail.py` adds `test_run_detail_metric_query_param_switches_chart` (`?metric=smape`
+  re-renders with sMAPE's real values), `test_run_detail_invalid_metric_falls_back_to_mae`, and
+  `test_run_detail_metric_selector_offers_all_seven_metrics` (asserts all seven `<option value=...>`
+  entries render, and that "Directional accuracy"/"F1" appear verbatim). The existing
+  `test_error_chart_partial_has_no_banned_positioning_words` scan already covers the new selector's
+  own rendered markup, since it scans `_error_chart.html`'s full source -- no second scan needed.
+
+## Client-baseline overlay (RAV-005)
+
+`SplitResultResponse.client_baseline` (VS-017, `libs/common/src/naive_first_common/contracts.py`)
+is an optional `ClientBaselineResult` present only when a run was submitted with a client-supplied
+reference-baseline prediction file. It carries the same seven metric fields as `model_*`/`naive0_*`
+(unprefixed: `.mae`, `.rmse`, ... `.oos_r2`) plus a mandatory `disclaimer` string, and, like the
+platform's own baseline, may have `dm_statistic`/`dm_pvalue` both `None` for a documented
+single-test-point split. `app/charting.py` extends both existing chart-builders to overlay this
+optional third series without changing either function's return shape for the common (no
+`client_baseline`) case:
+
+- **`build_error_chart`**: appends a third `client` `Bar` per split, read off
+  `split.client_baseline.<resolved_metric>` via `RAV-004`'s own `METRIC_REGISTRY` key (the metric
+  key itself, since `ClientBaselineResult`'s fields are unprefixed, unlike `model_*`/`naive0_*`) --
+  only when at least one split in the run carries a `client_baseline` (`has_client_baseline`, a new
+  `ErrorChartData` field). Bar geometry recomputes to three bars per group only in that case; when no
+  split has a `client_baseline`, `has_client_baseline` is `False`, every `SplitBars.client` is `None`,
+  and the two-bar-per-group geometry is byte-identical to before this ticket (RAV-002/004's own
+  existing tests assert this unmodified). `ErrorChartData.client_baseline_disclaimer` carries the
+  disclaimer text off the first split with a non-null `client_baseline` (documented constant per run,
+  VS-017).
+- **`build_dm_verdict_chart`**: buckets `client_baseline`'s own `dm_verdict` into the same four
+  categories as a second `client_bars` count set (new `DmVerdictChartData` field), reusing
+  `_verdict_category` against `client_baseline` itself (it carries the same
+  `dm_statistic`/`dm_pvalue`/`dm_verdict` field names as a split) rather than a second,
+  inconsistent `None`-check -- a `client_baseline` split with both `None` lands in
+  `UNDEFINED_VERDICT_CATEGORY`, never merged into "no significant difference", the exact treatment
+  RAV-003 already established for the platform's own baseline. `has_client_baseline`/
+  `client_baseline_disclaimer` mirror `build_error_chart`'s fields. When no split has a
+  `client_baseline`, `client_bars` is empty and the platform's own four-category `bars` are
+  unaffected -- byte-identical to before this ticket.
+- **Templates**: `_error_chart.html` renders the third `bar-client` series (and a
+  "Client baseline `<metric>`" legend entry) only when `error_chart.has_client_baseline` is true;
+  `_dm_verdict_chart.html` renders a second, separately-labeled SVG ("... -- client-supplied
+  baseline") with a second set of four bars only when `dm_verdict_chart.has_client_baseline` is
+  true, reusing the exact same four `.verdict-bar-*` CSS classes RAV-003 defined (a second bar group,
+  not a fifth color). Both partials render `client_baseline_disclaimer` verbatim as visible copy
+  (`.chart-caption.client-baseline-disclaimer`) immediately adjacent to the chart whenever the
+  series is shown -- never omitted just because the same information exists in the chart's tooltips.
+- **Colors**: one new CSS variable, `--color-accent-3` (`#e0a940`, amber), added to `style.css` for
+  the error chart's third series only (`.bar-client`, `.chart-legend-swatch.client`) -- deliberately
+  not a green/red bull/bear pairing with any existing chart color, and distinct from
+  `--color-accent`/`--color-accent-2`. The DM-verdict chart's client-baseline series reuses the
+  existing four status-neutral verdict-category variables unchanged (a second bar group, not a new
+  color).
+- **DRY note**: reuses `_verdict_category`/`UNDEFINED_VERDICT_CATEGORY`/`_CATEGORY_CSS_SLUGS`
+  (RAV-003) for the client-baseline verdict bucketing, and `RAV-004`'s `METRIC_REGISTRY` for the
+  client-baseline value lookup, rather than a second None-check or a third hardcoded
+  attribute-name formatter.
+- **Tests**: `tests/test_charting.py` adds fixtures with `client_baseline` present on some/all
+  splits and absent on every split (asserting the no-`client_baseline` shape is unchanged versus
+  RAV-002/003/004's own pre-existing assertions), plus a dedicated
+  `dm_statistic=None, dm_pvalue=None` client-baseline fixture asserting
+  `UNDEFINED_VERDICT_CATEGORY`. `tests/test_runs_detail.py` adds a route-level test asserting the
+  disclaimer text renders when `client_baseline` is present and is absent (along with `bar-client`)
+  when it is not, plus a color-safety assertion extended to `--color-accent-3`.
+- **Live-stack verification**: fixture-only for this ticket -- submitting a real run with a
+  `client_prediction_reference` end-to-end (`validation-service`/`gateway-api`, VS-017) was outside
+  this ticket's `services/dashboard-web`-only scope and timebox; the Tech Lead's Review acceptance
+  criteria call this out explicitly as an optional live-stack check.
+
+## Cross-run trend view (RAV-009)
+
+A new page, `GET /runs/trend` (`src/app/routers/runs.py`), lets a tenant select a repeated model
+configuration (a `(dataset_id, horizon)` pair) and compare its own completed runs against each other
+on one chart -- framed throughout as "how this model configuration's validation results have varied
+across completed runs," never "trend" language implying a forecast of a future run's outcome. Per
+this ticket's own Analysis section, no new backend endpoint was introduced: the two already-existing
+`GET /runs` and `GET /runs/{id}/splits` calls are aggregated client-side.
+
+- **Route**: registered before `run_detail`'s `/runs/{run_id}` (same literal-segment-before-path-param
+  ordering rule `/runs/new`/`/runs/horizon-summary` already follow). First calls the exact same
+  `GET /runs` every other route in this file already calls (`_call_downstream`/
+  `_render_error_for_status`, no new transport-failure handling), and groups the parsed
+  `RunSummaryResponse` list client-side into `dict[(dataset_id, horizon), list[RunSummaryResponse]]`
+  for the selector. With no group selected (`dataset_id`/`horizon` query params both unset), only the
+  selector renders -- no `GET /runs/{id}/splits` calls made yet, mirroring `runs_horizon_summary`'s own
+  no-`days`-yet behavior.
+- **Completed-runs-only filter**: once a group is selected, only that group's `status == "completed"`
+  runs get a `GET /runs/{id}/splits` call -- `running`/`failed` runs in the same group are skipped
+  entirely (no splits call made for them), matching `runs_horizon_summary`'s own "a non-completed run
+  is not evidence of anything yet" reasoning (FHS-002).
+- **`app.charting.build_trend_chart`** (`src/app/charting.py`, pure function, no I/O): takes the
+  route's already-`completed`-filtered `list[(RunSummaryResponse, list[SplitResultResponse])]` plus a
+  `metric` key, reusing `METRIC_REGISTRY` (RAV-004) for the label/attribute lookup rather than a
+  second metric-name mapping. One bar-group per **run** (not per split) -- the plotted value is the
+  **mean** of the chosen metric across that run's own splits, since this chart compares runs of a
+  repeated configuration against each other, not splits within one run (a per-split breakdown per run
+  would be a denser, different chart this ticket does not build; documented choice per the ticket's
+  Design section). Reuses the exact same `Bar` dataclass geometry shape RAV-002 established (a third
+  `RunBars`/`TrendChartData` dataclass pair, keyed by run instead of split) and the same two-series
+  (model, naive0) status-neutral convention -- no client-baseline series here, since
+  `RunSummaryResponse` carries no `client_baseline` field. An unrecognized `metric` falls back to
+  `"mae"`, same as `build_error_chart`.
+- **Template**: `app/templates/runs_trend.html` (new, adjacent page rather than extending
+  `runs_list.html`, since this view's selector/chart shape differs enough from the plain run table)
+  renders the group selector as a link list (mirroring `horizon_summary.html`'s selector-nav
+  convention) plus the metric `<select>` (mirroring `_error_chart.html`'s RAV-004 metric selector) and
+  an inline SVG bar chart, colored only with `--color-accent`/`--color-accent-2` (the existing
+  `bar-model`/`bar-naive0` CSS classes, no new colors, per ADR-0006/the RAV backlog's status-neutral
+  convention). `app/templates/base.html` gained a "Cross-run variation" nav link next to the existing
+  `/runs`/`/runs/horizon-summary`/`/datasets` links.
+- **Positioning**: copy uses only "validation results have varied across completed runs" /
+  "backward-looking comparison" vocabulary -- never "prediction," "forecast," "signal," or
+  "recommendation" anywhere on this page (CLAUDE.md's core positioning constraint), grep-checked by
+  `test_trend_template_has_no_banned_positioning_words`. The route's own URL path (`/runs/trend`) and
+  internal CSS class names use the word "trend" only as a navigational label, never in user-facing
+  copy describing what the chart means.
+- **Tests**: `tests/test_charting.py` adds unit tests for `build_trend_chart` against a fixture set of
+  runs sharing a `dataset_id`/`horizon` -- some `completed`, some `running`/`failed` -- asserting only
+  `completed` runs are plotted and the plotted value is the correct per-run mean for the chosen
+  metric, plus an unrecognized-metric fallback test. `tests/test_runs_trend.py` (new, mirrors
+  `tests/test_runs_horizon_summary.py`'s `httpx.MockTransport` convention) covers the no-group
+  selector-only render, selecting a group fetching `/splits` only for its completed runs (asserting
+  the running run's `/splits` endpoint is never called), the zero-matching-group empty state, a `502`
+  from `GET /runs` reusing `error.html`, the session-required redirect, and the banned-word scan.
+- **N+1 note**: per this ticket's own Analysis section, one `GET /runs/{id}/splits` call per completed
+  run in the selected group is bounded by that tenant's own run count for that configuration -- the
+  same fan-out a tenant would see by opening each run individually. No real-volume performance problem
+  surfaced during this ticket's implementation; if one does at realistic tenant/run volumes, that is a
+  follow-on ticket's concern, not silently worked around here.
+
+## Consistency indicator (RAV-010)
+
+`GET /runs/trend` (RAV-009) also renders "beat Naive0 in N of M completed runs" next to its chart --
+a plain, descriptive count of already-computed DM-test outcomes for the selected `(dataset_id,
+horizon)` group's completed runs, never a probability of future performance or a recommendation.
+
+- **`app.charting.compute_consistency_indicator`** (pure function, no I/O): takes the exact same
+  `list[(RunSummaryResponse, list[SplitResultResponse])]` pairs `build_trend_chart` already consumes
+  -- no second `GET /runs/{id}/splits` call. Returns a `ConsistencyIndicator(beat_count, total_count,
+  has_data)`.
+- **Majority rule (explicit, documented in `_run_beats_naive0`'s docstring and in
+  `docs/tickets/RAV-010.md`)**: a run counts as having beaten Naive0 if strictly more of its splits
+  have a "better" `dm_verdict` than "worse" and "no significant difference" *combined*. Splits whose
+  DM statistic is genuinely undefined (`UNDEFINED_VERDICT_CATEGORY`, RAV-003's `_verdict_category`)
+  are excluded from both sides of that count -- never defaulted into "worse" -- and a run with no
+  evaluable split (all splits undefined, or zero splits) contributes to neither `beat_count` nor
+  `total_count`.
+- **Zero-match handling**: `has_data=False` (no group selected yet, a selected group with zero
+  completed runs, or every completed run's splits all `UNDEFINED_VERDICT_CATEGORY`) renders "No
+  completed runs matched this selection." -- never a fabricated "0 of 0" ratio.
+- **Tests**: `tests/test_charting.py` adds unit tests for `compute_consistency_indicator` against
+  fixture verdict distributions (majority "better", majority "worse"/mixed, all-undefined-DM,
+  zero runs), asserting correct `beat_count`/`total_count`/`has_data`. `tests/test_runs_trend.py`
+  adds route-level tests asserting the indicator's rendered text matches the fixture's known N/M
+  values and that the no-group-selected case shows the plain "no data" copy.
+- **Live-stack verification**: not performed -- no live Docker Compose stack was available in the
+  Tech Lead review session that implemented this ticket; documented as a known gap, same disclosure
+  precedent RAV-005/RAV-009 set for their own live-stack checks.
