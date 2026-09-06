@@ -64,6 +64,19 @@ design, not an oversight:
   for-now) territory, not this sprint's — flag this back to the user explicitly before Tech Lead
   kickoff so expectations match what actually ships.
 
+## Priority bump (post-planning, before Tech Lead kickoff)
+
+`SETUP-030` is elevated to build-and-land-first within this sprint, ahead of the other five tickets,
+per an explicit user decision after a live incident (DASH-119): `dashboard-web` running as a bare
+local process outside Compose — sometimes from a stale copy of the code rather than the real repo
+checkout — was a direct contributor to diagnosing and fixing a production bug taking far longer than
+it should have. Closing that gap immediately (not merely "in parallel, whenever") removes an entire
+class of "which copy of the code is actually running" confusion for every ticket after it, in this
+sprint and beyond. Concretely: `SETUP-030` should be implemented, reviewed, and merged before
+`SETUP-003`/`SETUP-004` start meaningful work against a live `dashboard-web`, even though the
+Parallelization section below still shows it as a track startable on day one — "startable immediately"
+now also means "finish this one first," not just "no blocking dependency."
+
 ## Stories in scope, in execution order
 
 1. **SETUP-010** — `gateway-api`: operator auth (`OPERATOR_TOKEN`, `get_authenticated_operator`
