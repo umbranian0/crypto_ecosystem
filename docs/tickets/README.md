@@ -1713,3 +1713,38 @@ full 38,597-split-equivalent data remains reachable via `GET /runs/{run_id}/spli
 silent data loss, only a bounded render — and (2) no regression to any existing FHS-*/RAV-*
 functionality for normal (under-cap) runs. See `docs/tickets/DASH-119.md`'s Review section for the
 full verdict.
+
+# DASH-120 — `run_new_submit`'s 422 redisplay loses the stored-dataset dropdown (dashboard-web)
+
+| Ticket | Story | Depends on | Status |
+|---|---|---|---|
+| [DASH-120](DASH-120.md) | Every `POST /runs/new` error redisplay (missing reference, invalid inline JSON, invalid horizon/window/step, or gateway-api's own `422` — most commonly RSS-004's split-cap rejection) hardcoded `datasets: []`, collapsing the "Stored dataset" dropdown to a misleading "No ingested datasets yet" and discarding the user's selection | none (fixes a defect in DASH-006/DASH-108/DASH-111/RSS-002, all done) | done |
+
+Found live, same investigation session as DASH-119, while manually reproducing a real user's
+split-cap rejection against the real running stack: a stored-dataset submission computing 39,550
+splits (real `binance_price_btcusdt_1h` dataset, 79,180 rows) correctly got gateway-api's `422`
+rejection, but the redisplayed page showed "No ingested datasets yet — run a crawl first" instead of
+the dropdown with the dataset re-selected — even though `values.dataset_reference_source` (the prior
+selection) was already correctly preserved in the redisplay's `values` dict. As a direct consequence,
+RSS-002's live split-count estimator had nothing to compute against on redisplay (it depends on the
+dropdown's `data-row-count` attribute), so the exact guidance a user needs right after hitting the cap
+was silently unavailable.
+
+**Fix**: `run_new_submit` (`services/dashboard-web/src/app/routers/runs.py`) now opens its
+`httpx.Client` at the top of the function (previously only around the final downstream `/runs` call)
+so all four error-return branches can call the existing `_fetch_ingestion_datasets` helper
+(DASH-108/DASH-111, already shared with `run_new_form`/`datasets_list`) and pass the real
+stored-dataset list, instead of a hardcoded `[]`. No second fetch implementation, no change to
+`run_new_form` itself (already correct).
+
+**Outcome**: full suite re-run — **229 passed**, 0 failed (228 DASH-119 baseline + 1 new regression
+test), zero regressions. Four existing 422-path tests updated to answer `GET /ingestion/datasets` and
+assert the dataset survives the redisplay; new
+`test_run_new_submit_split_cap_422_preserves_stored_dataset_selection` reproduces the exact real-world
+scenario end-to-end. Live-verified against the real running stack per the updated `/qa-validation`
+skill (DASH-119's own follow-up): replayed the exact failing form submission via curl against a
+freshly restarted `dashboard-web` process running the fix, using a temporary diagnostic API key for
+the tenant that owns the real oversized dataset (revoked after verification, no production data
+modified) — confirmed the response now includes the re-rendered, re-`selected`
+`<option value="binance_price_btcusdt_1h" data-row-count="79180" ... selected>` alongside the `422`
+error text.

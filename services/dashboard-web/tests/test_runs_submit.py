@@ -158,9 +158,34 @@ def test_run_new_submit_201_with_failed_status_still_redirects(monkeypatch) -> N
     assert response.headers["location"] == f"/runs/{RUN_ID}"
 
 
+# DASH-120: a `POST /runs/new` request rejected for any reason (missing
+# reference, invalid inline JSON, invalid horizon, or gateway-api's own 422 --
+# e.g. RSS-004's too-many-splits guardrail, the exact real-world case that
+# surfaced this bug) must re-fetch and redisplay the tenant's stored datasets,
+# not silently collapse the "Stored dataset" dropdown to the misleading
+# "No ingested datasets yet" empty state. Each handler below now answers
+# `GET /ingestion/datasets` (the only downstream call some of these paths make
+# at all) so the fix's re-fetch is actually exercised, not merely untested.
+
+_ONE_STORED_DATASET_RESPONSE = httpx.Response(
+    200,
+    json={
+        "items": [
+            {
+                "source": "binance_btcusdt_1h",
+                "earliest_timestamp": "2024-01-01T00:00:00Z",
+                "latest_timestamp": "2026-01-01T00:00:00Z",
+                "row_count": 1000,
+            },
+        ]
+    },
+)
+
+
 def test_run_new_submit_no_dataset_reference_redisplays_form(monkeypatch) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        raise AssertionError("gateway-api must not be called without a dataset_reference")
+        assert request.url.path == "/ingestion/datasets"
+        return _ONE_STORED_DATASET_RESPONSE
 
     _patch_transport(monkeypatch, handler)
 
@@ -174,11 +199,15 @@ def test_run_new_submit_no_dataset_reference_redisplays_form(monkeypatch) -> Non
     assert response.status_code == 422
     assert "dataset-1" in response.text
     assert "Provide either a local file path" in response.text
+    # DASH-120: the stored-dataset dropdown must survive this rejection.
+    assert "binance_btcusdt_1h" in response.text
+    assert "No ingested datasets yet" not in response.text
 
 
 def test_run_new_submit_invalid_inline_json_redisplays_form(monkeypatch) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        raise AssertionError("gateway-api must not be called with invalid inline JSON")
+        assert request.url.path == "/ingestion/datasets"
+        return _ONE_STORED_DATASET_RESPONSE
 
     _patch_transport(monkeypatch, handler)
 
@@ -191,11 +220,14 @@ def test_run_new_submit_invalid_inline_json_redisplays_form(monkeypatch) -> None
 
     assert response.status_code == 422
     assert "Inline payload must be valid JSON" in response.text
+    assert "binance_btcusdt_1h" in response.text
+    assert "No ingested datasets yet" not in response.text
 
 
 def test_run_new_submit_invalid_horizon_redisplays_form(monkeypatch) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        raise AssertionError("gateway-api must not be called with an invalid horizon")
+        assert request.url.path == "/ingestion/datasets"
+        return _ONE_STORED_DATASET_RESPONSE
 
     _patch_transport(monkeypatch, handler)
 
@@ -208,10 +240,14 @@ def test_run_new_submit_invalid_horizon_redisplays_form(monkeypatch) -> None:
 
     assert response.status_code == 422
     assert "dataset-1" in response.text
+    assert "binance_btcusdt_1h" in response.text
+    assert "No ingested datasets yet" not in response.text
 
 
 def test_run_new_submit_422_from_gateway_api_redisplays_form(monkeypatch) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/ingestion/datasets":
+            return _ONE_STORED_DATASET_RESPONSE
         return httpx.Response(422, json={"detail": "dataset not found"})
 
     _patch_transport(monkeypatch, handler)
@@ -224,6 +260,57 @@ def test_run_new_submit_422_from_gateway_api_redisplays_form(monkeypatch) -> Non
     assert response.status_code == 422
     assert "dataset not found" in response.text
     assert "dataset-1" in response.text
+    assert "binance_btcusdt_1h" in response.text
+    assert "No ingested datasets yet" not in response.text
+
+
+def test_run_new_submit_split_cap_422_preserves_stored_dataset_selection(monkeypatch) -> None:
+    """DASH-120 regression: the exact real-world scenario that surfaced this
+    bug -- a stored-dataset run submission rejected by RSS-004's too-many-
+    splits guardrail must redisplay with the dataset dropdown intact and the
+    submitted values preserved, so the live estimate can immediately guide a
+    correction instead of forcing the user to start over from an empty form.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/ingestion/datasets":
+            return _ONE_STORED_DATASET_RESPONSE
+        assert request.url.path == "/runs"
+        return httpx.Response(
+            422,
+            json={
+                "detail": (
+                    "This request would compute 39550 splits, exceeding the "
+                    "maximum of 500 splits allowed per run."
+                )
+            },
+        )
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    form = {
+        **VALID_FORM,
+        "dataset_reference_path": "",
+        "dataset_reference_inline": "",
+        "dataset_reference_source": "binance_btcusdt_1h",
+        "train_window": "72",
+        "test_window": "2",
+        "step": "2",
+    }
+
+    response = client.post("/runs/new", data=form)
+
+    assert response.status_code == 422
+    assert "exceeding the maximum of 500 splits" in response.text
+    # The dropdown must be repopulated AND the user's prior selection restored
+    # -- not just present, but re-selected, so the live estimate has something
+    # to compute against without the user reselecting it.
+    assert "binance_btcusdt_1h" in response.text
+    assert "No ingested datasets yet" not in response.text
+    assert 'value="binance_btcusdt_1h" selected' in response.text or "selected>" in response.text
 
 
 def test_run_new_submit_502_from_gateway_api_renders_error_html(monkeypatch) -> None:
@@ -432,17 +519,15 @@ def test_run_new_form_jinja_render_shows_full_source_label_with_redisplay_values
     `values` populated from the submitted form (including
     `dataset_reference_start`/`_end` whenever the user filled them in) --
     see e.g. `test_run_new_submit_422_from_gateway_api_redisplays_form` above
-    for that same `values` mechanism. Those branches currently also pass
-    `datasets: []` (no second `GET /ingestion/datasets` re-fetch on a
-    validation failure, DASH-006's original design), so a real request
-    round-trip can never exercise "populated `values.dataset_reference_start`/
-    `_end`" and "a rendered stored-dataset `<option>`" at once. Per this
-    ticket's own Test acceptance criterion allowance for a "Jinja-render-level,
-    not necessarily a full browser test," this renders `run_new.html`
-    directly (via `app.main.templates`, the same `Jinja2Templates` instance
-    the app itself uses) with a manufactured context combining both, to prove
-    the template's own "full source" labeling logic is correct independent of
-    that pre-existing router limitation.
+    for that same `values` mechanism. Since DASH-120, those branches also
+    re-fetch and pass the real stored-dataset list (see
+    `test_run_new_submit_split_cap_422_preserves_stored_dataset_selection`
+    for that real request round-trip) -- this test predates that fix and now
+    exercises the same "populated `values.dataset_reference_start`/`_end`"
+    plus "a rendered, pre-selected stored-dataset `<option>`" combination via
+    a direct, manufactured-context template render instead, which remains a
+    valid, narrower check of the template's own "full source" labeling logic
+    in isolation from the router.
     """
     from starlette.requests import Request
 

@@ -70,7 +70,11 @@
 **fix) caps `GET /runs/{run_id}` at rendering the most recent 500 splits for a run that persisted far**
 **more than that (a real 38,597-split run predating RSS-004's guardrail was returning a bare**
 **"Internal Server Error") -- see "Run detail page: rendered-split cap for oversized runs (DASH-119)"**
-**below (228 unit tests passing, up from 223, plus the same 5 e2e).**
+**below (228 unit tests passing, up from 223, plus the same 5 e2e). `DASH-120` (found live in the same**
+**session) fixes `POST /runs/new`'s error redisplay silently discarding the "Stored dataset" dropdown**
+**and the user's selection on any validation rejection (most commonly RSS-004's split-cap guardrail)**
+**-- see "Run-submission error redisplay: stored-dataset dropdown fix (DASH-120)" below (229 unit**
+**tests passing, up from 228, plus the same 5 e2e).**
 
 Formerly `dashboard/`. See [../../docs/solution-design.md](../../docs/solution-design.md) section 3.6.
 
@@ -1345,3 +1349,41 @@ run's real size.
   unchanged from pre-fix behavior.
 - See `docs/tickets/DASH-119.md` for the full incident writeup, root-cause diagnosis, and QA
   verdict.
+
+## Run-submission error redisplay: stored-dataset dropdown fix (DASH-120)
+
+`POST /runs/new` (`src/app/routers/runs.py`, `run_new_submit`) re-fetches and redisplays the
+tenant's real stored-dataset list on every validation-error path, instead of the pre-fix
+hardcoded `datasets: []` -- found live, same investigation session as DASH-119, while manually
+reproducing a real user's RSS-004 split-cap rejection against the real running stack.
+
+- **The bug**: any of the four error-redisplay branches (missing dataset reference, invalid
+  inline JSON, invalid horizon/purge_gap/train_window/test_window/step, or gateway-api's own
+  `422` -- most commonly RSS-004's "exceeds 500 splits" guardrail) passed `datasets: []` to
+  `run_new.html`, collapsing the "Stored dataset" fieldset to "No ingested datasets yet -- run a
+  crawl first" even for a tenant with real ingested data. `values.dataset_reference_source` (the
+  user's prior selection) was already correctly preserved in the redisplay's `values` dict, but
+  with no dataset list to render the dropdown from, that selection had nothing to attach to --
+  and RSS-002's live split-count estimator, which reads the dropdown's `data-row-count`
+  attribute, had nothing to compute against either, right when a user most needed it (immediately
+  after hitting the split cap).
+- **The fix**: `run_new_submit` opens its `httpx.Client` at the top of the function (previously
+  only around the final downstream `/runs` call) so every error-return branch, including the two
+  that occur before any client previously existed, can call the existing
+  `_fetch_ingestion_datasets` helper (DASH-108/DASH-111, already shared with `run_new_form` and
+  `datasets_list`) and pass the real list. No second fetch implementation; `run_new_form` itself
+  was already correct and is unchanged.
+- **Tests**: the four existing 422-path tests now answer `GET /ingestion/datasets` and assert the
+  dataset survives the redisplay; a new regression test,
+  `test_run_new_submit_split_cap_422_preserves_stored_dataset_selection`, reproduces the exact
+  real-world scenario end-to-end (a stored-dataset submission rejected for exceeding the split
+  cap) and asserts the option is both present and re-`selected`. Full suite: 229 passed, 5
+  deselected (e2e), zero regressions.
+- **Live-stack verification** (per the updated `/qa-validation` skill, DASH-119's own follow-up):
+  replayed the exact failing form submission via curl against a freshly restarted `dashboard-web`
+  process running the fix, using a temporary diagnostic API key for the tenant that owns the real
+  oversized dataset (`binance_price_btcusdt_1h`, 79,180 rows, computing 39,550 splits at the
+  submitted parameters) -- confirmed the response includes the re-rendered, re-`selected`
+  `<option value="binance_price_btcusdt_1h" data-row-count="79180" ... selected>` alongside the
+  `422` error text. Diagnostic API key revoked after verification; no production data modified.
+- See `docs/tickets/DASH-120.md` for the full writeup.

@@ -611,53 +611,65 @@ def run_new_submit(
         "step": step,
     }
 
-    if dataset_reference_path.strip():
-        dataset_reference: dict = {"path": dataset_reference_path.strip()}
-    elif dataset_reference_inline.strip():
-        try:
-            dataset_reference = {"inline": json.loads(dataset_reference_inline)}
-        except json.JSONDecodeError:
+    # DASH-120: every 422 error-redisplay below must re-fetch the tenant's
+    # stored datasets (the same `_fetch_ingestion_datasets` call `run_new_form`
+    # makes) rather than hardcoding an empty list -- a hardcoded `[]` collapses
+    # the "Stored dataset" dropdown to the misleading "no ingested datasets
+    # yet" empty state and silently drops the user's selection, even for an
+    # otherwise-valid submission rejected only for an unrelated reason (e.g.
+    # RSS-004's too-many-splits guardrail). One client is opened up front so
+    # every error path (including ones before the downstream `/runs` call)
+    # can re-fetch without duplicating the `with httpx.Client(...)` block.
+    with httpx.Client(base_url=base_url) as client:
+        if dataset_reference_path.strip():
+            dataset_reference: dict = {"path": dataset_reference_path.strip()}
+        elif dataset_reference_inline.strip():
+            try:
+                dataset_reference = {"inline": json.loads(dataset_reference_inline)}
+            except json.JSONDecodeError:
+                datasets = _fetch_ingestion_datasets(client, headers)
+                return templates.TemplateResponse(
+                    request,
+                    "run_new.html",
+                    {"error": _INVALID_INLINE_JSON_ERROR, "values": values, "datasets": datasets},
+                    status_code=422,
+                )
+        elif dataset_reference_source.strip():
+            dataset_reference = {"source": dataset_reference_source.strip()}
+            if dataset_reference_start.strip():
+                dataset_reference["start"] = dataset_reference_start.strip()
+            if dataset_reference_end.strip():
+                dataset_reference["end"] = dataset_reference_end.strip()
+            if dataset_reference_field.strip():
+                dataset_reference["field"] = dataset_reference_field.strip()
+        else:
+            datasets = _fetch_ingestion_datasets(client, headers)
             return templates.TemplateResponse(
                 request,
                 "run_new.html",
-                {"error": _INVALID_INLINE_JSON_ERROR, "values": values, "datasets": []},
+                {"error": _MISSING_DATASET_REFERENCE_ERROR, "values": values, "datasets": datasets},
                 status_code=422,
             )
-    elif dataset_reference_source.strip():
-        dataset_reference = {"source": dataset_reference_source.strip()}
-        if dataset_reference_start.strip():
-            dataset_reference["start"] = dataset_reference_start.strip()
-        if dataset_reference_end.strip():
-            dataset_reference["end"] = dataset_reference_end.strip()
-        if dataset_reference_field.strip():
-            dataset_reference["field"] = dataset_reference_field.strip()
-    else:
-        return templates.TemplateResponse(
-            request,
-            "run_new.html",
-            {"error": _MISSING_DATASET_REFERENCE_ERROR, "values": values, "datasets": []},
-            status_code=422,
-        )
 
-    try:
-        run_request = RunRequest(
-            dataset_id=dataset_id,
-            dataset_reference=dataset_reference,
-            horizon=int(horizon),
-            purge_gap_hours=int(purge_gap_hours),
-            train_window=int(train_window),
-            test_window=int(test_window),
-            step=int(step),
-        )
-    except (ValueError, ValidationError) as exc:
-        return templates.TemplateResponse(
-            request,
-            "run_new.html",
-            {"error": str(exc), "values": values, "datasets": []},
-            status_code=422,
-        )
+        try:
+            run_request = RunRequest(
+                dataset_id=dataset_id,
+                dataset_reference=dataset_reference,
+                horizon=int(horizon),
+                purge_gap_hours=int(purge_gap_hours),
+                train_window=int(train_window),
+                test_window=int(test_window),
+                step=int(step),
+            )
+        except (ValueError, ValidationError) as exc:
+            datasets = _fetch_ingestion_datasets(client, headers)
+            return templates.TemplateResponse(
+                request,
+                "run_new.html",
+                {"error": str(exc), "values": values, "datasets": datasets},
+                status_code=422,
+            )
 
-    with httpx.Client(base_url=base_url) as client:
         response, transport_status = _call_downstream(
             client.post, "/runs", json=run_request.model_dump(), headers=headers
         )
@@ -666,10 +678,11 @@ def run_new_submit(
         if response.status_code in (502, 504):
             return _render_error_for_status(request, response.status_code)
         if response.status_code == 422:
+            datasets = _fetch_ingestion_datasets(client, headers)
             return templates.TemplateResponse(
                 request,
                 "run_new.html",
-                {"error": _extract_detail(response), "values": values, "datasets": []},
+                {"error": _extract_detail(response), "values": values, "datasets": datasets},
                 status_code=422,
             )
 
