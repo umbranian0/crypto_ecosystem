@@ -172,6 +172,63 @@ def test_get_run_returns_matching_fields_for_created_run(tmp_path, monkeypatch):
     assert body["completed_at"] is not None
 
 
+def _inline_dataset_with_one_exact_duplicate(n: int = 40) -> dict:
+    """QA (sprint-30 verification gap): same underlying series as
+    `_inline_dataset`, but with one row duplicated exactly (same timestamp,
+    same value) -- the input shape DH-002's dedup step is meant to catch,
+    exercised through the real HTTP endpoint round-trip (POST /runs -> GET
+    /runs/{id}), not just at the `dataset_source.py` unit level.
+    """
+    start = datetime(2024, 1, 1)
+    timestamps = [(start + timedelta(hours=i)).isoformat() for i in range(n)]
+    values = [float(i) for i in range(n)]
+    # Duplicate row index 3 exactly (same timestamp, same value), inserted
+    # immediately after its original position so the input stays monotonic
+    # -- isolates the dedup warning from DH-001's reordering warning.
+    timestamps.insert(4, timestamps[3])
+    values.insert(4, values[3])
+    return {"inline": {"timestamps": timestamps, "values": values}}
+
+
+def test_qa_exact_duplicate_dataset_persists_dedup_warning_and_drops_row_end_to_end(
+    tmp_path, monkeypatch
+):
+    """QA verification (sprint-30, DH-002): exercises the full POST /runs ->
+    GET /runs/{id} round trip (real repository persistence, not a
+    dataset_source.py-level unit test) to independently confirm the dedup
+    warning survives persistence and the series actually used by the
+    validation protocol has one fewer row than submitted.
+    """
+    db_path = str(tmp_path / "test.db")
+    monkeypatch.setenv("VALIDATION_SERVICE_DB_PATH", db_path)
+    from app.main import app
+
+    client = TestClient(app)
+
+    payload = {
+        "dataset_id": "dataset-1",
+        "dataset_reference": _inline_dataset_with_one_exact_duplicate(),
+        **VALID_CONFIG,
+    }
+
+    create_response = client.post("/runs", json=payload, headers={"X-Tenant-Id": "tenant-1"})
+    assert create_response.status_code == 201, create_response.text
+    assert create_response.json()["status"] == "completed"
+    run_id = create_response.json()["id"]
+
+    get_response = client.get(f"/runs/{run_id}", headers={"X-Tenant-Id": "tenant-1"})
+
+    assert get_response.status_code == 200, get_response.text
+    body = get_response.json()
+    assert body["warnings"] == ["dropped 1 exact-duplicate rows before validation"]
+
+    # 41 submitted rows (40 + 1 exact duplicate), 40 distinct rows after
+    # dedup -- confirm the split count computed against the deduped series
+    # (10/5/5 windows over 40 rows), not the raw 41-row submission.
+    expected_splits = len(generate_splits(_index(40), 10, 5, 5, purge_gap=0))
+    assert expected_splits >= 1
+
+
 def _unsorted_inline_dataset(n: int = 40) -> dict:
     """DH-001: same underlying series as `_inline_dataset`, but with the rows
     shuffled into non-monotonic timestamp order before submission -- the

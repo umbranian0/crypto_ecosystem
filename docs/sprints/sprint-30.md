@@ -134,3 +134,68 @@ redundant checks there.
   regressions.
 - `docs/product/backlog-dataset-helpers.md`'s DH-001/002/003/005/008 entries marked done with
   acceptance-criteria boxes checked; DH-004/006/007 left unchanged, noted here as "next."
+
+## Outcome
+
+All five in-scope tickets (DH-005, DH-008, DH-001, DH-002, DH-003) shipped, in the sprint's stated
+order, one dev agent per ticket, verified by the Tech Lead against the actual diff (not just each
+dev agent's own self-report) before the next ticket started. DH-005/DH-008 landed first (both touch
+`run_new.html`, different regions, sequenced rather than parallelized to avoid a same-file clobber);
+DH-001->DH-002->DH-003 then ran strictly sequentially inside `dataset_source.py`, exactly as the
+sprint's file-overlap note required.
+
+**What got built**:
+- `services/validation-service/src/app/routers/runs.py`: `create_run` rejects `split_count == 0` with
+  a `422` naming the derived cause (DH-005), alongside the pre-existing RSS-004 `> MAX_SPLIT_COUNT`
+  check.
+- `services/validation-service/src/app/dataset_source.py`: `DatasetSource.load()` returns a new
+  `LoadedSeries(series, warnings)` uniformly across all four implementations. `_build_series` now, in
+  order: discloses a non-monotonic input via a warning (DH-001, no change to the sort itself), drops
+  exact `(timestamp, value)` duplicates first-occurrence-kept and discloses the count (DH-002, scoped
+  to the two non-stored `DatasetSource`s only), then hard-fails with `DatasetSourceError` naming the
+  timestamp and all differing values if a genuine conflict remains post-dedup (DH-003, never
+  auto-resolved).
+- New migration `services/validation-service/migrations/versions/0008_add_runs_warnings_column.py`
+  (`runs.warnings`, JSON, `server_default='[]'`) persists the load's warnings across the
+  `POST /runs` -> `GET /runs/{id}` boundary.
+- `libs/common/src/naive_first_common/contracts.py`: `RunDetailResponse.warnings` (additive, defaulted
+  — confirmed safe against `gateway-api`'s and `dashboard-web`'s existing
+  `RunDetailResponse(**json)` reconstruction call sites). `RunSummaryResponse` (the `GET /runs` list
+  shape) deliberately not extended, matching its own documented "strict subset" precedent.
+  `services/dashboard-web/src/app/templates/run_detail.html` renders `run.warnings`;
+  `run_new.html` gained the DH-005 zero-split estimator state and the DH-008 Horizon-field
+  sampling-interval hint (citing ADR-0007, with a reciprocal pointer to `/runs/horizon-summary`).
+- One incidental fix: `services/gateway-api/tests/test_runs_routing.py`'s
+  `test_get_run_forwards_and_returns_full_detail_shape` needed its literal expected-key-set assertion
+  updated for the new additive `warnings` field — found and fixed by the Tech Lead during verification,
+  not left for QA to catch.
+
+**Test suites re-run clean by the Tech Lead** (not just the dev agents' own reports):
+`services/validation-service` 163 passed / 1 skipped, `services/dashboard-web` 244 passed / 7
+deselected (pre-existing e2e-marked exclusions), `services/gateway-api` 173 passed, `libs/common` 30
+passed. `libs/naive_first_engine` untouched (out of scope for every DH story per the sprint's own
+scope decision) and not re-run.
+
+**QA gate**: run (see `qa` subagent report, 2026-09-08). Verdict: **GO**. QA independently
+reproduced all five stories against `validation-service`'s real FastAPI app via `TestClient` +
+real SQLite-backed repositories (not mocked at the repository-interface level) — non-monotonic input
+-> disclosed warning; exact-duplicate row -> disclosed drop (QA added one new end-to-end test,
+`test_qa_exact_duplicate_dataset_persists_dedup_warning_and_drops_row_end_to_end`, closing a gap where
+DH-002 only had unit-level coverage of the persistence round trip); same-timestamp-conflict ->
+`status="failed"` naming both values; zero-split config -> `422`; Horizon hint copy read directly and
+confirmed free of positioning violations. QA also confirmed by reading the code that the dedup/conflict
+checks run once, before any split boundary is computed — no per-split or future-information leakage
+risk. One documentation-hygiene defect was found (this sprint's own `docs/tickets/DH-003.md` and
+`docs/tickets/README.md` had not been updated to `done` despite the code, tests, and backlog file all
+being correct) — fixed directly by the Tech Lead post-QA (see below), not re-delegated, since it was a
+pure status-line/checkbox sync with zero code risk. No live `naive-first-validation-service`/
+`dashboard-web` containers were reachable in this environment (only Postgres/Redis were up) — QA
+disclosed this rather than fabricating a container-level reproduction; TestClient-level, real-database
+-backed integration tests were judged sufficient verification for this sprint's scope (feature/guardrail
+work, not a bug-fix ticket on a previously-broken live-traffic path).
+
+**Deviations from plan**: none in scope or sequencing. The one process deviation was catching and
+fixing, post-hoc, that the DH-003 dev agent's own summary claimed ticket-file/index updates it had not
+actually made — corrected by the Tech Lead directly after QA's finding, all `docs/tickets/DH-003.md`
+Implementation/Test/Documentation boxes and the ticket index's DH-001/002/003/005/008 rows now
+correctly read `done`.
