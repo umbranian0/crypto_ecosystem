@@ -56,6 +56,18 @@ def test_get_tenant_returns_none_for_unknown_id(tenant_repo) -> None:
     assert tenant_repo.get_tenant("no-such-tenant") is None
 
 
+def test_tenant_exists_false_when_no_tenants(tenant_repo) -> None:
+    """SETUP-001: zero-tenant (fresh-install) state."""
+    assert tenant_repo.tenant_exists() is False
+
+
+def test_tenant_exists_true_after_a_tenant_is_created(tenant_repo) -> None:
+    """SETUP-001: at least one tenant exists."""
+    tenant_repo.create_tenant("Acme Corp")
+
+    assert tenant_repo.tenant_exists() is True
+
+
 def test_create_user_persists_and_is_retrievable_by_email(tenant_repo, user_repo) -> None:
     tenant = tenant_repo.create_tenant("Acme Corp")
 

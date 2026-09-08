@@ -84,6 +84,9 @@ class _FakeTenantRepository:
     def get_tenant(self, tenant_id: str) -> TenantRecord | None:
         return self._tenants.get(tenant_id)
 
+    def tenant_exists(self) -> bool:
+        return bool(self._tenants)
+
 
 class _FakeUserRepository:
     """Minimal in-memory implementation proving the interface is implementable."""
@@ -148,9 +151,12 @@ def test_fake_tenant_repository_satisfies_protocol_and_round_trips() -> None:
     repo: TenantRepository = _FakeTenantRepository()
     assert isinstance(repo, TenantRepository)
 
+    assert repo.tenant_exists() is False
+
     tenant = repo.create_tenant("acme")
     assert repo.get_tenant(tenant.id) == tenant
     assert repo.get_tenant("other-tenant") is None
+    assert repo.tenant_exists() is True
 
 
 def test_fake_user_repository_satisfies_protocol_and_looks_up_by_email() -> None:

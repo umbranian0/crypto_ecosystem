@@ -19,10 +19,9 @@ been piling up waiting on it: `VS-013` (Postgres-backed validation-service repos
 (Redis Streams `run.completed` publisher), and `GW-012` (Postgres-backed identity repositories +
 RLS). This README does not claim the trigger fired on time — it didn't.
 
-**Not yet wired into compose, and this is deliberate, not an oversight:** `ingestion-service` and
-`dashboard-web` are not Compose services here. Per implementation-plan.md section 6, each has its
-own not-yet-true trigger — `ingestion-service` is trigger #6, `dashboard-web` is trigger #8 —
-neither of which this debt sprint's scope changes. `minio`/object storage (INF-008,
+**Not yet wired into compose, and this is deliberate, not an oversight:** `ingestion-service` is not
+a Compose service here. Per implementation-plan.md section 6, it has its own not-yet-true trigger
+(trigger #6), which this debt sprint's scope does not change. `minio`/object storage (INF-008,
 Sprint 17) is now a real Compose service too -- see the "MinIO (INF-008)" section below --
 though still with no real consumer reading/writing to it yet.
 `reporting-service` (trigger #7) was
@@ -30,7 +29,11 @@ also built ahead of its trigger, at explicit user request (see its own README) �
 real Compose service (`reporting-service (INF-018)` section below) as of this ticket, closing the
 infra half of the `RS-GAP` capability gap; it is still not reachable from outside the Docker
 network until `GW-018` (a separate, sibling ticket) adds a `gateway-api` proxy route to it — see
-that section for the exact boundary. See
+that section for the exact boundary. `dashboard-web` (trigger #8) was likewise built ahead of its
+own trigger (`backlog-infra.md`'s `INF-010` note) — it **is** now also a real Compose service
+(`dashboard-web (SETUP-030)` section below) as of that ticket, the same category of follow-up
+`INF-018` was for `reporting-service`; this file's earlier wording calling that "not yet wired into
+compose... deliberate, not an oversight" is now stale and superseded by that section. See
 [../docs/solution-design.md](../docs/solution-design.md) section 5 for the full target service
 list, and per-service Alembic migration environments under each service's own `migrations/`
 directory (one per Postgres schema — `ingestion`, `validation`, `reporting`, `identity`, later
@@ -65,12 +68,35 @@ message naming the failed step) rather than silently continuing:
    fails, the bootstrap script stops here, non-zero exit, naming which service failed — it never
    proceeds to start the app containers against a partially-migrated database.
 4. `docker compose -f infra/docker-compose.yml up -d --build validation-service gateway-api`.
-5. Print (never run) the exact `provision_tenant.py` invocation as the final "next step" — tenant
-   provisioning mints a real, one-time-visible API key, so this script deliberately stops short of
-   minting one unattended (the printed command is the containerized form used in the "Full-stack
-   smoke test (Definition of Done, INF-004)" section below, not `gateway-api/README.md`'s
-   host-`.venv` form — the container this bootstrap script's own step 4 just started is the one
-   whose Postgres-backed `identity` schema the provisioned tenant needs to land in).
+5. **(`SETUP-004`)** `docker compose -f infra/docker-compose.yml up -d --build dashboard-web`
+   (depends on `SETUP-030`'s Compose entry existing) — the browser-based setup wizard (`SETUP-003`)
+   this step's next one opens needs a running `dashboard-web` container to land the operator on.
+6. **(`SETUP-004`)** Open the default browser at `http://localhost:${DASHBOARD_WEB_PORT:-8004}/` —
+   bash: `xdg-open`/`open`, whichever exists (platform-conditional); PowerShell: `Start-Process`. On an
+   environment with no way to launch a browser (e.g. a headless CI runner), this **prints the URL
+   instead of failing** — never a non-zero exit purely because no browser could be opened. This is the
+   step that closes the "one command" loop: the operator lands directly on `SETUP-003`'s wizard
+   (tenant name in, API key shown once, straight into `/login`) instead of a partial sequence that
+   still ends in a manual `docker compose exec ... provision_tenant.py` step.
+7. **Demoted, not deleted** (same "demote, don't delete" convention this file already applies to its
+   own hand-run sequences): print the exact `provision_tenant.py` invocation as the non-interactive/
+   CI-friendly alternative to the browser wizard above — tenant provisioning mints a real,
+   one-time-visible API key, so this script deliberately stops short of minting one unattended (the
+   printed command is the containerized form used in the "Full-stack smoke test (Definition of Done,
+   INF-004)" section below, not `gateway-api/README.md`'s host-`.venv` form — the container this
+   bootstrap script's own step 4 just started is the one whose Postgres-backed `identity` schema the
+   provisioned tenant needs to land in).
+
+**`SETUP-004` idempotency, live-verified (not merely asserted)**: running the full script twice in a
+row against an already-initialized stack produced no duplicate tenant and no non-zero exit on either
+run — `docker compose up` is already idempotent, migrations are already idempotent (`INF-016`), and
+`SETUP-003`'s own `/setup` → `/login` redirect on an already-initialized system means the second run's
+browser-open step lands on the wizard URL, which itself redirects straight to `/login` rather than
+re-showing the form or erroring. Verified against a genuinely fresh Postgres volume: first run left
+exactly one `tenants` row (`SELECT count(*) FROM identity.tenants` → `1`); second run left the same
+one row, `GET /setup/status` still `{"initialized": true}`, exit code `0` both times. The
+browser-open step was also confirmed to actually launch a real browser process on this Windows
+environment (`Start-Process`), not just "did not error."
 
 Run it from the repo root:
 
@@ -327,6 +353,47 @@ The service still runs standalone against a directly-configured `DATABASE_URL`/`
 `services/reporting-service/`) — this Compose entry is purely an additional way to run it, not a
 replacement.
 
+**Second real, disclosed infra gap found live, this time by `SETUP-004`'s own fresh-Postgres-volume
+dry run (Sprint 29), same category as the one directly above**: `02-create-app-role.sh` already named
+`ingestion` in its combined `GRANT USAGE ON SCHEMA validation, identity, reporting, ingestion TO
+naive_first_app` statement (added "during Sprint 25 live UAT" per that script's own comment), but
+`01-create-schemas.sql` never actually created an `ingestion` schema — on a genuinely fresh volume
+that single combined `GRANT` statement failed *entirely* with `schema "ingestion" does not exist`,
+which silently left `naive_first_app` with **zero** grants on all four schemas, not just `ingestion`
+(a multi-schema `GRANT` is all-or-nothing). Every app service querying Postgres as `naive_first_app`
+then failed with a misleading `relation "tenants"/"..." does not exist` (Postgres's standard behavior
+for hiding a real table's existence from a role with no schema `USAGE`, rather than a clearer
+"permission denied") — this is what actually blocked `SETUP-004`'s own "genuinely fresh install"
+verification, not anything in `SETUP-001`/`002`/`003`'s own route logic (all independently proven
+correct via `gateway-api`'s/`dashboard-web`'s full test suites first). Fixed by adding `CREATE SCHEMA
+IF NOT EXISTS ingestion;` to `01-create-schemas.sql`, the same category of fix the paragraph above
+already documents for `reporting`. A second, related gap found in the same dry run: `libs/common`'s
+`build_engine` (`naive_first_common/db.py`) unconditionally ran `Base.metadata.create_all` even for an
+already-fully-migrated Postgres engine, whose DDL-issuing connection did not reliably see the
+connection-string `-c search_path=<schema>` option `PostgresTenantRepository`'s memoized `Engine`
+depends on — `build_engine` now skips `create_all` entirely for any `postgresql` dialect URL (Alembic
+migrations already own schema creation there; `create_all` was only ever load-bearing for the
+no-separate-migration-step SQLite local-dev path). See `libs/common/src/naive_first_common/db.py`'s
+own docstring and `libs/common/tests/test_db.py`'s new regression test for the full detail. Neither
+fix touches any `services/*` route logic.
+
+**Third gap found live in the same dry run, disclosed but deliberately *not* fixed by this sprint**
+(out of `SETUP-004`'s own scope -- `validation-service`/`ingestion-service` migrations, not
+`gateway-api`/`dashboard-web`/`infra` wiring): on a genuinely fresh volume, `validation-service`'s
+`0004_convert_split_results_to_hypertable.py` migration's own `CREATE EXTENSION IF NOT EXISTS
+timescaledb` (unqualified) installs the extension's functions into whichever schema is first in that
+migration connection's `search_path` (`validation`, per `migrations/env.py`'s own schema targeting),
+not `public` -- but that same migration then calls `public.create_hypertable(...)` explicitly
+qualified, which fails with `function public.create_hypertable(...) does not exist` on a fresh volume
+where nothing has ever created the extension in `public` before. Worked around for this sprint's own
+live verification by running `CREATE EXTENSION IF NOT EXISTS timescaledb;` by hand against `public`
+(superuser session, default `search_path`) before `infra/migrate.ps1`'s validation-service step --
+not fixed in migration code, since that is `validation-service`'s/`ingestion-service`'s own migration
+file, a different module boundary than this sprint's tickets. Recommend a follow-up `INF-0NN`/`VS-0NN`
+ticket to either qualify the `CREATE EXTENSION` with an explicit `SCHEMA public` clause or pre-create
+it here in `01-create-schemas.sql` (same category of fix as the two directly above) so a genuinely
+fresh volume's `infra/migrate.sh both` succeeds without this manual step.
+
 Start it (brings up `postgres` and `redis` first via `depends_on`):
 
 ```
@@ -342,6 +409,72 @@ curl http://localhost:8002/health
 
 Expected: `{"status":"ok"}` (a real `SELECT 1` against the `reporting` schema through
 `reporting-service`'s own memoized `Engine`, RS-007).
+
+## dashboard-web (SETUP-030)
+
+`dashboard-web` compose entry: `build.context` is `../services/dashboard-web`
+(`services/dashboard-web/Dockerfile`, new as of this ticket, mirroring `gateway-api`'s own
+non-root/`uv sync --frozen --no-dev` shape), with `libs/common` pulled in via a named
+`additional_contexts: {libs: ../libs}` build context — same pattern as `gateway-api`/
+`reporting-service`, since `dashboard-web` also only depends on `naive_first_common` (not
+`naive_first_engine`) at runtime. `dashboard-web` has no `scripts/` directory (unlike
+`gateway-api`'s `provision_tenant.py`/`revoke_api_key.py`), so its Dockerfile has no equivalent
+`COPY scripts` line. Host port defaults to `8004` (`DASHBOARD_WEB_PORT`, first free port after the
+established `8000`/`8001`/`8002`/`8003` app-service sequence), mapped to the container's own `8000`
+(the Dockerfile's own `EXPOSE`/`CMD` port, same as `validation-service`/`gateway-api`).
+
+**Port binding — explicitly flagged as a decision to revisit, not folded into the generic
+port-binding rationale below**: this entry is bound `127.0.0.1`-only, the same syntactic pattern
+every other app-service port binding in this file uses, but the *reason* is not quite the same one.
+`validation-service`/`reporting-service`/`ingestion-service` are bound to localhost because
+`gateway-api` is this platform's only internet-facing *service* (ARCH-005) — those are
+service-to-service calls with no human operator expected to hit them directly. `dashboard-web` is
+different: it is a browser UI a human operator is meant to use, and today that human must be on the
+same host Compose is running on to reach it at all. That is an acceptable constraint for this
+local-first phase (no real remote pilot deployment exists yet), but it is a distinct exposure shape
+from the other three services' bindings — a human operator reaching a UI directly, not one service
+calling another — and should be revisited the day a non-localhost operator needs to reach this UI
+(e.g. a real remote pilot deployment), not silently carried forward as though it were the same
+service-to-service rationale.
+
+`depends_on: gateway-api` is a plain ordering dependency, **not** `condition: service_healthy` —
+`dashboard-web`'s own downstream HTTP calls (`dependencies/downstream.py`/`dependencies/http_client.py`)
+already degrade to `error.html`/`GatewayApiUrlDep`'s existing transport-failure handling on an
+unreachable `gateway-api`, same rationale `gateway-api`'s own compose entry gives for not hard-depending
+on `validation-service`.
+
+Env vars (see `infra/.env.example`):
+- `GATEWAY_API_URL` (from `DASHBOARD_WEB_GATEWAY_API_URL`, default `http://gateway-api:8000`) — the
+  internal Compose network hostname, not `localhost`. `dashboard-web`'s own code default
+  (`http://localhost:8000`) would otherwise resolve to its own container inside the Compose network,
+  not the sibling `gateway-api` one — the same class of gap `gateway-api`'s own
+  `REPORTING_SERVICE_URL`/`INGESTION_SERVICE_URL` fix addressed; this is a Compose-level override
+  only, zero code change in `services/dashboard-web/src/`.
+
+This ticket is packaging/wiring only, per the same non-goal `INF-003`/`INF-004`/`INF-018` already
+held themselves to — zero changes under `services/dashboard-web/src/` (verified via `git status`
+scoped to that path before and after).
+
+The service still runs standalone outside Compose (e.g. `uv run uvicorn app.main:app --port 8000`
+from `services/dashboard-web/`, per its own README) — this Compose entry is purely an additional way
+to run it, not a replacement.
+
+Start it (brings up `gateway-api` first via `depends_on`):
+
+```
+docker compose -f infra/docker-compose.yml build dashboard-web
+docker compose -f infra/docker-compose.yml up -d dashboard-web
+```
+
+Verify the container is up on its own:
+
+```
+curl http://localhost:8004/health
+```
+
+Expected: `200` with `{"status": "ok", ...}` — `dashboard-web`'s `GET /health` (`DASH-008`) makes a
+real call to `gateway-api`'s own `GET /health` over the Compose network, so a `200` here is proof of
+Compose-network reachability end to end, not just "the container starts."
 
 ### Real, live-stack smoke test (Test acceptance criteria, INF-018)
 

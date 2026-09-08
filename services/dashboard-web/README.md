@@ -74,7 +74,13 @@
 **session) fixes `POST /runs/new`'s error redisplay silently discarding the "Stored dataset" dropdown**
 **and the user's selection on any validation rejection (most commonly RSS-004's split-cap guardrail)**
 **-- see "Run-submission error redisplay: stored-dataset dropdown fix (DASH-120)" below (229 unit**
-**tests passing, up from 228, plus the same 5 e2e).**
+**tests passing, up from 228, plus the same 5 e2e). `SETUP-030` (Sprint 29, `infra`-module ticket, no**
+**changes under this directory's own `src/`) added a real `services/dashboard-web/Dockerfile` and**
+**`infra/docker-compose.yml` entry (host port 8004, `127.0.0.1`-only, `GATEWAY_API_URL` pointed at**
+**`gateway-api`'s internal Compose hostname) so this service now runs as part of `docker compose up`**
+**instead of requiring a bare local process outside Compose -- see `infra/README.md`'s**
+**"dashboard-web (SETUP-030)" section for the full wiring. This is packaging only: the full**
+**`SETUP-003` setup wizard this service will eventually gain is not built here.**
 
 Formerly `dashboard/`. See [../../docs/solution-design.md](../../docs/solution-design.md) section 3.6.
 
@@ -1420,3 +1426,54 @@ budget but past an accidental 5s one.
   the diagnostic key was revoked afterward (`scripts/revoke_api_key.py`), no production data
   modified.
 - See `docs/tickets/DASH-121.md` for the full writeup.
+
+## Setup wizard (SETUP-003)
+
+`src/app/routers/setup.py` (new): `GET /setup` renders a tenant-name form, or redirects straight to
+`/login` (`303`, no error surfaced, no form re-render) if `gateway-api`'s `GET /setup/status`
+(`SETUP-001`) already reports `initialized: true`. `POST /setup` calls `gateway-api`'s `POST
+/setup/initialize` (`SETUP-002`) and, on success, renders the raw API key exactly once on a
+confirmation page with a "copy this now -- it cannot be recovered" warning, followed by a link to
+`/login`. `main.py`'s root route (`GET /`) now checks `gateway-api`'s setup status first:
+`initialized: false` redirects to `/setup` instead of `/runs`; `initialized: true` keeps the prior
+behavior (redirect to `/runs`, which itself redirects to `/login` via the existing session
+dependency).
+
+- **Neither route is gated by `DownstreamHeadersDep` (DASH-003) nor `require_operator_session`
+  (DASH-113)** -- there is no session of either kind possible yet on a fresh install, the same
+  chicken-and-egg reasoning `SETUP-001`/`SETUP-002` already apply gateway-api-side.
+- **Reuses, does not reinvent**: `GatewayApiClientDep` (`DASH-002`'s `get_gateway_api_client`
+  provider, the same injectable/mockable `httpx.Client` every other route in this service already
+  uses) for the outbound calls, and `_call_downstream`/`_render_error_for_status` (`runs.py`,
+  `DASH-004`) for transport-failure handling. `app.main`'s root route also takes
+  `GatewayApiClientDep` directly (not a bare env-var read) so its own tests can override the client
+  the same way every other route's tests already do.
+- **One-time key-reveal partial, built reusable from the start**: `templates/_setup_key_reveal.html`
+  is parameterized on `tenant_name`/`api_key` only -- no `/setup`-specific literal copy baked into the
+  markup -- because `SETUP-012` (Settings -> Tenants "create tenant" flow, next sprint) is expected to
+  reuse this exact fragment rather than duplicate a second near-identical page. `templates/
+  setup_key_reveal.html` is the full-page wrapper (`extends base.html`) that includes it for `POST
+  /setup`'s own response; `templates/setup.html` is the tenant-name form itself.
+- **Raw key handling**: never logged, never placed in a URL/redirect `Location` header, never echoed
+  back into an error-redisplay path -- same discipline `DASH-002`'s login flow already holds itself to.
+  `gateway-api`'s own `409` (a stray direct `POST /setup` after initialization, not reachable through
+  the normal UI flow since `GET /setup` already redirects once initialized) degrades to the same
+  not-an-error `/login` redirect rather than surfacing a raw error page.
+- **Positioning (CLAUDE.md, non-negotiable)**: this is the first page a brand-new operator sees. Copy
+  describes only a "tenant" and an "API key for validation runs" -- banned-word-scanned
+  (`prediction`/`forecast`/`signal`/`trading`/`recommendation`) across all three new templates in
+  `tests/test_setup_wizard.py::test_setup_templates_have_no_banned_positioning_words`.
+- **Tests**: `tests/test_setup_wizard.py` (unit, mocked `gateway-api` via `httpx.MockTransport`, same
+  pattern `test_auth.py` uses) covers both root-route branches, both `/setup` GET branches, the raw
+  key appearing exactly once and never in a redirect header, the `409`-degrades-to-`/login` case, and
+  empty-tenant-name validation. `tests/e2e/test_setup_wizard.py` extends the Selenium E2E suite
+  (`DASH-009`) with the full browser flow: fresh stub `gateway-api` (`tests/e2e/stub_gateway_api.py`,
+  which gained `GET /setup/status`/`POST /setup/initialize`, starting uninitialized) -> `/` shows the
+  wizard -> submit a tenant name -> key displayed once -> follow the `/login` link -> log in
+  successfully with that same key -> a second visit to `/setup` redirects straight to `/login`. Full
+  suite: 239 unit passed (up from 230), 7 e2e passed (up from 5), zero regressions.
+- **Live-verified** against the real Compose stack (`SETUP-030`, a genuinely fresh Postgres volume,
+  `infra/bootstrap.ps1` run end-to-end): `GET /setup/status` reported `{"initialized": false}`, root
+  redirected to `/setup`, the form rendered, `POST /setup` returned `201` with the raw key shown
+  exactly once, `/login` with that key succeeded, and a second visit to `/setup` redirected straight
+  to `/login`.

@@ -213,6 +213,43 @@ services:
       postgres:
         condition: service_healthy
 
+  dashboard-web:
+    build:
+      context: ../services/dashboard-web
+      additional_contexts:
+        libs: ../libs
+    container_name: naive-first-dashboard-web
+    restart: unless-stopped
+    ports:
+      # Bound to localhost only (SETUP-030), same "gateway-api is the only
+      # internet-facing service" convention as validation-service/
+      # reporting-service/ingestion-service above -- dashboard-web itself
+      # never talks directly to a database, only to gateway-api, so this
+      # doesn't change its own trust boundary. Explicitly disclosed as a
+      # decision to revisit (not the same rationale as those other
+      # service-to-service bindings): the day a non-localhost operator
+      # needs to reach this UI directly (e.g. a real remote pilot
+      # deployment), a human operator reaching a UI is a different exposure
+      # shape than a service-to-service call -- see infra/README.md's
+      # "dashboard-web (SETUP-030)" section for the full note.
+      - "127.0.0.1:${DASHBOARD_WEB_PORT:-8004}:8000"
+    environment:
+      # Internal Compose network hostname -- dashboard-web's own default
+      # (dependencies/downstream.py / dependencies/http_client.py) is
+      # http://localhost:8000, which inside this container resolves to its
+      # own container, not the sibling gateway-api one -- same class of gap
+      # gateway-api's own REPORTING_SERVICE_URL/INGESTION_SERVICE_URL fix
+      # addressed. Zero code change needed; only this Compose-level
+      # override, same pattern GATEWAY_API_VALIDATION_SERVICE_URL uses.
+      GATEWAY_API_URL: ${DASHBOARD_WEB_GATEWAY_API_URL:-http://gateway-api:8000}
+    depends_on:
+      # Not a hard `condition: service_healthy` dependency -- dashboard-web's
+      # own downstream HTTP calls already degrade to error.html/
+      # GatewayApiUrlDep's existing transport-failure handling on an
+      # unreachable gateway-api, same rationale gateway-api's own compose
+      # entry gives for not hard-depending on validation-service.
+      - gateway-api
+
   minio:
     image: minio/minio
     container_name: naive-first-minio

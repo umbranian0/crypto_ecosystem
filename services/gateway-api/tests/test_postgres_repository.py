@@ -215,6 +215,38 @@ def test_get_tenant_returns_none_for_unknown_id(tenant_repo) -> None:
     assert tenant_repo.get_tenant("no-such-tenant") is None
 
 
+def test_tenant_exists_true_via_migrated_engine(tenant_repo) -> None:
+    """SETUP-001: at least one tenant already exists (this suite's own
+    fixtures/prior tests have already created rows against this persistent
+    database, and this ticket's own `create_tenant` call below guarantees
+    at least one regardless) -- proven via `migrated_engine`'s connection,
+    which (per this module's own docstring) is a superuser and therefore
+    does not exercise migration 0005's RLS fallback clause on its own; that
+    proof is `test_tenant_exists_true_and_resolves_across_tenants_via_
+    restricted_role` below.
+    """
+    tenant_repo.create_tenant("Acme Corp (pg tenant_exists)")
+
+    assert tenant_repo.tenant_exists() is True
+
+
+def test_tenant_exists_true_and_resolves_despite_rls_via_restricted_role(
+    restricted_role_engine,
+) -> None:
+    """SETUP-001/migration 0005: `tenant_exists()` must work with
+    `app.tenant_id` unset -- proven under `restricted_role_engine` (see
+    module docstring), a real non-superuser/non-BYPASSRLS role, so this
+    actually exercises migration 0005's permissive read fallback on the
+    `tenants` RLS policy rather than trivially passing because the
+    connecting role bypasses RLS entirely.
+    """
+    tenant_repo = PostgresTenantRepository(engine=restricted_role_engine)
+
+    tenant_repo.create_tenant("PG Tenant (tenant_exists, restricted)")
+
+    assert tenant_repo.tenant_exists() is True
+
+
 def test_create_user_persists_and_is_retrievable_by_email(tenant_repo, user_repo, unique) -> None:
     tenant = tenant_repo.create_tenant("Acme Corp (pg users)")
 

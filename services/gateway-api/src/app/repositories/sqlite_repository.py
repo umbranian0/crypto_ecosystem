@@ -88,6 +88,14 @@ class SQLiteTenantRepository:
             ).scalar_one_or_none()
             return _tenant_to_record(tenant) if tenant is not None else None
 
+    def tenant_exists(self) -> bool:
+        # `LIMIT 1` existence check (SETUP-001), not `COUNT(*)` -- no need to
+        # count past one row.
+        with Session(self._engine) as session:
+            return (
+                session.execute(select(Tenant.id).limit(1)).first() is not None
+            )
+
 
 class SQLiteUserRepository:
     """SQLite implementation of `UserRepository` (GW-003)."""

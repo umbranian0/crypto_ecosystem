@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from dataclasses import replace
 
 import pytest
 from fastapi import Depends, FastAPI
@@ -32,13 +33,18 @@ TENANT_RAW_KEY = "tenant-a-real-api-key"
 TENANT_ID = "tenant-a"
 
 
-def _operator_client() -> TestClient:
+def _operator_client(repo=None) -> TestClient:
     app = FastAPI()
 
     @app.get("/operator-only")
     def operator_only(_operator=Depends(get_authenticated_operator)):
         return {"ok": True}
 
+    # SETUP-010: get_authenticated_operator now takes ApiKeyRepositoryDep,
+    # so every test app needs an override -- defaults to an empty fake
+    # repo (no tenant-key knowledge at all) so tests unrelated to the new
+    # 403 behavior never touch a real DB-backed provider.
+    app.dependency_overrides[get_api_key_repository] = lambda: repo if repo is not None else _FakeApiKeyRepository({})
     return TestClient(app)
 
 
@@ -159,9 +165,41 @@ def test_tenant_api_key_presented_as_operator_token_is_rejected(monkeypatch) -> 
     assert tenant_response.json() == {"tenant_id": TENANT_ID}
 
     # The actual proof: presenting that same valid tenant key as the
-    # operator header must be rejected.
+    # operator header must be rejected -- 403, not 401 (SETUP-010): a real
+    # credential, just the wrong kind for this gate.
     operator_response = client.get("/operator-only", headers={"X-Operator-Token": TENANT_RAW_KEY})
-    assert operator_response.status_code == 401
+    assert operator_response.status_code == 403
+
+
+def test_revoked_tenant_api_key_presented_as_operator_token_returns_401(monkeypatch) -> None:
+    """SETUP-010: a revoked tenant key is not "a real credential of the
+    wrong type" for this purpose -- matches get_authenticated_tenant's own
+    treatment of a revoked key as unauthenticated, not merely forbidden.
+    """
+    from datetime import datetime, timezone
+
+    monkeypatch.setenv("OPERATOR_TOKEN", OPERATOR_TOKEN)
+    record = _make_tenant_key_record(TENANT_ID, TENANT_RAW_KEY)
+    revoked_record = replace(record, revoked_at=datetime.now(timezone.utc))
+    repo = _FakeApiKeyRepository({hashlib.sha256(TENANT_RAW_KEY.encode()).hexdigest(): revoked_record})
+    client = _combined_client(repo)
+
+    response = client.get("/operator-only", headers={"X-Operator-Token": TENANT_RAW_KEY})
+
+    assert response.status_code == 401
+
+
+def test_unknown_value_presented_as_operator_token_returns_401(monkeypatch) -> None:
+    """SETUP-010 regression guard: a garbage/unknown value that resolves to
+    no tenant key at all still gets GW-021's original 401, not 403.
+    """
+    monkeypatch.setenv("OPERATOR_TOKEN", OPERATOR_TOKEN)
+    repo = _FakeApiKeyRepository({})
+    client = _combined_client(repo)
+
+    response = client.get("/operator-only", headers={"X-Operator-Token": "totally-unknown-garbage-value"})
+
+    assert response.status_code == 401
 
 
 def test_operator_token_presented_as_tenant_api_key_is_rejected(monkeypatch) -> None:

@@ -26,7 +26,7 @@ shared default method, so there is nothing an ABC would buy over a Protocol
 here.
 
 `tenant_id`-first convention (backlog AC2) and its exceptions: every method
-takes `tenant_id` as its first parameter after `self`, except exactly three,
+takes `tenant_id` as its first parameter after `self`, except exactly four,
 each documented individually at its own definition below because each has a
 different reason a tenant isn't yet known at call time:
 - `TenantRepository.create_tenant` -- a tenant has no id yet at creation time.
@@ -35,6 +35,8 @@ different reason a tenant isn't yet known at call time:
   correct lookup key.
 - `UserRepository.get_user_by_email` -- login-time lookup doesn't yet know
   the tenant either; `email` alone is the correct lookup key.
+- `TenantRepository.tenant_exists` (SETUP-001) -- takes no arguments at all;
+  a fresh-install check is inherently not about any one tenant.
 No other method has an exception: `create_key`, `revoke_key`, and
 `create_user` all take `tenant_id` first, since in each of those cases a
 tenant is already known by the caller.
@@ -92,6 +94,17 @@ class TenantRepository(typing.Protocol):
         ...
 
     def get_tenant(self, tenant_id: str) -> TenantRecord | None: ...
+
+    def tenant_exists(self) -> bool:
+        """`SETUP-001`: does at least one `tenants` row exist yet -- the
+        fresh-install check `GET /setup/status` needs. Not `tenant_id`-first
+        (a fourth documented exception, alongside `create_tenant`): this
+        question is deliberately tenant-agnostic, since a genuinely fresh
+        install has no tenant id to ask about. A cheap existence check (`...
+        LIMIT 1`/`EXISTS`), never a `COUNT(*)` -- no need to count past one
+        row.
+        """
+        ...
 
 
 @typing.runtime_checkable

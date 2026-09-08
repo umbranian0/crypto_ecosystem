@@ -16,7 +16,7 @@ from sqlalchemy import text
 from naive_first_common import CorrelationIdMiddleware, configure_structured_logging
 
 from app.dependencies.repositories import HealthCheckEngineDep
-from app.routers import ingestion, operator, reports, runs, system
+from app.routers import ingestion, operator, reports, runs, setup, system
 
 # OPS-006: configure the shared JSON logging convention before the app is
 # constructed, so every log line emitted from import time onward (including
@@ -51,6 +51,10 @@ app.include_router(ingestion.router, tags=["ingestion-service"])
 # router proxies to all three downstream services plus this service's own
 # check, not one).
 app.include_router(system.router)
+# SETUP-001: fresh-install detection, deliberately unauthenticated (no
+# tags= per ARCH-007, same reasoning as system.router above -- this router
+# doesn't proxy to a single downstream service).
+app.include_router(setup.router)
 
 
 @app.get("/health", response_model=None)

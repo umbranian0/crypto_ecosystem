@@ -116,6 +116,20 @@ class PostgresTenantRepository:
             ).scalar_one_or_none()
             return _tenant_to_record(tenant) if tenant is not None else None
 
+    def tenant_exists(self) -> bool:
+        # SETUP-001's documented tenant-agnostic exception (same category as
+        # get_by_hash/get_user_by_email above): a fresh-install check must
+        # work with app.tenant_id unset, so this deliberately does NOT call
+        # _set_tenant_scope -- relies on migration 0005's permissive
+        # read-only fallback clause added to the `tenants` RLS policy
+        # specifically for this method (see that migration's docstring for
+        # why `create_tenant`'s pre-existing strict policy alone isn't
+        # sufficient here).
+        with Session(self._engine) as session:
+            return (
+                session.execute(select(Tenant.id).limit(1)).first() is not None
+            )
+
 
 class PostgresUserRepository:
     """Postgres implementation of `UserRepository` (GW-003)."""
