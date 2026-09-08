@@ -660,6 +660,35 @@ def test_run_new_form_estimates_splits_for_inline_and_path_modes(monkeypatch) ->
     assert "No split-count estimate available for a local file path" in html
 
 
+def test_run_new_form_renders_zero_split_warning_branch(monkeypatch) -> None:
+    """DH-005: a live estimate of exactly 0 must render a distinct
+    `form-status-warn`-styled message, not the pre-DH-005 wording
+    ('Approximately 0 split(s) estimated') that read as a valid-but-boring
+    result. The over-cap branch's own message/styling is unchanged."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/ingestion/datasets"
+        return httpx.Response(200, json={"items": []})
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get("/runs/new")
+    html = response.text
+
+    assert response.status_code == 200
+    assert "This configuration would produce no splits -- widen the " in html
+    assert "dataset's range, reduce train/test window, or reduce purge gap." in html
+    assert 'if (estimate === 0) {' in html
+    assert 'estimatedSplits.classList.add("form-status-warn");' in html
+    # Over-cap branch untouched: same wording/styling as before this ticket.
+    assert (
+        "exceeds the \" + MAX_SPLITS + \"-split maximum per run" in html
+    )
+
+
 def test_estimated_splits_formula_matches_generate_splits() -> None:
     """Cross-check (Python-side only, not a JS test) that the closed-form
     formula `computeEstimatedSplits()` implements -- and the concrete tuples
@@ -738,3 +767,74 @@ def test_run_new_submit_stored_dataset_reference_with_range_and_field(monkeypatc
 
     assert response.status_code == 303
     assert response.headers["location"] == f"/runs/{RUN_ID}"
+
+
+# DH-008: Horizon field's dataset-sampling-interval hint (ADR-0007). All three
+# branches live in one inline `<script>` block (client-side, mode-switched by
+# `currentRowCount()`, the same pattern RSS-001 uses for
+# `dataset-source-summary`), so a single render exercises all of them --
+# mirrors `test_run_new_form_dataset_options_carry_data_attributes`'s approach
+# of asserting on rendered markup/script text rather than executing the JS.
+
+
+def test_run_new_form_has_horizon_unit_hint_element_and_logic(monkeypatch) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/ingestion/datasets"
+        return httpx.Response(200, json={"items": []})
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get("/runs/new")
+
+    assert response.status_code == 200
+    text = response.text
+
+    # Hint element exists and starts empty/hidden -- no dataset reference
+    # selected yet (same no-selection precedent as RSS-001/RSS-002).
+    assert 'id="horizon-unit-hint"' in text
+    assert "updateHorizonUnitHint" in text
+
+    # Stored-dataset branch: states the sampled interval and restates
+    # horizon's meaning in that unit.
+    assert "is sampled hourly, so" in text
+    assert "hours ahead, not 24 days" in text
+
+    # Local-file-path/inline-payload branch: no fabricated interval.
+    assert "whatever the submitted" in text
+    assert "data's own timestamp spacing turns out to be" in text
+
+    # Reciprocal pointer to /runs/horizon-summary, accurate against that
+    # page's own copy (horizon_summary.html states the days view "assumes
+    # the one hourly-sampled source available today").
+    assert "/runs/horizon-summary" in text
+    assert "assumes hourly sampling" in text
+
+    # Updated tooltip: unit-relative wording, no bare "steps ahead" claim
+    # left unqualified.
+    assert "not a fixed hour/day unit" in text
+
+
+def test_run_new_template_has_no_banned_positioning_words() -> None:
+    """DH-008: extends the same banned-positioning-word discipline
+    `test_horizon_summary_template_has_no_banned_positioning_words`
+    (`test_runs_horizon_summary.py`) already applies to `horizon_summary.html`
+    to `run_new.html`'s new hint/tooltip copy -- per DH-008's own acceptance
+    criteria this checks the three words it names ("optimal," "recommended,"
+    "best"); the wider prediction/forecast/signal/target set isn't reused
+    here because `run_new.html` already has pre-existing, in-scope-elsewhere
+    copy (RSS-001's dataset-field tooltip) using "forecast" to describe what
+    a *model* does, not a claim this product predicts -- out of this
+    ticket's scope to touch.
+    """
+    import pathlib
+
+    template_path = (
+        pathlib.Path(__file__).parent.parent / "src" / "app" / "templates" / "run_new.html"
+    )
+    text = template_path.read_text(encoding="utf-8").lower()
+
+    for banned in ("optimal", "recommended", "best"):
+        assert banned not in text, f"banned positioning word {banned!r} found in run_new.html"

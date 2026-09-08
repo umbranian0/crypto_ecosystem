@@ -54,6 +54,7 @@ def _run_to_record(run: Run) -> RunRecord:
         created_at=run.created_at,
         completed_at=run.completed_at,
         failure_reason=run.failure_reason,
+        warnings=run.warnings,
     )
 
 
@@ -141,6 +142,8 @@ class SQLiteValidationRunRepository:
         horizon: int,
         purge_gap_hours: float,
         split_config: dict,
+        *,
+        warnings: list[str] | None = None,
     ) -> RunRecord:
         # Deterministic engine-side run_id (models.py's PK doc note) isn't
         # available at this signature -- naive_first_engine.protocol computes
@@ -158,6 +161,7 @@ class SQLiteValidationRunRepository:
             created_at=datetime.utcnow(),
             completed_at=None,
             failure_reason=None,
+            warnings=warnings if warnings is not None else [],
         )
         with Session(self._engine) as session:
             session.add(run)

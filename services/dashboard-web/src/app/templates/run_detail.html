@@ -15,6 +15,14 @@
     </tbody>
 </table>
 
+{% if run.warnings %}
+<ul class="form-status">
+    {% for warning in run.warnings %}
+    <li>{{ warning }}</li>
+    {% endfor %}
+</ul>
+{% endif %}
+
 <h3>Per-split validation results</h3>
 {% if splits %}
 <p>Benchmark comparison of the model against the Naive0 baseline for each walk-forward split.

@@ -126,6 +126,51 @@ def test_run_detail_success_with_splits(monkeypatch) -> None:
     assert "1.0" in response.text  # naive0_mae
 
 
+def test_run_detail_renders_warning_when_present(monkeypatch) -> None:
+    """DH-001: `RunDetailResponse.warnings` (non-empty) renders on the page,
+    styled non-fatal (the same `.form-status` class the pre-existing
+    "N of M splits shown" notice already uses -- not `.error`).
+    """
+    warning_text = "dataset rows were not in timestamp order and were sorted before validation"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == f"/runs/{RUN_ID}":
+            return httpx.Response(200, json={**RUN_DETAIL_BODY, "warnings": [warning_text]})
+        if request.url.path == f"/runs/{RUN_ID}/splits":
+            return httpx.Response(200, json=[SPLIT_BODY])
+        raise AssertionError(f"unexpected path {request.url.path}")
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get(f"/runs/{RUN_ID}")
+
+    assert response.status_code == 200
+    assert warning_text in response.text
+    assert '<ul class="form-status">' in response.text
+
+
+def test_run_detail_renders_nothing_extra_when_warnings_empty(monkeypatch) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == f"/runs/{RUN_ID}":
+            return httpx.Response(200, json={**RUN_DETAIL_BODY, "warnings": []})
+        if request.url.path == f"/runs/{RUN_ID}/splits":
+            return httpx.Response(200, json=[SPLIT_BODY])
+        raise AssertionError(f"unexpected path {request.url.path}")
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get(f"/runs/{RUN_ID}")
+
+    assert response.status_code == 200
+    assert '<ul class="form-status">' not in response.text
+
+
 def test_run_detail_metric_query_param_switches_chart(monkeypatch) -> None:
     """RAV-004: `?metric=smape` re-renders the chart with sMAPE's own
     model/naive0 values, not MAE's.

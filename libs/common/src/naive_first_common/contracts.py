@@ -56,6 +56,14 @@ class RunDetailResponse(BaseModel):
     created_at: datetime
     completed_at: datetime | None
     failure_reason: str | None
+    # DH-001: any non-fatal, disclosed condition the dataset load produced
+    # for this run (e.g. a reordering-on-load notice). Defaulted to `[]`,
+    # not required -- both gateway-api's and dashboard-web's own
+    # `RunDetailResponse(**response.json())` reconstruction sites must stay
+    # safe against a validation-service response that temporarily omits this
+    # field during a rolling deploy (same defensive-default precedent as
+    # `client_baseline` on `SplitResultResponse` below).
+    warnings: list[str] = Field(default_factory=list)
 
 
 class RunSummaryResponse(BaseModel):

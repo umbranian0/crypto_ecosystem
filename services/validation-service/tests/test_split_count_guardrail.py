@@ -23,6 +23,7 @@ import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 
+from app.dataset_source import LoadedSeries
 from naive_first_engine.splitting import generate_splits
 
 VALID_CONFIG = {
@@ -45,8 +46,8 @@ class _FakeDatasetSource:
         index = pd.date_range("2020-01-01", periods=row_count, freq="h")
         self.series = pd.Series(range(row_count), index=index, dtype=float)
 
-    def load(self, reference: object) -> pd.Series:
-        return self.series
+    def load(self, reference: object) -> LoadedSeries:
+        return LoadedSeries(series=self.series, warnings=[])
 
 
 class _SpyRunRepository:
@@ -272,6 +273,86 @@ def test_rejected_request_never_invokes_run_validation_protocol(tmp_path, monkey
 
     assert response.status_code == 422, response.text
     mock_protocol.assert_not_called()
+
+
+def test_zero_splits_rejected_with_derived_cause(tmp_path, monkeypatch):
+    """DH-005: a configuration whose train_window + purge_gap + test_window
+    exceeds the dataset's row count produces zero splits and must be rejected
+    with a 422 naming the concrete cause, not silently accepted as a
+    "completed" run with zero split_results rows.
+    """
+    client, app, _ = _client(tmp_path, monkeypatch)
+    from app.dependencies.repositories import get_dataset_source
+
+    config = {
+        "horizon": 1,
+        "purge_gap_hours": 0,
+        "train_window": 360,
+        "test_window": 40,
+        "step": 5,
+    }
+    fake_source = _FakeDatasetSource(row_count=340)
+    expected_count = len(
+        generate_splits(
+            fake_source.series.index,
+            config["train_window"],
+            config["test_window"],
+            config["step"],
+            purge_gap=config["purge_gap_hours"],
+        )
+    )
+    assert expected_count == 0
+
+    app.dependency_overrides[get_dataset_source] = lambda: fake_source
+
+    try:
+        response = client.post(
+            "/runs",
+            json=_payload({"inline": {"timestamps": ["2024-01-01T00:00:00"], "values": [1.0]}}, config),
+            headers={"X-Tenant-Id": "tenant-1"},
+        )
+    finally:
+        app.dependency_overrides.pop(get_dataset_source, None)
+
+    assert response.status_code == 422, response.text
+    body = response.json()
+    assert "0 splits" in body["detail"]
+    assert "340" in body["detail"]
+    assert "360" in body["detail"]
+    assert "40" in body["detail"]
+    assert "400" in body["detail"]
+
+
+def test_zero_splits_rejected_never_calls_create_run(tmp_path, monkeypatch):
+    client, app, db_path = _client(tmp_path, monkeypatch)
+    from app.dependencies.repositories import get_dataset_source, get_validation_run_repository
+    from app.repositories.sqlite_repository import SQLiteValidationRunRepository
+
+    config = {
+        "horizon": 1,
+        "purge_gap_hours": 0,
+        "train_window": 360,
+        "test_window": 40,
+        "step": 5,
+    }
+    fake_source = _FakeDatasetSource(row_count=340)
+    spy_repository = _SpyRunRepository(SQLiteValidationRunRepository(db_path))
+
+    app.dependency_overrides[get_dataset_source] = lambda: fake_source
+    app.dependency_overrides[get_validation_run_repository] = lambda: spy_repository
+
+    try:
+        response = client.post(
+            "/runs",
+            json=_payload({"inline": {"timestamps": ["2024-01-01T00:00:00"], "values": [1.0]}}, config),
+            headers={"X-Tenant-Id": "tenant-1"},
+        )
+    finally:
+        app.dependency_overrides.pop(get_dataset_source, None)
+        app.dependency_overrides.pop(get_validation_run_repository, None)
+
+    assert response.status_code == 422, response.text
+    assert spy_repository.create_run_calls == []
 
 
 def test_dataset_load_failure_still_produces_failed_run_and_201(tmp_path, monkeypatch):

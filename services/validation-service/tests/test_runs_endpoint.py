@@ -172,6 +172,75 @@ def test_get_run_returns_matching_fields_for_created_run(tmp_path, monkeypatch):
     assert body["completed_at"] is not None
 
 
+def _unsorted_inline_dataset(n: int = 40) -> dict:
+    """DH-001: same underlying series as `_inline_dataset`, but with the rows
+    shuffled into non-monotonic timestamp order before submission -- the
+    exact input shape `InlineOrLocalFileDatasetSource._build_series`'s
+    reordering-disclosure check is meant to catch.
+    """
+    start = datetime(2024, 1, 1)
+    timestamps = [(start + timedelta(hours=i)).isoformat() for i in range(n)]
+    values = [float(i) for i in range(n)]
+    # Reverse order -- deterministic, genuinely non-monotonic.
+    reversed_pairs = list(zip(timestamps, values))[::-1]
+    return {"inline": {"timestamps": [t for t, _ in reversed_pairs], "values": [v for _, v in reversed_pairs]}}
+
+
+def test_reordered_dataset_persists_warning_and_survives_get_run_round_trip(tmp_path, monkeypatch):
+    """DH-001 Implementation/Test acceptance criteria: the reordering warning,
+    when present, is persisted via `create_run` and survives a `GET /runs/{id}`
+    call -- not just present in the synchronous `POST /runs` response (this
+    endpoint doesn't even echo it back, RunResponse only ever has id/status).
+    A reordered-but-otherwise-valid dataset still validates successfully.
+    """
+    db_path = str(tmp_path / "test.db")
+    monkeypatch.setenv("VALIDATION_SERVICE_DB_PATH", db_path)
+    from app.dataset_source import InlineOrLocalFileDatasetSource
+    from app.main import app
+
+    client = TestClient(app)
+
+    payload = {
+        "dataset_id": "dataset-1",
+        "dataset_reference": _unsorted_inline_dataset(),
+        **VALID_CONFIG,
+    }
+
+    create_response = client.post("/runs", json=payload, headers={"X-Tenant-Id": "tenant-1"})
+    assert create_response.status_code == 201, create_response.text
+    assert create_response.json()["status"] == "completed"
+    run_id = create_response.json()["id"]
+
+    get_response = client.get(f"/runs/{run_id}", headers={"X-Tenant-Id": "tenant-1"})
+
+    assert get_response.status_code == 200, get_response.text
+    body = get_response.json()
+    assert body["warnings"] == [InlineOrLocalFileDatasetSource.REORDERED_ON_LOAD_WARNING]
+
+
+def test_already_sorted_dataset_persists_no_warnings(tmp_path, monkeypatch):
+    db_path = str(tmp_path / "test.db")
+    monkeypatch.setenv("VALIDATION_SERVICE_DB_PATH", db_path)
+    from app.main import app
+
+    client = TestClient(app)
+
+    payload = {
+        "dataset_id": "dataset-1",
+        "dataset_reference": _inline_dataset(),
+        **VALID_CONFIG,
+    }
+
+    create_response = client.post("/runs", json=payload, headers={"X-Tenant-Id": "tenant-1"})
+    assert create_response.status_code == 201, create_response.text
+    run_id = create_response.json()["id"]
+
+    get_response = client.get(f"/runs/{run_id}", headers={"X-Tenant-Id": "tenant-1"})
+
+    assert get_response.status_code == 200, get_response.text
+    assert get_response.json()["warnings"] == []
+
+
 def test_get_run_cross_tenant_returns_404_with_no_leaked_data(tmp_path, monkeypatch):
     """Load-bearing tenant-isolation test (VS-007 AC2). A run created for
     `tenant-a` must be unreachable, and its data unobservable, via a GET

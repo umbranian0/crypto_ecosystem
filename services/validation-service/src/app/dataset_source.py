@@ -44,6 +44,7 @@ docstring.
 from __future__ import annotations
 
 import csv
+import dataclasses
 import io
 import typing
 
@@ -55,13 +56,31 @@ class DatasetSourceError(ValueError):
     """Raised for any malformed `reference` -- never a silently-empty Series."""
 
 
+@dataclasses.dataclass(frozen=True)
+class LoadedSeries:
+    """DH-001: `DatasetSource.load`'s return shape -- the loaded `series`
+    itself plus a `warnings` list of any non-fatal, disclosed conditions the
+    load produced (e.g. reordering a non-monotonic input). Per CLAUDE.md's
+    no-silent-inference rule, any correction a `DatasetSource` implementation
+    already makes to a tenant's submitted data (the `.sort_index()` call
+    below is not new behavior -- see `_build_series`) must be disclosed, not
+    silently applied. All four `DatasetSource` implementations in this module
+    return this same shape uniformly (binding on DH-002/DH-003, which extend
+    this same contract) -- never a bare `pd.Series`, never a two-tuple only
+    some callers learn to unpack.
+    """
+
+    series: pd.Series
+    warnings: list[str]
+
+
 @typing.runtime_checkable
 class DatasetSource(typing.Protocol):
     """Adapter interface (implementation-plan.md section 7): one method, so a
     future object-storage-backed source can swap in without touching callers.
     """
 
-    def load(self, reference: object) -> pd.Series: ...
+    def load(self, reference: object) -> LoadedSeries: ...
 
 
 class InlineOrLocalFileDatasetSource:
@@ -71,7 +90,7 @@ class InlineOrLocalFileDatasetSource:
     filesystem path to a two-column CSV: timestamp, value).
     """
 
-    def load(self, reference: object) -> pd.Series:
+    def load(self, reference: object) -> LoadedSeries:
         if not isinstance(reference, dict):
             raise DatasetSourceError(
                 f"reference must be a dict with an 'inline' or 'path' key, got {type(reference)!r}"
@@ -125,8 +144,15 @@ class InlineOrLocalFileDatasetSource:
             raise DatasetSourceError(f"could not read CSV at path {path!r}: {exc}") from exc
         return timestamps, values
 
+    #: DH-001: the exact disclosure sentence for a reordered-on-load dataset --
+    #: a single shared constant so the string is byte-identical wherever it is
+    #: asserted against (this module, dashboard-web's rendering).
+    REORDERED_ON_LOAD_WARNING = (
+        "dataset rows were not in timestamp order and were sorted before validation"
+    )
+
     @staticmethod
-    def _build_series(timestamps: list, values: list) -> pd.Series:
+    def _build_series(timestamps: list, values: list) -> LoadedSeries:
         if not timestamps or not values:
             raise DatasetSourceError("dataset is empty")
 
@@ -140,12 +166,52 @@ class InlineOrLocalFileDatasetSource:
         except (TypeError, ValueError) as exc:
             raise DatasetSourceError(f"non-numeric value in dataset: {exc}") from exc
 
+        # DH-001: checked *before* the pre-existing .sort_index() call below,
+        # which itself is byte-unchanged -- disclosure-only, no change to
+        # whether/how sorting happens (ticket Analysis section).
+        warnings: list[str] = []
+        if not index.is_monotonic_increasing:
+            warnings.append(InlineOrLocalFileDatasetSource.REORDERED_ON_LOAD_WARNING)
+
         series = pd.Series(float_values, index=index, dtype="float64").sort_index()
 
         if series.empty:
             raise DatasetSourceError("dataset is empty")
 
-        return series
+        # DH-002: checked *after* DH-001's reordering warning/sort and
+        # *before* DH-003's (future) conflict check, per the backlog's
+        # required sequencing -- dedup first, conflict-detection on the
+        # deduped result second. Duplicates are order-independent here
+        # (timestamp AND value both match, so which row is "first" cannot
+        # change what the surviving series says) -- comparing post-sort is
+        # equivalent to comparing pre-sort.
+        pairs = pd.DataFrame({"timestamp": series.index, "value": series.to_numpy()})
+        duplicate_mask = pairs.duplicated(keep="first").to_numpy()
+        dropped_count = int(duplicate_mask.sum())
+        if dropped_count > 0:
+            warnings.append(f"dropped {dropped_count} exact-duplicate rows before validation")
+            series = series[~duplicate_mask]
+
+        # DH-003: runs strictly after DH-002's dedup, on the already-deduped
+        # series -- by construction, any timestamp still repeated here must
+        # differ in value (an exact match would already have been dropped
+        # above), so this is a genuine data conflict, never a mechanical
+        # duplicate. Hard failure, no auto-resolution of any kind (not
+        # first-wins, not last-wins, not averaged) -- which of two
+        # contradictory readings is correct is a judgment call about the
+        # user's own data this platform must never make silently.
+        conflict_mask = series.index.duplicated(keep=False)
+        if conflict_mask.any():
+            conflicting_timestamp = series.index[conflict_mask][0]
+            distinct_values = (
+                series[series.index == conflicting_timestamp].unique().tolist()
+            )
+            raise DatasetSourceError(
+                f"conflicting values for timestamp {conflicting_timestamp.isoformat()}: "
+                + " vs ".join(str(v) for v in distinct_values)
+            )
+
+        return LoadedSeries(series=series, warnings=warnings)
 
 
 class ObjectStorageDatasetSource:
@@ -168,7 +234,7 @@ class ObjectStorageDatasetSource:
         self._s3_client = s3_client
         self._bucket = bucket
 
-    def load(self, reference: object) -> pd.Series:
+    def load(self, reference: object) -> LoadedSeries:
         if not isinstance(reference, dict) or "object_key" not in reference:
             raise DatasetSourceError(
                 f"reference must be a dict with an 'object_key' key, got {reference!r}"
@@ -241,7 +307,7 @@ class IngestionServiceDatasetSource:
         self._base_url = base_url
         self._tenant_id = tenant_id
 
-    def load(self, reference: object) -> pd.Series:
+    def load(self, reference: object) -> LoadedSeries:
         if not isinstance(reference, dict) or "source" not in reference:
             raise DatasetSourceError(
                 f"reference must be a dict with a 'source' key, got {reference!r}"
@@ -323,7 +389,7 @@ class CompositeDatasetSource:
         self._object_storage_source = object_storage_source
         self._ingestion_service_source = ingestion_service_source
 
-    def load(self, reference: object) -> pd.Series:
+    def load(self, reference: object) -> LoadedSeries:
         if isinstance(reference, dict) and "object_key" in reference:
             return self._object_storage_source.load(reference)
         # VS-023 fourth branch: added ahead of the final delegate below so

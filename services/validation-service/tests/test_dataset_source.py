@@ -29,8 +29,23 @@ non-tautological cross-tenant-leak guard (ticket's own Test acceptance
 criteria): a single `MockTransport` handler keyed on the inbound
 `X-Tenant-Id` header returns two genuinely different response bodies, and the
 test asserts on the actual loaded values differing per tenant, not just that
-"a series came back" -- it would fail if tenant forwarding were broken or
-silently dropped.
+"a series came back".
+
+DH-003 additions: a same-timestamp-different-value row (which by
+construction can only survive DH-002's exact-duplicate dedup if it differs in
+value) now raises `DatasetSourceError` naming the conflicting timestamp and
+all distinct values -- a hard failure, never an auto-resolution. Covers: two
+rows/different values, two rows/same value (DH-002 handles it, this check
+never fires), three rows/three distinct values (all three named).
+
+DH-001 additions: every `DatasetSource.load(...)` call site below now
+unpacks `.series` from the returned `LoadedSeries` (the ticket's binding
+"uniform across all four classes" contract change) -- assertions on the
+underlying series values/index are otherwise unchanged. New tests cover: an
+already-sorted input produces `warnings == []`; an out-of-order input
+produces the disclosed reordering warning while the output series is still
+correctly sorted (behavior unchanged); `CompositeDatasetSource` returns
+`LoadedSeries` (not a bare `pd.Series`) for all three reference shapes.
 """
 
 from __future__ import annotations
@@ -52,24 +67,28 @@ from app.dataset_source import (
     DatasetSourceError,
     IngestionServiceDatasetSource,
     InlineOrLocalFileDatasetSource,
+    LoadedSeries,
     ObjectStorageDatasetSource,
 )
 
 _TIMESTAMPS = ["2022-01-01T02:00:00", "2022-01-01T00:00:00", "2022-01-01T01:00:00"]
 _VALUES = [0.3, 0.1, 0.2]
 
+_SORTED_TIMESTAMPS = ["2022-01-01T00:00:00", "2022-01-01T01:00:00", "2022-01-01T02:00:00"]
+_SORTED_VALUES = [0.1, 0.2, 0.3]
+
 
 def test_inline_list_and_local_file_produce_equivalent_series(tmp_path) -> None:
     source = InlineOrLocalFileDatasetSource()
 
-    inline_series = source.load({"inline": list(zip(_TIMESTAMPS, _VALUES))})
+    inline_series = source.load({"inline": list(zip(_TIMESTAMPS, _VALUES))}).series
 
     csv_path = tmp_path / "series.csv"
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         for ts, val in zip(_TIMESTAMPS, _VALUES):
             writer.writerow([ts, val])
-    file_series = source.load({"path": str(csv_path)})
+    file_series = source.load({"path": str(csv_path)}).series
 
     assert isinstance(inline_series.index, pd.DatetimeIndex)
     assert isinstance(file_series.index, pd.DatetimeIndex)
@@ -82,8 +101,8 @@ def test_inline_list_and_local_file_produce_equivalent_series(tmp_path) -> None:
 def test_inline_dict_shape_matches_inline_list_shape() -> None:
     source = InlineOrLocalFileDatasetSource()
 
-    list_series = source.load({"inline": list(zip(_TIMESTAMPS, _VALUES))})
-    dict_series = source.load({"inline": {"timestamps": _TIMESTAMPS, "values": _VALUES}})
+    list_series = source.load({"inline": list(zip(_TIMESTAMPS, _VALUES))}).series
+    dict_series = source.load({"inline": {"timestamps": _TIMESTAMPS, "values": _VALUES}}).series
 
     pd.testing.assert_series_equal(list_series, dict_series, check_names=False)
 
@@ -127,6 +146,205 @@ def test_malformed_csv_non_numeric_value_raises(tmp_path) -> None:
 
     with pytest.raises(DatasetSourceError):
         source.load({"path": str(csv_path)})
+
+
+# --- DH-001: LoadedSeries / reordering-disclosure -----------------------------
+
+
+def test_already_sorted_input_produces_no_warning() -> None:
+    source = InlineOrLocalFileDatasetSource()
+
+    loaded = source.load({"inline": list(zip(_SORTED_TIMESTAMPS, _SORTED_VALUES))})
+
+    assert isinstance(loaded, LoadedSeries)
+    assert loaded.warnings == []
+    assert list(loaded.series.to_numpy()) == _SORTED_VALUES
+    assert loaded.series.index.is_monotonic_increasing
+
+
+def test_out_of_order_input_produces_reordering_warning_and_is_still_sorted() -> None:
+    source = InlineOrLocalFileDatasetSource()
+
+    loaded = source.load({"inline": list(zip(_TIMESTAMPS, _VALUES))})
+
+    assert isinstance(loaded, LoadedSeries)
+    assert loaded.warnings == [InlineOrLocalFileDatasetSource.REORDERED_ON_LOAD_WARNING]
+    # Behavior unchanged: the output series is still correctly sorted.
+    assert loaded.series.index.is_monotonic_increasing
+    assert list(loaded.series.to_numpy()) == _SORTED_VALUES
+
+
+def test_out_of_order_path_input_also_produces_reordering_warning(tmp_path) -> None:
+    csv_path = tmp_path / "unsorted.csv"
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        for ts, val in zip(_TIMESTAMPS, _VALUES):
+            writer.writerow([ts, val])
+    source = InlineOrLocalFileDatasetSource()
+
+    loaded = source.load({"path": str(csv_path)})
+
+    assert loaded.warnings == [InlineOrLocalFileDatasetSource.REORDERED_ON_LOAD_WARNING]
+    assert loaded.series.index.is_monotonic_increasing
+
+
+# --- DH-002: exact full-row duplicate detection/dedup ------------------------
+
+
+def test_one_exact_duplicate_pair_dropped_with_correct_count_warning() -> None:
+    source = InlineOrLocalFileDatasetSource()
+    # Duplicate inserted already in sorted position (not appended at the
+    # end) so this input stays monotonic and does not also trigger DH-001's
+    # reordering warning -- that combination is covered separately below.
+    timestamps = [
+        "2022-01-01T00:00:00",
+        "2022-01-01T01:00:00",
+        "2022-01-01T01:00:00",
+        "2022-01-01T02:00:00",
+    ]
+    values = [0.1, 0.2, 0.2, 0.3]
+
+    loaded = source.load({"inline": list(zip(timestamps, values))})
+
+    assert loaded.warnings == ["dropped 1 exact-duplicate rows before validation"]
+    assert len(loaded.series) == 3
+    assert list(loaded.series.to_numpy()) == _SORTED_VALUES
+
+
+def test_no_duplicates_produces_no_dedup_warning() -> None:
+    source = InlineOrLocalFileDatasetSource()
+
+    loaded = source.load({"inline": list(zip(_SORTED_TIMESTAMPS, _SORTED_VALUES))})
+
+    assert loaded.warnings == []
+    assert len(loaded.series) == 3
+
+
+def test_same_timestamp_different_value_is_not_dropped_as_a_duplicate() -> None:
+    # DH-002's dedup must NOT silently drop a same-timestamp-different-value
+    # row as if it were an exact duplicate -- it is DH-003's job to raise on
+    # it instead (see the DH-003 test block below), a hard failure, not a
+    # silent drop.
+    source = InlineOrLocalFileDatasetSource()
+    timestamps = _SORTED_TIMESTAMPS + ["2022-01-01T01:00:00"]
+    values = _SORTED_VALUES + [999.0]
+
+    with pytest.raises(DatasetSourceError) as exc_info:
+        source.load({"inline": list(zip(timestamps, values))})
+
+    assert "exact-duplicate" not in str(exc_info.value)
+
+
+def test_reordering_and_duplicate_warnings_coexist_in_order() -> None:
+    # Out-of-order fixture (_TIMESTAMPS/_VALUES) plus one exact duplicate row
+    # appended -- both DH-001's reordering warning and DH-002's dedup warning
+    # must be present, in the order DH-001/DH-002 ran.
+    source = InlineOrLocalFileDatasetSource()
+    timestamps = _TIMESTAMPS + ["2022-01-01T01:00:00"]
+    values = _VALUES + [0.2]
+
+    loaded = source.load({"inline": list(zip(timestamps, values))})
+
+    assert loaded.warnings == [
+        InlineOrLocalFileDatasetSource.REORDERED_ON_LOAD_WARNING,
+        "dropped 1 exact-duplicate rows before validation",
+    ]
+    assert list(loaded.series.to_numpy()) == _SORTED_VALUES
+
+
+# --- DH-003: same-timestamp-different-value conflict, hard failure --------
+
+
+def test_same_timestamp_different_values_raises_naming_both_values() -> None:
+    source = InlineOrLocalFileDatasetSource()
+    timestamps = _SORTED_TIMESTAMPS + ["2022-01-01T01:00:00"]
+    values = _SORTED_VALUES + [999.0]
+
+    with pytest.raises(DatasetSourceError) as exc_info:
+        source.load({"inline": list(zip(timestamps, values))})
+
+    message = str(exc_info.value)
+    assert "2022-01-01T01:00:00" in message
+    assert "0.2" in message
+    assert "999.0" in message
+
+
+def test_same_timestamp_same_value_does_not_raise_dh003_handled_by_dh002() -> None:
+    # Proves DH-002/DH-003 are correctly ordered: an exact duplicate never
+    # reaches this check.
+    source = InlineOrLocalFileDatasetSource()
+    timestamps = [
+        "2022-01-01T00:00:00",
+        "2022-01-01T01:00:00",
+        "2022-01-01T01:00:00",
+        "2022-01-01T02:00:00",
+    ]
+    values = [0.1, 0.2, 0.2, 0.3]
+
+    loaded = source.load({"inline": list(zip(timestamps, values))})
+
+    assert loaded.warnings == ["dropped 1 exact-duplicate rows before validation"]
+    assert len(loaded.series) == 3
+
+
+def test_three_distinct_values_for_one_timestamp_names_all_three() -> None:
+    source = InlineOrLocalFileDatasetSource()
+    timestamps = ["2022-01-01T00:00:00", "2022-01-01T00:00:00", "2022-01-01T00:00:00"]
+    values = [0.1, 0.2, 0.3]
+
+    with pytest.raises(DatasetSourceError) as exc_info:
+        source.load({"inline": list(zip(timestamps, values))})
+
+    message = str(exc_info.value)
+    assert "0.1" in message
+    assert "0.2" in message
+    assert "0.3" in message
+
+
+def test_dedup_runs_before_dh005_split_count_guardrail_post_dedup_count_triggers_422() -> None:
+    """Constructs a case where the pre-dedup row count would have produced
+    at least 1 split but the post-dedup count produces 0 -- proves
+    `runs.py`'s DH-005 guardrail (which calls `generate_splits` on
+    `LoadedSeries.series.index`) sees the post-dedup series, not the raw
+    input's row count.
+
+    3 distinct hourly timestamps, with the first two each duplicated once
+    (raw row count 5). With `train_window=3, test_window=1, purge_gap=0,
+    step=1`, the raw (pre-dedup) 5-row index yields >=1 split, but the
+    deduped 3-row index -- exactly `train_window + purge_gap + test_window`
+    rows, one short of what a 4th row would give -- yields 0 splits.
+    """
+    from naive_first_engine.splitting import generate_splits
+
+    # Duplicates inserted already in sorted position (not appended at the
+    # end) so this input stays monotonic and isolates the dedup effect from
+    # DH-001's reordering warning.
+    raw_timestamps = [
+        "2022-01-01T00:00:00",
+        "2022-01-01T00:00:00",
+        "2022-01-01T01:00:00",
+        "2022-01-01T01:00:00",
+        "2022-01-01T02:00:00",
+    ]
+    raw_values = [0.1, 0.1, 0.2, 0.2, 0.3]
+    train_window, test_window, purge_gap, step = 3, 1, 0, 1
+
+    source = InlineOrLocalFileDatasetSource()
+    loaded = source.load({"inline": list(zip(raw_timestamps, raw_values))})
+
+    assert loaded.warnings == ["dropped 2 exact-duplicate rows before validation"]
+    assert len(loaded.series) == 3
+
+    pre_dedup_index = pd.DatetimeIndex(pd.to_datetime(raw_timestamps)).sort_values()
+    pre_dedup_splits = len(
+        generate_splits(pre_dedup_index, train_window, test_window, step, purge_gap)
+    )
+    post_dedup_splits = len(
+        generate_splits(loaded.series.index, train_window, test_window, step, purge_gap)
+    )
+
+    assert pre_dedup_splits >= 1
+    assert post_dedup_splits == 0
 
 
 # --- ObjectStorageDatasetSource (VS-015) -------------------------------------
@@ -173,12 +391,18 @@ def test_object_storage_source_loads_well_formed_csv_object() -> None:
     client = _FakeS3Client({("naive-first", "processed/tenant-a/dataset-1.csv"): body})
     source = ObjectStorageDatasetSource(client, "naive-first")
 
-    series = source.load({"object_key": "processed/tenant-a/dataset-1.csv"})
+    loaded = source.load({"object_key": "processed/tenant-a/dataset-1.csv"})
 
+    assert isinstance(loaded, LoadedSeries)
+    series = loaded.series
     assert isinstance(series, pd.Series)
     assert isinstance(series.index, pd.DatetimeIndex)
     assert series.index.is_monotonic_increasing
     assert list(series.to_numpy()) == [0.1, 0.2, 0.3]
+    # Reordering-detection lives in the shared _build_series helper, which
+    # ObjectStorageDatasetSource reuses -- this out-of-order fixture must
+    # produce the same disclosed warning here too.
+    assert loaded.warnings == [InlineOrLocalFileDatasetSource.REORDERED_ON_LOAD_WARNING]
 
 
 def test_object_storage_source_matches_inline_source_for_equivalent_data() -> None:
@@ -186,10 +410,10 @@ def test_object_storage_source_matches_inline_source_for_equivalent_data() -> No
     client = _FakeS3Client({("naive-first", "processed/tenant-a/dataset-1.csv"): body})
     object_storage_series = ObjectStorageDatasetSource(client, "naive-first").load(
         {"object_key": "processed/tenant-a/dataset-1.csv"}
-    )
+    ).series
     inline_series = InlineOrLocalFileDatasetSource().load(
         {"inline": list(zip(_TIMESTAMPS, _VALUES))}
-    )
+    ).series
 
     pd.testing.assert_series_equal(object_storage_series, inline_series, check_names=False)
 
@@ -255,7 +479,7 @@ def test_ingestion_service_source_loads_well_formed_response() -> None:
     client = _ingestion_client(handler)
     source = IngestionServiceDatasetSource(client, "http://ingestion-service:8003", "tenant-a")
 
-    series = source.load(
+    loaded = source.load(
         {
             "source": "binance_price",
             "start": "2022-01-01T00:00:00",
@@ -264,6 +488,8 @@ def test_ingestion_service_source_loads_well_formed_response() -> None:
         }
     )
 
+    assert isinstance(loaded, LoadedSeries)
+    series = loaded.series
     assert isinstance(series, pd.Series)
     assert isinstance(series.index, pd.DatetimeIndex)
     assert series.index.is_monotonic_increasing
@@ -277,10 +503,10 @@ def test_ingestion_service_source_matches_inline_source_for_equivalent_data() ->
     client = _ingestion_client(handler)
     ingestion_series = IngestionServiceDatasetSource(
         client, "http://ingestion-service:8003", "tenant-a"
-    ).load({"source": "binance_price"})
+    ).load({"source": "binance_price"}).series
     inline_series = InlineOrLocalFileDatasetSource().load(
         {"inline": list(zip(_TIMESTAMPS, _VALUES))}
-    )
+    ).series
 
     pd.testing.assert_series_equal(ingestion_series, inline_series, check_names=False)
 
@@ -396,8 +622,8 @@ def test_ingestion_service_source_cross_tenant_isolation_by_actual_value() -> No
         client, "http://ingestion-service:8003", "tenant-b"
     )
 
-    tenant_a_series = tenant_a_source.load({"source": "binance_price_btcusdt_1h"})
-    tenant_b_series = tenant_b_source.load({"source": "binance_price_btcusdt_1h"})
+    tenant_a_series = tenant_a_source.load({"source": "binance_price_btcusdt_1h"}).series
+    tenant_b_series = tenant_b_source.load({"source": "binance_price_btcusdt_1h"}).series
 
     assert list(tenant_a_series.to_numpy()) == [0.1, 0.2, 0.3]
     assert list(tenant_b_series.to_numpy()) == [99.0, 98.0, 97.0]
@@ -421,12 +647,13 @@ def _composite(
 def test_composite_routes_inline_reference_to_inline_source() -> None:
     composite = _composite()
 
-    composite_series = composite.load({"inline": list(zip(_TIMESTAMPS, _VALUES))})
-    inline_series = InlineOrLocalFileDatasetSource().load(
+    composite_loaded = composite.load({"inline": list(zip(_TIMESTAMPS, _VALUES))})
+    inline_loaded = InlineOrLocalFileDatasetSource().load(
         {"inline": list(zip(_TIMESTAMPS, _VALUES))}
     )
 
-    pd.testing.assert_series_equal(composite_series, inline_series, check_names=False)
+    assert isinstance(composite_loaded, LoadedSeries)
+    pd.testing.assert_series_equal(composite_loaded.series, inline_loaded.series, check_names=False)
 
 
 def test_composite_routes_path_reference_to_inline_source(tmp_path) -> None:
@@ -437,19 +664,21 @@ def test_composite_routes_path_reference_to_inline_source(tmp_path) -> None:
             writer.writerow([ts, val])
     composite = _composite()
 
-    composite_series = composite.load({"path": str(csv_path)})
-    inline_series = InlineOrLocalFileDatasetSource().load({"path": str(csv_path)})
+    composite_loaded = composite.load({"path": str(csv_path)})
+    inline_loaded = InlineOrLocalFileDatasetSource().load({"path": str(csv_path)})
 
-    pd.testing.assert_series_equal(composite_series, inline_series, check_names=False)
+    assert isinstance(composite_loaded, LoadedSeries)
+    pd.testing.assert_series_equal(composite_loaded.series, inline_loaded.series, check_names=False)
 
 
 def test_composite_routes_object_key_reference_to_object_storage_source() -> None:
     body = _csv_body(list(zip(_TIMESTAMPS, [str(v) for v in _VALUES])))
     composite = _composite({("naive-first", "processed/tenant-a/dataset-1.csv"): body})
 
-    series = composite.load({"object_key": "processed/tenant-a/dataset-1.csv"})
+    loaded = composite.load({"object_key": "processed/tenant-a/dataset-1.csv"})
 
-    assert list(series.to_numpy()) == [0.1, 0.2, 0.3]
+    assert isinstance(loaded, LoadedSeries)
+    assert list(loaded.series.to_numpy()) == [0.1, 0.2, 0.3]
 
 
 @pytest.mark.parametrize(
@@ -483,9 +712,10 @@ def test_composite_routes_source_reference_to_ingestion_service_source() -> None
     )
     composite = _composite(ingestion_service_source=ingestion_source)
 
-    series = composite.load({"source": "binance_price"})
+    loaded = composite.load({"source": "binance_price"})
 
-    assert list(series.to_numpy()) == [0.1, 0.2, 0.3]
+    assert isinstance(loaded, LoadedSeries)
+    assert list(loaded.series.to_numpy()) == [0.1, 0.2, 0.3]
 
 
 def test_composite_without_ingestion_service_source_raises_on_source_reference() -> None:
@@ -545,9 +775,9 @@ def test_object_storage_source_reads_real_object_from_live_minio() -> None:
     try:
         source = ObjectStorageDatasetSource(client, _MINIO_TEST_BUCKET)
 
-        series = source.load({"object_key": object_key})
+        loaded = source.load({"object_key": object_key})
 
-        assert list(series.to_numpy()) == [0.1, 0.2, 0.3]
-        assert series.index.is_monotonic_increasing
+        assert list(loaded.series.to_numpy()) == [0.1, 0.2, 0.3]
+        assert loaded.series.index.is_monotonic_increasing
     finally:
         client.delete_object(Bucket=_MINIO_TEST_BUCKET, Key=object_key)

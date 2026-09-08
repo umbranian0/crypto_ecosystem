@@ -153,7 +153,9 @@ router = APIRouter()
 MAX_SPLIT_COUNT = 500
 
 
-def _persist_new_run(run_repository, tenant: TenantContext, request: RunRequest):
+def _persist_new_run(
+    run_repository, tenant: TenantContext, request: RunRequest, warnings: list[str]
+):
     return run_repository.create_run(
         tenant_id=tenant.tenant_id,
         dataset_id=request.dataset_id,
@@ -164,6 +166,7 @@ def _persist_new_run(run_repository, tenant: TenantContext, request: RunRequest)
             "test_window": request.test_window,
             "step": request.step,
         },
+        warnings=warnings,
     )
 
 
@@ -239,13 +242,19 @@ def create_run(
     # existing, tested contract), so this branch creates the run row itself,
     # one step later than before, then immediately marks it failed.
     try:
-        series = dataset_source.load(request.dataset_reference)
+        loaded = dataset_source.load(request.dataset_reference)
     except Exception as exc:
-        run = _persist_new_run(run_repository, tenant, request)
+        # DH-001: no LoadedSeries exists yet at this point (the exception
+        # fired before unpacking), so this branch's warnings are unchanged
+        # from today -- empty.
+        run = _persist_new_run(run_repository, tenant, request, warnings=[])
         run_repository.update_run_status(
             tenant.tenant_id, run.id, status="failed", failure_reason=str(exc)
         )
         return RunResponse(id=run.id, status="failed")
+
+    series = loaded.series
+    warnings = loaded.warnings
 
     # RSS-004 guardrail: call generate_splits directly (the same function
     # run_validation_protocol calls internally, same arguments) so this
@@ -263,6 +272,23 @@ def create_run(
             purge_gap=config.purge_gap,
         )
     )
+    # DH-005: same "compute once, branch twice" shape RSS-004 already
+    # established for the over-cap case -- reuses the already-computed
+    # split_count and series length, no second generate_splits call and no
+    # independently reimplemented split-count formula.
+    if split_count == 0:
+        required = config.train_window + config.purge_gap + config.test_window
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"This configuration produces no splits. This dataset has "
+                f"{len(series)} rows; train_window ({config.train_window}) + "
+                f"purge_gap ({config.purge_gap}) + test_window "
+                f"({config.test_window}) = {required} exceeds that, so 0 "
+                "splits would result. Reduce train_window/test_window or "
+                "choose a dataset with more rows."
+            ),
+        )
     if split_count > MAX_SPLIT_COUNT:
         raise HTTPException(
             status_code=422,
@@ -277,7 +303,9 @@ def create_run(
 
     # Created before the try below (VS-012) so a run.id always exists to
     # attach a "failed" status to, even if something inside the try raises.
-    run = _persist_new_run(run_repository, tenant, request)
+    # DH-001: the primary dataset load's own disclosed warnings (e.g. a
+    # reordering-on-load notice) are persisted on the run row itself.
+    run = _persist_new_run(run_repository, tenant, request, warnings=warnings)
 
     try:
         # VS-017: an optional third baseline, loaded the same way as the
@@ -290,7 +318,11 @@ def create_run(
         run_config = config
         client_baseline_key: str | None = None
         if request.client_prediction_reference is not None:
-            client_series = dataset_source.load(request.client_prediction_reference)
+            # DH-001: this optional third load's own warnings (if any) are
+            # not currently persisted anywhere -- the ticket's binding scope
+            # is the primary dataset_reference load only (Design section);
+            # not extended to this second call site here.
+            client_series = dataset_source.load(request.client_prediction_reference).series
             client_baseline = ClientPredictionBaseline(client_series)
             client_baseline_key = type(client_baseline).__name__
             run_config = dataclasses.replace(config, extra_baselines=[client_baseline])
@@ -437,4 +469,5 @@ def get_run(
         created_at=run.created_at,
         completed_at=run.completed_at,
         failure_reason=run.failure_reason,
+        warnings=run.warnings,
     )

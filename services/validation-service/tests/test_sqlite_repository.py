@@ -89,6 +89,38 @@ def test_get_run_returns_none_for_unknown_run_id(run_repo) -> None:
     assert run_repo.get_run("tenant-1", "no-such-run") is None
 
 
+def test_create_run_defaults_warnings_to_empty_list(run_repo) -> None:
+    created = run_repo.create_run(
+        tenant_id="tenant-1",
+        dataset_id="dataset-1",
+        horizon=1,
+        purge_gap_hours=4.0,
+        split_config=SPLIT_CONFIG,
+    )
+
+    assert created.warnings == []
+    assert run_repo.get_run("tenant-1", created.id).warnings == []
+
+
+def test_create_run_with_warnings_round_trips_through_get_run(run_repo) -> None:
+    warnings = [
+        "dataset rows were not in timestamp order and were sorted before validation"
+    ]
+    created = run_repo.create_run(
+        tenant_id="tenant-1",
+        dataset_id="dataset-1",
+        horizon=1,
+        purge_gap_hours=4.0,
+        split_config=SPLIT_CONFIG,
+        warnings=warnings,
+    )
+
+    assert created.warnings == warnings
+
+    fetched = run_repo.get_run("tenant-1", created.id)
+    assert fetched.warnings == warnings
+
+
 def test_update_run_status_updates_status_and_completion_fields(run_repo) -> None:
     created = run_repo.create_run(
         tenant_id="tenant-1",

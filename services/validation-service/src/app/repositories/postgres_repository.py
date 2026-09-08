@@ -82,6 +82,8 @@ class PostgresValidationRunRepository:
         horizon: int,
         purge_gap_hours: float,
         split_config: dict,
+        *,
+        warnings: list[str] | None = None,
     ) -> RunRecord:
         run = Run(
             id=uuid4().hex,
@@ -94,6 +96,7 @@ class PostgresValidationRunRepository:
             created_at=datetime.utcnow(),
             completed_at=None,
             failure_reason=None,
+            warnings=warnings if warnings is not None else [],
         )
         with _tenant_scoped_session(self._engine, tenant_id) as session:
             session.add(run)

@@ -50,7 +50,7 @@ unchanged from a plain `list[RunRecord]` and mirrors `get_splits`'s existing
 from __future__ import annotations
 
 import typing
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 
 
@@ -71,6 +71,12 @@ class RunRecord:
     created_at: datetime
     completed_at: datetime | None
     failure_reason: str | None
+    # DH-001: any non-fatal, disclosed condition `DatasetSource.load` raised
+    # for this run's dataset load (e.g. a reordering-on-load notice) --
+    # `[]` (default) whenever the load produced none. Defaulted so every
+    # pre-DH-001 direct `RunRecord(...)` construction across this codebase's
+    # own test suite keeps working unmodified.
+    warnings: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -128,6 +134,8 @@ class ValidationRunRepository(typing.Protocol):
         horizon: int,
         purge_gap_hours: float,
         split_config: dict,
+        *,
+        warnings: list[str] | None = None,
     ) -> RunRecord: ...
 
     def get_run(self, tenant_id: str, run_id: str) -> RunRecord | None: ...

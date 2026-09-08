@@ -152,6 +152,40 @@ def test_create_run_persists_and_is_retrievable(run_repo) -> None:
     assert fetched == created
 
 
+def test_create_run_defaults_warnings_to_empty_list(run_repo) -> None:
+    tenant = _unique_tenant("tenant")
+    created = run_repo.create_run(
+        tenant_id=tenant,
+        dataset_id="dataset-1",
+        horizon=1,
+        purge_gap_hours=4.0,
+        split_config=SPLIT_CONFIG,
+    )
+
+    assert created.warnings == []
+    assert run_repo.get_run(tenant, created.id).warnings == []
+
+
+def test_create_run_with_warnings_round_trips_through_get_run(run_repo) -> None:
+    tenant = _unique_tenant("tenant")
+    warnings = [
+        "dataset rows were not in timestamp order and were sorted before validation"
+    ]
+    created = run_repo.create_run(
+        tenant_id=tenant,
+        dataset_id="dataset-1",
+        horizon=1,
+        purge_gap_hours=4.0,
+        split_config=SPLIT_CONFIG,
+        warnings=warnings,
+    )
+
+    assert created.warnings == warnings
+
+    fetched = run_repo.get_run(tenant, created.id)
+    assert fetched.warnings == warnings
+
+
 def test_update_run_status_updates_status_and_completion_fields(run_repo) -> None:
     tenant = _unique_tenant("tenant")
     created = run_repo.create_run(

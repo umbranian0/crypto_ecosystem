@@ -305,9 +305,9 @@ Source: docs/sprints/sprint-30.md, docs/product/backlog-dataset-helpers.md.
 
 | Ticket | Story | Depends on | Status |
 |---|---|---|---|
-| [DH-005](DH-005.md) | Reject a configuration that produces zero splits | none | in-progress |
+| [DH-005](DH-005.md) | Reject a configuration that produces zero splits | none | done |
 | [DH-001](DH-001.md) | Disclose the sort-on-load that already happens silently | DH-005 (file-order only) | in-progress |
-| [DH-002](DH-002.md) | Detect and disclose exact full-row duplicate timestamps | DH-001 | in-progress |
+| [DH-002](DH-002.md) | Detect and disclose exact full-row duplicate timestamps | DH-001 | done |
 | [DH-003](DH-003.md) | Detect and block same-timestamp-different-value conflicts | DH-002 | in-progress |
 
 See docs/sprints/sprint-30.md for the full scope decision and file-overlap risk note. DH-008 (below,

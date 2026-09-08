@@ -341,6 +341,13 @@ plus its per-split results, both fetched from `gateway-api` and parsed via the s
 - `not_found.html`/`error.html` are generic, reusable templates (not detail-specific) -- any future
   route needing the same two failure states (e.g. DASH-006) reuses them rather than duplicating a
   near-identical template.
+- **Warnings rendering (DH-001)**: `RunDetailResponse.warnings` (a `list[str]`, default `[]`, populated
+  from `validation-service`'s persisted `runs.warnings` column -- e.g. the reordering-on-load notice
+  `InlineOrLocalFileDatasetSource`/`ObjectStorageDatasetSource` now disclose) renders as a `<ul
+  class="form-status">` list right under the run's status table when non-empty, reusing the same
+  `.form-status` CSS class already used for the page's other non-fatal, disclosed conditions (e.g. the
+  "N of M splits shown" truncation notice, DASH-119) rather than the `.error` styling -- never rendered
+  as an error, and absent entirely (no empty `<ul>`) when `warnings` is `[]`.
 
 ## Submit a run (DASH-006)
 
@@ -422,6 +429,29 @@ and (b) a Python-side cross-check that the formula's own closed form matches
 `naive_first_engine.splitting.generate_splits`'s real output for a synthetic, gapless hourly index
 (added as a dev-only dependency on `naive_first_engine`, used only by this test, never imported by
 `app/` code) -- guarding against formula drift between this client estimate and RSS-004's server check.
+
+**Zero-split rendered state (DH-005)**: when the live estimate is exactly `0`, `computeEstimatedSplits()`
+renders a distinct message ("This configuration would produce no splits -- widen the dataset's range,
+reduce train/test window, or reduce purge gap.") styled with the same `form-status-warn` class already
+used for the over-cap case, replacing the pre-DH-005 wording ("Approximately 0 split(s) estimated") that
+read as a valid-but-boring result. This is still purely informational -- `validation-service`'s
+`create_run` (RSS-004/DH-005) remains the actual server-side guardrail against a zero-split run.
+
+**Horizon-field sampling-interval hint (DH-008, ADR-0007)**: the Horizon `data-tooltip` now states
+that `horizon` is a count of the selected dataset's own sampling steps, not a fixed hour/day unit
+(per ADR-0007 finding (a): `horizon` is dataset-sampling-interval-relative, confirmed against the
+one real connector, `binance_price_btcusdt_1h`). A new `#horizon-unit-hint` element, populated by
+`updateHorizonUnitHint()` in the same inline `<script>` block and reusing `currentRowCount()`'s
+existing mode detection (RSS-001/RSS-002's pattern -- no new client-side data-fetch mechanism), adds
+the specifics once a dataset reference is chosen: for a stored source, it parses the sampling
+interval off `dataset.source`'s existing naming convention (the `_<N>h` suffix; today only
+`binance_price_btcusdt_1h` matches, so the hint reads "sampled hourly") and restates what `horizon`
+means in that unit; for a local file path or inline payload (interval not knowable client-side), it
+states plainly that the interval is whatever the submitted data's own timestamp spacing turns out to
+be -- no fabricated interval. No dataset reference selected yet leaves the hint empty, the same
+no-selection precedent RSS-001/RSS-002 already established. The hint always includes a plain-text
+pointer to `/runs/horizon-summary`, reciprocal to that page's own existing link back to ADR-0007.
+This is presentation-only: no backend field, no new endpoint, no change to `POST /runs`'s payload.
 
 ## Runs list (DASH-005)
 

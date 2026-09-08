@@ -77,6 +77,42 @@ def test_dataset_source_failure_persists_failed_status_and_does_not_publish(tmp_
     assert test_publisher.published == []
 
 
+def test_dh003_conflicting_timestamp_values_fails_run_with_conflict_detail(tmp_path, monkeypatch):
+    # DH-003: two rows share a timestamp but disagree on value -- a hard
+    # failure through the same DatasetSourceError -> "failed" run path as any
+    # other malformed-reference case, never an auto-resolution.
+    client, test_publisher, cleanup = _client_with_test_publisher(tmp_path, monkeypatch)
+
+    dataset = _inline_dataset()
+    dataset["inline"]["timestamps"].append(dataset["inline"]["timestamps"][3])
+    dataset["inline"]["values"].append(dataset["inline"]["values"][3] + 999.0)
+
+    payload = {
+        "dataset_id": "dataset-1",
+        "dataset_reference": dataset,
+        **VALID_CONFIG,
+    }
+
+    try:
+        response = client.post("/runs", json=payload, headers={"X-Tenant-Id": "tenant-1"})
+    finally:
+        cleanup()
+
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["status"] == "failed"
+
+    detail = client.get("/runs/" + body["id"], headers={"X-Tenant-Id": "tenant-1"})
+    assert detail.status_code == 200, detail.text
+    detail_body = detail.json()
+    assert detail_body["status"] == "failed"
+    assert "conflicting values" in detail_body["failure_reason"]
+    assert "3.0" in detail_body["failure_reason"]
+    assert "1002.0" in detail_body["failure_reason"]
+
+    assert test_publisher.published == []
+
+
 def test_dataset_source_failure_second_variant_non_numeric_value_also_fails_cleanly(tmp_path, monkeypatch):
     # A second, distinct DatasetSource failure mode (non-numeric value in an
     # otherwise well-shaped inline payload) rather than a second

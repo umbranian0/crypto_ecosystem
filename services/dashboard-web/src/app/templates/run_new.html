@@ -97,11 +97,12 @@ signal.</p>
     <label for="horizon">
         Horizon
         <span class="field-tooltip" tabindex="0"
-              data-tooltip="How many steps ahead to validate against, e.g. 1 for one-step-ahead. Must be at least 1.">?</span>
+              data-tooltip="A count of the selected dataset's own sampling steps, not a fixed hour/day unit -- e.g. horizon: 1 means one step ahead in whatever spacing that dataset's rows use. Must be at least 1. See the hint below once you pick a dataset reference for that dataset's specific unit.">?</span>
     </label>
     <input type="number" id="horizon" name="horizon" min="1" required
            placeholder="1"
            value="{{ values.horizon if values else '' }}">
+    <p class="field-hint" id="horizon-unit-hint" aria-live="polite"></p>
 
     <label for="purge_gap_hours">
         Purge gap (hours)
@@ -157,6 +158,61 @@ signal.</p>
     var trainWindow = document.getElementById("train_window");
     var testWindow = document.getElementById("test_window");
     var step = document.getElementById("step");
+    var horizonUnitHint = document.getElementById("horizon-unit-hint");
+
+    // DH-008: reciprocal pointer to FHS-002's fixed-days view -- kept as one
+    // clause so a reader who lands here first still learns that page assumes
+    // hourly sampling (horizon_summary.html links back to ADR-0007 the other way).
+    var HORIZON_SUMMARY_POINTER = "See /runs/horizon-summary for a fixed-days " +
+        "view of horizon, which assumes hourly sampling (per ADR-0007) regardless " +
+        "of this dataset's actual interval.";
+
+    // Only the naming convention ADR-0007 finding (a)/(c) already documents --
+    // today's one connector (binance_price_btcusdt_1h) suffixes its source name
+    // with "_<N>h". No new backend lookup is added for this; an unrecognized
+    // name just falls back to the generic, still-true statement below.
+    function parseSamplingIntervalHours(sourceName) {
+        var match = /_([0-9]+)h$/.exec(sourceName || "");
+        if (!match) {
+            return null;
+        }
+        var hours = Number(match[1]);
+        return isFinite(hours) && hours > 0 ? hours : null;
+    }
+
+    function updateHorizonUnitHint() {
+        if (!horizonUnitHint) {
+            return;
+        }
+        var info = currentRowCount();
+        if (info.mode === "none") {
+            horizonUnitHint.textContent = "";
+            return;
+        }
+        if (info.mode === "source") {
+            var selected = source ? source.options[source.selectedIndex] : null;
+            var sourceName = selected ? selected.value : "";
+            var hours = parseSamplingIntervalHours(sourceName);
+            var sentence;
+            if (hours === 1) {
+                sentence = "This dataset (\"" + sourceName + "\") is sampled hourly, so " +
+                    "horizon: 24 here would mean 24 hours ahead, not 24 days.";
+            } else if (hours) {
+                sentence = "This dataset (\"" + sourceName + "\") is sampled every " + hours +
+                    " hours, so horizon here counts steps of that size, not a fixed hour/day unit.";
+            } else {
+                sentence = "This dataset's (\"" + sourceName + "\") sampling interval isn't " +
+                    "recognized from its name -- horizon is still a count of its own sampling " +
+                    "steps, not a fixed hour/day unit.";
+            }
+            horizonUnitHint.textContent = sentence + " " + HORIZON_SUMMARY_POINTER;
+            return;
+        }
+        // path or inline: interval isn't knowable client-side.
+        horizonUnitHint.textContent = "The sampling interval here is whatever the submitted " +
+            "data's own timestamp spacing turns out to be -- horizon counts steps of that " +
+            "spacing, not a fixed hour/day unit. " + HORIZON_SUMMARY_POINTER;
+    }
 
     function updateDatasetSourceSummary() {
         if (!source || !sourceSummary) {
@@ -264,7 +320,11 @@ signal.</p>
         var sourceLabel = info.mode === "inline"
             ? "the inline payload"
             : "the whole selected source (not the post-filter row count)";
-        if (estimate > MAX_SPLITS) {
+        if (estimate === 0) {
+            estimatedSplits.textContent = "This configuration would produce no splits -- widen the " +
+                "dataset's range, reduce train/test window, or reduce purge gap.";
+            estimatedSplits.classList.add("form-status-warn");
+        } else if (estimate > MAX_SPLITS) {
             estimatedSplits.textContent = "Approximately " + estimate + " split(s) estimated for " +
                 sourceLabel + " -- this exceeds the " + MAX_SPLITS + "-split maximum per run. " +
                 "Increase 'step', narrow the date range, and/or reduce train/test window before submitting.";
@@ -325,13 +385,16 @@ signal.</p>
 
     path.addEventListener("input", checkReference);
     path.addEventListener("input", computeEstimatedSplits);
+    path.addEventListener("input", updateHorizonUnitHint);
     inline.addEventListener("input", checkReference);
     inline.addEventListener("input", computeEstimatedSplits);
+    inline.addEventListener("input", updateHorizonUnitHint);
     if (source) {
         source.addEventListener("change", function () {
             checkReference();
             updateDatasetSourceSummary();
             computeEstimatedSplits();
+            updateHorizonUnitHint();
         });
     }
     if (referenceStart) {
@@ -361,6 +424,7 @@ signal.</p>
 
     updateDatasetSourceSummary();
     computeEstimatedSplits();
+    updateHorizonUnitHint();
 })();
 </script>
 {% endblock %}

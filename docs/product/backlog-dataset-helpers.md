@@ -116,28 +116,38 @@ currently catches:
 
 ### Epic A — Dataset repair/validation helpers
 
-### DH-001 — Disclose the sort-on-load that already happens silently [Must]
+### DH-001 — Disclose the sort-on-load that already happens silently [Must] — Done (Sprint 30)
 **As** a user submitting a run against a local file path or inline payload **I want** to be told when
 my dataset's rows were reordered by timestamp before validation ran **so that** an out-of-order
 source (which can indicate a wrong file, a corrupted export, or an upstream bug) isn't silently
 masked by behavior that already exists today with no visibility.
 
 Acceptance criteria:
-- [ ] `InlineOrLocalFileDatasetSource._build_series` (and `ObjectStorageDatasetSource`, which reuses
+- [x] `InlineOrLocalFileDatasetSource._build_series` (and `ObjectStorageDatasetSource`, which reuses
   it) records whether `.sort_index()` actually changed row order (compare the index before/after, or
   check `is_monotonic_increasing` before sorting) and returns that fact alongside the built `Series` —
   a small, additive return-shape change (e.g. a `was_reordered: bool` field on a thin wrapper/namedtuple),
   not a new parameter that changes the existing `DatasetSource.load(reference) -> pd.Series` contract
   for every other caller; exact shape is a Tech Lead call, but no existing call site may be forced to
   start handling a two-tuple it doesn't care about.
-- [ ] `POST /runs`'s response/run-detail record surfaces this as a plain fact when true (e.g. a
+- [x] `POST /runs`'s response/run-detail record surfaces this as a plain fact when true (e.g. a
   `warnings: ["dataset rows were not in timestamp order and were sorted before validation"]` field on
   `RunDetailResponse` or equivalent) — never silently dropped, never escalated to a hard failure (a
   reordered-but-otherwise-valid dataset is still a valid dataset to validate).
-- [ ] `dashboard-web`'s run-detail page renders this warning when present, in the same visual register
+- [x] `dashboard-web`'s run-detail page renders this warning when present, in the same visual register
   already used for other non-fatal, disclosed conditions on that page (not styled as an error).
-- [ ] No behavior change to the actual sort itself — this story is disclosure-only, not a new decision
+- [x] No behavior change to the actual sort itself — this story is disclosure-only, not a new decision
   about whether to sort.
+
+**Implemented (Sprint 30, ticket DH-001)**: shipped as `LoadedSeries` (a new frozen dataclass in
+`dataset_source.py`, `{series: pd.Series, warnings: list[str]}`), applied uniformly across all four
+`DatasetSource` classes (`InlineOrLocalFileDatasetSource`, `ObjectStorageDatasetSource`,
+`IngestionServiceDatasetSource`, `CompositeDatasetSource`) rather than a two-tuple only some callers
+learn to unpack — see `services/validation-service/README.md`'s DH-001 section for the full contract
+and persistence-chain detail. `RunDetailResponse.warnings` defaults to `[]` (never required) so
+gateway-api's/dashboard-web's own `RunDetailResponse(**response.json())` reconstruction sites stay
+safe against a validation-service response that temporarily omits the field during a rolling deploy.
+This same `LoadedSeries` shape is binding on DH-002/DH-003, which extend it further.
 
 Leakage/honesty check: sorting by timestamp before validation is not a leakage risk in itself (the
 splitter needs a sorted index and always assumed one); the risk this story closes is a different one —
@@ -147,26 +157,26 @@ New scope vs. extension: extends `validation-service` (`dataset_source.py` modul
 owns exactly this parsing logic) — not new module scope.
 Depends on: none
 
-### DH-002 — Detect and disclose exact full-row duplicate timestamps (local-file/inline/object-storage only) [Should]
+### DH-002 — Detect and disclose exact full-row duplicate timestamps (local-file/inline/object-storage only) [Should] — Done (Sprint 30)
 **As** a user submitting a run against a local file, inline payload, or object-storage reference **I
 want** exact duplicate `(timestamp, value)` rows detected and removed before validation, with the
 count and an example shown to me **so that** an accidental double-paste or a duplicated export line
 doesn't silently inflate my row count or distort window math, without me having to notice it myself.
 
 Acceptance criteria:
-- [ ] `_build_series` (or a helper it calls) detects rows that are identical on both timestamp and
+- [x] `_build_series` (or a helper it calls) detects rows that are identical on both timestamp and
   value, drops all but the first occurrence, and reports the number of rows dropped — this is the one
   auto-fix in this backlog classified as mechanically safe enough to apply automatically: a byte-identical
   repeated row carries no additional information, and dropping it cannot change what the surviving
   data says.
-- [ ] The drop is disclosed the same way as DH-001's warning (additive field on the load result,
+- [x] The drop is disclosed the same way as DH-001's warning (additive field on the load result,
   surfaced on `RunDetailResponse` and the run-detail page) — e.g. `"dropped 3 exact-duplicate rows
   before validation"` — never a silent count-only log line invisible to the user.
-- [ ] Explicitly scoped to `InlineOrLocalFileDatasetSource`/`ObjectStorageDatasetSource` only — stored
+- [x] Explicitly scoped to `InlineOrLocalFileDatasetSource`/`ObjectStorageDatasetSource` only — stored
   ingestion-service datasets already cannot have this problem (see finding #1 above; the DB's
   `(tenant_id, source, event_time)` primary key already prevents an exact duplicate write), so no
   redundant check is added to `IngestionServiceDatasetSource`.
-- [ ] A dataset that becomes too short to run *after* dedup (e.g. drops below `train_window +
+- [x] A dataset that becomes too short to run *after* dedup (e.g. drops below `train_window +
   purge_gap + test_window`) surfaces the existing "0 splits" condition (DH-005) using the
   post-dedup row count, not the original — the guardrail must see the same series the protocol
   actually runs against.
@@ -178,27 +188,33 @@ and now appear once" is made.
 New scope vs. extension: extends `validation-service`'s existing `dataset_source.py` module.
 Depends on: DH-001 (shares the same warnings-plumbing change to `RunDetailResponse`)
 
-### DH-003 — Detect and block same-timestamp-different-value conflicts, never auto-resolved [Must]
+### DH-003 — Detect and block same-timestamp-different-value conflicts, never auto-resolved [Must] — Done (Sprint 30)
 **As** a user submitting a run against a local file, inline payload, or object-storage reference **I
 want** two rows sharing a timestamp but disagreeing on value to stop my submission with a clear error
 naming both conflicting values **so that** the platform never silently picks one of two contradictory
 readings on my behalf.
 
 Acceptance criteria:
-- [ ] After DH-002's exact-duplicate dedup runs, `_build_series` checks whether any timestamp still
+- [x] After DH-002's exact-duplicate dedup runs, `_build_series` checks whether any timestamp still
   appears more than once (`index.duplicated()` on the deduped series) — if so, raises
   `DatasetSourceError` (the existing exception type every malformed-input case in this module already
   raises) naming the conflicting timestamp and both differing values, not just a row count.
-- [ ] This is a **hard failure**, not a warning and not an auto-resolution (not "keep the first," not
+- [x] This is a **hard failure**, not a warning and not an auto-resolution (not "keep the first," not
   "average them," not "keep the last") — which of two contradictory readings for the same instant is
   correct is a substantive judgment call about the user's own data, not a mechanical one this platform
   should make silently.
-- [ ] `POST /runs` surfaces this the same way any other `DatasetSource.load` failure already surfaces
+- [x] `POST /runs` surfaces this the same way any other `DatasetSource.load` failure already surfaces
   today (`status="failed"`, `failure_reason` naming the conflict) — no new error-handling path
   invented, reusing `create_run`'s existing `except Exception` branch around `dataset_source.load`.
-- [ ] A test covers: two rows, same timestamp, different values → `DatasetSourceError` naming both
+- [x] A test covers: two rows, same timestamp, different values → `DatasetSourceError` naming both
   values; two rows, same timestamp, same value → DH-002's dedup handles it silently-but-disclosed
   instead, never reaching this check.
+
+**Implemented (Sprint 30, ticket DH-003)**: see `services/validation-service/README.md`'s DH-003
+section for the full contract. Message format:
+`"conflicting values for timestamp {isoformat}: {v1} vs {v2} vs ..."`, naming all distinct values
+found for the timestamp, not just the first two. No changes were needed in `runs.py` — its existing
+`except Exception` branch around `dataset_source.load` already turns this into `status="failed"`.
 
 Leakage/honesty check: this story's entire purpose is refusing to make a judgment call that would
 otherwise be invisible to the user — the platform must never look like it "handled" a genuine data
@@ -241,7 +257,7 @@ Depends on: none
 
 ### Epic B — Horizon/parameter suggestion helpers
 
-### DH-005 — Reject (or flag) a configuration that would produce zero splits [Must]
+### DH-005 — Reject (or flag) a configuration that would produce zero splits [Must] — Done (Sprint 30)
 **As** `validation-service` (the same service RSS-004 already made the sole enforcement point for
 split-count sanity) **I want** to also reject a configuration that would compute exactly `0` splits,
 the same way RSS-004 already rejects one that computes too many **so that** a run never silently
@@ -249,19 +265,19 @@ completes with a "completed" status and zero actual results, indistinguishable f
 (if uninteresting) zero-signal finding.
 
 Acceptance criteria:
-- [ ] `create_run`'s existing `split_count = len(generate_splits(...))` computation (already present
+- [x] `create_run`'s existing `split_count = len(generate_splits(...))` computation (already present
   for RSS-004) gains a second condition immediately alongside the existing `> MAX_SPLIT_COUNT` check:
   `if split_count == 0: raise HTTPException(422, ...)` — reusing the exact same already-computed
   `split_count` value, not a second, independent computation that could disagree with the first.
-- [ ] The `422` message states plainly that this configuration produces no splits and suggests the
+- [x] The `422` message states plainly that this configuration produces no splits and suggests the
   concrete cause where derivable (`train_window + purge_gap_hours + test_window` compared against the
   dataset's actual row count) — e.g. "this dataset has 340 rows; train_window (360) + purge_gap (0) +
   test_window (40) = 400 exceeds that, so 0 splits would result. Reduce train_window/test_window or
   choose a dataset with more rows."
-- [ ] This is additive to RSS-004's existing guardrail, not a rewrite of it — a test proves both
+- [x] This is additive to RSS-004's existing guardrail, not a rewrite of it — a test proves both
   conditions still fire independently and correctly at their own boundaries (`0` splits → `422`;
   `1..MAX_SPLIT_COUNT` splits → accepted; `MAX_SPLIT_COUNT + 1` → `422` via the pre-existing check).
-- [ ] `dashboard-web`'s `computeEstimatedSplits()` (RSS-002) is extended with one more rendered state:
+- [x] `dashboard-web`'s `computeEstimatedSplits()` (RSS-002) is extended with one more rendered state:
   when the live estimate is exactly `0`, render a distinct message ("this configuration would produce
   no splits — widen the dataset's range, reduce train/test window, or reduce purge gap") in the same
   `form-status-warn` styling already used for the over-cap case, instead of the current "Approximately
@@ -345,7 +361,7 @@ input to the same formula, not what the formula does or claims.
 New scope vs. extension: extension of DH-006, contingent on RSS-003.
 Depends on: DH-006, RSS-003
 
-### DH-008 — Surface the selected dataset's sampling interval and horizon-unit meaning on the run-submission form [Must]
+### DH-008 — Surface the selected dataset's sampling interval and horizon-unit meaning on the run-submission form [Must] — Done (Sprint 30)
 **As** a user filling in the Horizon field on `run_new.html` **I want** an inline hint telling me the
 selected dataset's sampling interval and what my `horizon` number means in that dataset's own units
 **so that** I don't submit a run believing "24" means days when the dataset's own frequency makes it
@@ -353,7 +369,7 @@ hours (or vice versa), and so that a later look at the Forecast Horizon Summary'
 picker doesn't leave me unable to reconcile the two screens without reading source code or an ADR.
 
 Acceptance criteria:
-- [ ] When a stored (`ingestion-service`) dataset is selected via `dataset_reference_source`, a
+- [x] When a stored (`ingestion-service`) dataset is selected via `dataset_reference_source`, a
   `field-hint`-styled element next to the Horizon label states the dataset's known sampling interval
   and restates the Horizon field's meaning in that unit — e.g. "This dataset (`binance_price_btcusdt_1h`)
   is sampled hourly, so `horizon: 24` here means 24 hours ahead, not 24 days." The interval is read
@@ -362,23 +378,23 @@ Acceptance criteria:
   `RunSummaryResponse`/the datasets list response, this hint switches to reading it directly rather
   than parsing the source name — a Tech Lead call on which is cheaper given what ships first, not
   re-litigated here).
-- [ ] The Horizon field's existing `data-tooltip` text is updated to state plainly, regardless of
+- [x] The Horizon field's existing `data-tooltip` text is updated to state plainly, regardless of
   whether a stored dataset is selected, that `horizon` is a count of the dataset's own sampling steps,
   not a fixed hour/day unit — e.g. appending "This is a count of the dataset's own sampling steps, not
   a fixed hour or day unit — see the hint below once you've selected a dataset." This applies even for
   the local-file-path/inline-payload modes, where the sampling interval isn't known client-side, so the
   hint element for those two modes states plainly that the interval is whatever the submitted data's own
   timestamp spacing turns out to be, rather than showing a false silence.
-- [ ] The hint text includes a plain-text pointer to the Forecast Horizon Summary page (`/runs/horizon-summary`)
+- [x] The hint text includes a plain-text pointer to the Forecast Horizon Summary page (`/runs/horizon-summary`)
   and states in one clause that that page presents horizon in fixed days assuming hourly sampling — the
   same reciprocal disclosure `horizon_summary.html` already gives in the other direction via its ADR-0007
   link, closing the gap in both directions rather than one.
-- [ ] No new backend field, no new endpoint, no change to `POST /runs`'s accepted payload or to
+- [x] No new backend field, no new endpoint, no change to `POST /runs`'s accepted payload or to
   `naive_first_engine`/`validation-service`'s handling of `horizon` — this is presentation-only, reading
   data the form already has (`dataset.source`, `data-row-count`, etc., per RSS-001) or documented in
   ADR-0007, exactly as ADR-0007 itself scoped `horizon_summary.html`'s own build ("no schema/contract
   field changes... interprets it at render time").
-- [ ] Copy avoids any claim about which unit or horizon length is "better" or "recommended" — this is a
+- [x] Copy avoids any claim about which unit or horizon length is "better" or "recommended" — this is a
   units-clarity fix only, not a suggestion helper (that's DH-006's job, and DH-092 explicitly declines
   the "pick a horizon for the user" version of this idea).
 

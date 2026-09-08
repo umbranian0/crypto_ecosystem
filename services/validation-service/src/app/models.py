@@ -77,6 +77,12 @@ class Run(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     # VS-012 AC1: a stored error message/reason, nullable until a run fails.
     failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # DH-001: any non-fatal, disclosed condition the dataset load produced
+    # for this run (e.g. a reordering-on-load notice) -- JSON column, same
+    # column-type precedent as SplitResult.client_baseline_results below.
+    # nullable=False/server_default='[]' (migrations/versions/
+    # 0008_add_runs_warnings_column.py) so existing rows backfill cleanly.
+    warnings: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
 
 
 class SplitResult(Base):
