@@ -254,6 +254,7 @@ from app.charting import (
     verdict_category_and_css_slug,
 )
 from app.dependencies.downstream import DownstreamHeadersDep, GatewayApiUrlDep
+from app.dependencies.http_client import DOWNSTREAM_HTTP_TIMEOUT_SECONDS
 from app.main import templates
 
 router = APIRouter()
@@ -448,7 +449,7 @@ def runs_list(
     if offset is not None:
         params["offset"] = offset
 
-    with httpx.Client(base_url=base_url) as client:
+    with httpx.Client(base_url=base_url, timeout=DOWNSTREAM_HTTP_TIMEOUT_SECONDS) as client:
         response, transport_status = _call_downstream(
             client.get, "/runs", headers=headers, params=params
         )
@@ -475,7 +476,7 @@ def datasets_list(request: Request, headers: DownstreamHeadersDep, base_url: Gat
     `runs_list`/before `run_new_form` for readability; its own path does not
     collide with any `/runs/*` pattern either way.
     """
-    with httpx.Client(base_url=base_url) as client:
+    with httpx.Client(base_url=base_url, timeout=DOWNSTREAM_HTTP_TIMEOUT_SECONDS) as client:
         datasets = _fetch_ingestion_datasets(client, headers)
 
     return templates.TemplateResponse(request, "datasets.html", {"datasets": datasets})
@@ -508,7 +509,7 @@ def runs_horizon_summary(
 
     horizon = _horizon_for_days(days)
 
-    with httpx.Client(base_url=base_url) as client:
+    with httpx.Client(base_url=base_url, timeout=DOWNSTREAM_HTTP_TIMEOUT_SECONDS) as client:
         response, transport_status = _call_downstream(client.get, "/runs", headers=headers)
         if transport_status is not None:
             return _render_error_for_status(request, transport_status)
@@ -553,7 +554,7 @@ def run_new_form(
     already uses for this -- no second selection mechanism invented. A GET
     with no such param behaves exactly as before (`values` stays `None`).
     """
-    with httpx.Client(base_url=base_url) as client:
+    with httpx.Client(base_url=base_url, timeout=DOWNSTREAM_HTTP_TIMEOUT_SECONDS) as client:
         datasets = _fetch_ingestion_datasets(client, headers)
 
     values = (
@@ -620,7 +621,7 @@ def run_new_submit(
     # RSS-004's too-many-splits guardrail). One client is opened up front so
     # every error path (including ones before the downstream `/runs` call)
     # can re-fetch without duplicating the `with httpx.Client(...)` block.
-    with httpx.Client(base_url=base_url) as client:
+    with httpx.Client(base_url=base_url, timeout=DOWNSTREAM_HTTP_TIMEOUT_SECONDS) as client:
         if dataset_reference_path.strip():
             dataset_reference: dict = {"path": dataset_reference_path.strip()}
         elif dataset_reference_inline.strip():
@@ -705,7 +706,7 @@ def runs_trend(
     this file already fetches -- no new backend endpoint (this ticket's
     Analysis section).
     """
-    with httpx.Client(base_url=base_url) as client:
+    with httpx.Client(base_url=base_url, timeout=DOWNSTREAM_HTTP_TIMEOUT_SECONDS) as client:
         response, transport_status = _call_downstream(client.get, "/runs", headers=headers)
         if transport_status is not None:
             return _render_error_for_status(request, transport_status)
@@ -771,7 +772,7 @@ def run_detail(
     base_url: GatewayApiUrlDep,
     metric: str = "mae",
 ):
-    with httpx.Client(base_url=base_url) as client:
+    with httpx.Client(base_url=base_url, timeout=DOWNSTREAM_HTTP_TIMEOUT_SECONDS) as client:
         detail_response, transport_status = _call_downstream(
             client.get, f"/runs/{run_id}", headers=headers
         )

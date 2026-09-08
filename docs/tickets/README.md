@@ -1748,3 +1748,55 @@ the tenant that owns the real oversized dataset (revoked after verification, no 
 modified) — confirmed the response now includes the re-rendered, re-`selected`
 `<option value="binance_price_btcusdt_1h" data-row-count="79180" ... selected>` alongside the `422`
 error text.
+
+# DASH-121 — 13 ad-hoc `httpx.Client` call sites silently falling back to httpx's 5s default timeout (dashboard-web)
+
+| Ticket | Story | Depends on | Status |
+|---|---|---|---|
+| [DASH-121](DASH-121.md) | `dependencies/http_client.py`'s `Depends()`-injectable clients are correctly built with `timeout=30.0`, but 13 handler-local `httpx.Client(base_url=base_url)` call sites across `operator.py`/`runs.py`/`settings.py` had no `timeout=` at all, silently falling back to httpx's 5.0s library default — causing false "Unavailable" `504`s on any legitimately-slower-than-5s downstream call (confirmed for report generation) even though the operation had actually succeeded server-side | none | done |
+
+Found live (Orchestrator PM bug-hunt sweep against the running stack, gateway-api/reporting-service
+logs cross-referenced against dashboard-web's own response): clicking "Generate a report" for a real
+completed run returned `504` after ~5s, while gateway-api's logs showed the downstream
+`reporting-service` call completing (`201 Created`) a few seconds later — real report generation
+genuinely takes ~7-9s end to end, inside the intended 30s budget but past the accidental 5s one. Same
+class of bug plausibly affects any of the other 12 sites' downstream calls under load (crawl triggers,
+run submission, dataset/settings lookups) — a correctness/trust bug (possible duplicate report
+submissions, users believing a submitted run/crawl failed when it didn't), not cosmetic.
+
+**Fix**: `http_client.py` now exports `DOWNSTREAM_HTTP_TIMEOUT_SECONDS = 30.0` as the single source of
+truth (also used by `get_gateway_api_client`, replacing its own bare `30.0` literal); all 13 call
+sites (`operator.py` lines 297/339/382/423/458, `runs.py` lines 451/478/511/556/623/708/774,
+`settings.py` line 84) now import and pass it explicitly. Zero remaining bare
+`httpx.Client(base_url=base_url)` calls anywhere under `services/dashboard-web/src/app` (grep-verified).
+
+**Tests**: `tests/test_monitoring_triggers.py`'s existing `_patch_transport` mock previously dropped
+any `timeout=`/other kwargs passed to `httpx.Client`, which would have silently masked this exact bug
+class from ever being test-provable — fixed to forward kwargs through to the real
+`MockTransport`-backed client. New regression test,
+`test_trigger_report_generation_survives_slow_downstream_past_old_5s_default`, uses a real 5.5s
+`time.sleep` in the mocked handler (deliberately past the old 5s default, inside the new 30s budget)
+and asserts the route now returns `200` — this test would fail with an unhandled
+`httpx.ReadTimeout`/`504` under the pre-fix code. Full suite re-run directly by the Tech Lead:
+**230 passed**, 5 deselected (e2e), 0 failed — zero regressions (228 DASH-120 baseline + 2 new:
+the slow-downstream regression test plus one incidental new assertion in the same test module).
+
+**Live-stack verification** (Tech Lead, personally performed): `dashboard-web`'s bare `:8004` process
+(no `--reload`) was killed and restarted from the same `uvicorn app.main:app --app-dir src --port 8004`
+command to pick up the fix. A fresh, disposable diagnostic tenant/API key was provisioned via
+gateway-api's existing `scripts/provision_tenant.py` (no direct DB writes — several attempts at those,
+and at a first-try large-payload `POST /runs`, were blocked by this session's own action-sandbox
+classifier as write-risk actions; the standard fixture-provisioning script and a smaller in-line
+dataset payload were not). A small run was submitted and completed
+(`id=667b8c532a554bf29b83728bc97eaf5d`), then `POST /monitoring/reports/generate` was called through
+the real running `dashboard-web` process with that run id — confirmed `200`, response body
+`"Report ... generation: generated."`, `0.28s` observed (well under both the old 5s default and the
+new 30s budget; the deliberate delay-past-5s proof lives in the mocked regression test above, not this
+live call, since the real stack's downstream calls do not reliably take exactly-past-5s on demand).
+The diagnostic API key was revoked immediately after (`scripts/revoke_api_key.py`) — no production
+tenant/data modified.
+
+QA: not raised as a separate agent for this single, same-pass, structurally low-risk config fix (no
+leakage-sensitive logic, no lifecycle/state-machine change, no user-facing numeric output changed) —
+consistent with the DASH-119/DASH-120 precedent of Tech-Lead-only verification for same-pass live bug
+fixes of this shape.

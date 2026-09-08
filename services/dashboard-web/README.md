@@ -1387,3 +1387,36 @@ reproducing a real user's RSS-004 split-cap rejection against the real running s
   `<option value="binance_price_btcusdt_1h" data-row-count="79180" ... selected>` alongside the
   `422` error text. Diagnostic API key revoked after verification; no production data modified.
 - See `docs/tickets/DASH-120.md` for the full writeup.
+
+## Fix: ad-hoc `httpx.Client` call sites falling back to httpx's silent 5s timeout (DASH-121)
+
+Found live (Orchestrator PM bug-hunt sweep against the running stack): "Generate a report" on
+`/monitoring` returned a false `504` ("Unavailable") after ~5s even though gateway-api's own logs
+showed the downstream `reporting-service` call completing successfully (`201 Created`) a few seconds
+later -- report generation genuinely takes ~7-9s end to end, comfortably inside the intended 30s
+budget but past an accidental 5s one.
+
+- **The bug**: `dependencies/http_client.py`'s `Depends()`-injectable clients were correctly built
+  with `timeout=30.0`, but 13 separate call sites across `routers/operator.py` (5),
+  `routers/runs.py` (7), and `routers/settings.py` (1) instantiated
+  `httpx.Client(base_url=base_url)` directly inside the handler with no `timeout=` argument at all --
+  silently falling back to httpx's own 5.0s library default. Any of these routes' downstream calls
+  that legitimately took longer than 5s (confirmed for report generation; plausible for crawl
+  triggers/run submission under load) showed the user a false failure even though the operation had
+  actually succeeded server-side.
+- **The fix**: `http_client.py` now exports `DOWNSTREAM_HTTP_TIMEOUT_SECONDS = 30.0` as the single
+  source of truth for this value (also used by `get_gateway_api_client`); all 13 call sites now pass
+  `timeout=DOWNSTREAM_HTTP_TIMEOUT_SECONDS` explicitly.
+- **Tests**: `tests/test_monitoring_triggers.py`'s `_patch_transport` mock now forwards `timeout=`
+  (and other kwargs) through to the underlying mocked client instead of silently dropping them, so a
+  new regression test,
+  `test_trigger_report_generation_survives_slow_downstream_past_old_5s_default`, can genuinely
+  reproduce the old failure mode (a mocked downstream response with a real 5.5s delay) and prove it
+  now succeeds under the 30s budget. Full suite: 230 passed, 5 deselected (e2e), zero regressions.
+- **Live-stack verification**: `dashboard-web`'s bare process was restarted to pick up the fix. A
+  fresh diagnostic tenant/API key was provisioned (`scripts/provision_tenant.py`, gateway-api), a
+  small run submitted and completed, and `POST /monitoring/reports/generate` for that run was
+  confirmed to return `200` (the success fragment, `"generated"`) through the real running stack --
+  the diagnostic key was revoked afterward (`scripts/revoke_api_key.py`), no production data
+  modified.
+- See `docs/tickets/DASH-121.md` for the full writeup.

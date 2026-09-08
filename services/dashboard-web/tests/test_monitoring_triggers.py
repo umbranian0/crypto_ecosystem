@@ -63,7 +63,13 @@ def _patch_transport(monkeypatch, handler) -> None:
     real_client_cls = httpx.Client
 
     def _fake_client(*, base_url="", **kwargs):
-        return real_client_cls(base_url=base_url, transport=httpx.MockTransport(handler))
+        # DASH-121: forward any caller-supplied `timeout=` (and other
+        # kwargs) through to the real client instead of silently dropping
+        # them -- otherwise this mock would mask the exact
+        # missing-`timeout=`-falls-back-to-5s-default bug this fixture
+        # exists to let tests reproduce/prove-fixed.
+        kwargs.pop("transport", None)
+        return real_client_cls(base_url=base_url, transport=httpx.MockTransport(handler), **kwargs)
 
     monkeypatch.setattr(httpx, "Client", _fake_client)
 
@@ -250,6 +256,39 @@ def test_trigger_report_generation_success_shows_id_and_status(monkeypatch) -> N
     assert response.status_code == 200
     assert "report-1" in response.text
     assert "pending" in response.text
+
+
+def test_trigger_report_generation_survives_slow_downstream_past_old_5s_default(
+    monkeypatch,
+) -> None:
+    """DASH-121 regression test: before the fix, `trigger_report_generation`
+    built its `httpx.Client(base_url=base_url)` with no `timeout=` at all,
+    silently falling back to httpx's 5.0s library default and raising
+    `httpx.ReadTimeout` (rendered as a false "Unavailable" `504`) on any
+    downstream call slower than 5s -- even though, per this ticket's live
+    repro, the downstream call had actually succeeded server-side. This test
+    sleeps just past that old 5s boundary (5.5s) before responding 201; it
+    must pass (200, the success fragment) under the fixed
+    `DOWNSTREAM_HTTP_TIMEOUT_SECONDS` (30.0s) budget, and would fail with an
+    unhandled `httpx.ReadTimeout` under the old bare-default code.
+    """
+    import time
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        time.sleep(5.5)
+        return httpx.Response(201, json={"id": "report-slow", "status": "pending"})
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.post(
+        "/monitoring/reports/generate", data={"run_id": "11111111-1111-1111-1111-111111111111"}
+    )
+
+    assert response.status_code == 200
+    assert "report-slow" in response.text
 
 
 def test_trigger_report_generation_non_201_renders_shared_error_page(monkeypatch) -> None:

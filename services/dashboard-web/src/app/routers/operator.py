@@ -145,6 +145,7 @@ import httpx
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import RedirectResponse
 
+from app.dependencies.http_client import DOWNSTREAM_HTTP_TIMEOUT_SECONDS
 from app.dependencies.downstream import (
     DownstreamHeadersDep,
     GatewayApiUrlDep,
@@ -294,7 +295,7 @@ def monitoring(request: Request, base_url: GatewayApiUrlDep, headers: OptionalDo
     a login prompt in that case (see this module's own docstring, DASH-109's
     auth design decision).
     """
-    with httpx.Client(base_url=base_url) as client:
+    with httpx.Client(base_url=base_url, timeout=DOWNSTREAM_HTTP_TIMEOUT_SECONDS) as client:
         response, transport_status = _call_downstream(client.get, "/system/health")
         if transport_status is not None:
             return _render_error_for_status(request, transport_status)
@@ -336,7 +337,7 @@ def crawl_status_fragment(request: Request, headers: DownstreamHeadersDep, base_
     The specific `502` is a disclosed simplification -- the helper does not
     preserve which transport/status failure occurred.
     """
-    with httpx.Client(base_url=base_url) as client:
+    with httpx.Client(base_url=base_url, timeout=DOWNSTREAM_HTTP_TIMEOUT_SECONDS) as client:
         crawl_statuses = _fetch_crawl_statuses(client, headers)
 
     if crawl_statuses is None:
@@ -379,7 +380,7 @@ def trigger_crawl(
     """
     params = {"since": since} if since.strip() else {}
 
-    with httpx.Client(base_url=base_url) as client:
+    with httpx.Client(base_url=base_url, timeout=DOWNSTREAM_HTTP_TIMEOUT_SECONDS) as client:
         response, transport_status = _call_downstream(
             client.post,
             f"/ingestion/connectors/{source}/run",
@@ -420,7 +421,7 @@ def cancel_crawl(
     downstream's own `404` unknown-source/`409` nothing-to-cancel outcomes)
     reuses `_render_error_for_status` unmodified -- no re-interpretation.
     """
-    with httpx.Client(base_url=base_url) as client:
+    with httpx.Client(base_url=base_url, timeout=DOWNSTREAM_HTTP_TIMEOUT_SECONDS) as client:
         response, transport_status = _call_downstream(
             client.post,
             f"/ingestion/connectors/{source}/cancel",
@@ -455,7 +456,7 @@ def trigger_report_generation(
     re-interpreted at this layer (same "pass-through UI only" precedent
     `runs.py`'s `run_new_submit` already established for `RunRequest`).
     """
-    with httpx.Client(base_url=base_url) as client:
+    with httpx.Client(base_url=base_url, timeout=DOWNSTREAM_HTTP_TIMEOUT_SECONDS) as client:
         response, transport_status = _call_downstream(
             client.post, "/reports/generate", json={"run_id": run_id}, headers=headers
         )

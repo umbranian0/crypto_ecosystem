@@ -53,6 +53,7 @@ import httpx
 from fastapi import APIRouter, Request
 
 from app.dependencies.downstream import GatewayApiUrlDep
+from app.dependencies.http_client import DOWNSTREAM_HTTP_TIMEOUT_SECONDS
 from app.dependencies.operator_session import OperatorTokenHeaderDep
 from app.main import templates
 from app.routers.runs import _call_downstream, _render_error_for_status
@@ -81,7 +82,7 @@ def connectors_credentials_status(
             status_code=422,
         )
 
-    with httpx.Client(base_url=base_url) as client:
+    with httpx.Client(base_url=base_url, timeout=DOWNSTREAM_HTTP_TIMEOUT_SECONDS) as client:
         response, transport_status = _call_downstream(
             client.get,
             "/ingestion/connectors/credentials-status",
