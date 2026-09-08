@@ -21,54 +21,28 @@ only the hash is persisted. The raw key is returned by `provision()` and
 printed to stdout exactly once, by the CLI wrapper below; it is never
 logged, never written to a file, and never appears in any exception message.
 
-GW-014: after `create_key` succeeds, this function logs one structured
-`api_key_issued` audit event via `logging.getLogger(__name__)`, reusing
-OPS-006's already-configured JSON formatter/correlation-id filter (no new
-`Formatter`/`basicConfig` call here) -- `extra=` carries only `tenant.id`,
-never `raw_key`.
+GW-014: `provision()` logs one structured `api_key_issued` audit event via
+`logging.getLogger(__name__)`, reusing OPS-006's already-configured JSON
+formatter/correlation-id filter (no new `Formatter`/`basicConfig` call here)
+-- `extra=` carries only `tenant.id`, never `raw_key`.
+
+SETUP-002: `provision()` itself now lives in `app.provisioning`, imported
+here as a thin wrapper -- `scripts/` is not part of this service's packaged
+wheel (see `pyproject.toml`) and is not reliably importable from inside the
+running FastAPI app process, so `app.routers.setup`'s `POST
+/setup/initialize` needs a shared, in-package location to import the same
+function from without a second implementation. This script's own CLI
+behavior (arguments, stdout output) is unchanged.
 """
 
 from __future__ import annotations
 
 import argparse
-import hashlib
-import logging
-import secrets
 
 from naive_first_common import configure_structured_logging
 
 from app.dependencies.repositories import get_api_key_repository, get_tenant_repository
-from app.repositories.interfaces import ApiKeyRepository, TenantRepository, TenantRecord
-
-logger = logging.getLogger(__name__)
-
-
-def provision(
-    name: str,
-    tenant_repo: TenantRepository,
-    api_key_repo: ApiKeyRepository,
-) -> tuple[TenantRecord, str]:
-    """Creates a tenant and its first API key, returning the tenant record
-    and the raw (unhashed) key. Only `api_key_repo.create_key` is given the
-    hash; the raw key lives solely in this function's return value and the
-    caller's handling of it from there.
-    """
-    tenant = tenant_repo.create_tenant(name)
-
-    raw_key = secrets.token_urlsafe(32)
-    key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
-    api_key_repo.create_key(tenant.id, key_hash)
-
-    logger.info(
-        "api key issued",
-        extra={
-            "event_type": "api_key_issued",
-            "outcome": "success",
-            "tenant_id": tenant.id,
-        },
-    )
-
-    return tenant, raw_key
+from app.provisioning import provision
 
 
 def main() -> None:
