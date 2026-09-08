@@ -22,6 +22,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from app.dependencies.downstream import get_gateway_api_url
+from app.dependencies.http_client import GatewayApiClientDep
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 STATIC_DIR = Path(__file__).parent / "static"
@@ -49,22 +50,38 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 # before any of these imports run. `operator`/`settings` are imported after
 # `runs` since both import `_call_downstream`/`_render_error_for_status`
 # from that module (DASH-113's own DRY-reuse note, extended by DASH-112).
-from app.routers import auth, operator, runs, settings  # noqa: E402
+# `setup` (SETUP-003) is imported last for the same reason -- it also
+# imports `_call_downstream`/`_render_error_for_status` from `runs`.
+from app.routers import auth, operator, runs, settings, setup  # noqa: E402
 
 app.include_router(auth.router)
 app.include_router(runs.router)
 app.include_router(operator.router)
 app.include_router(settings.router)
+app.include_router(setup.router)
 
 
 @app.get("/")
-def root() -> RedirectResponse:
-    """Root has no page of its own -- always redirects to the tenant's main
-    page (`/runs`), which itself redirects to `/login` via the existing
-    session dependency if no tenant session cookie is present. Keeps the
-    "am I logged in" decision in one place (runs.py's DownstreamHeadersDep)
-    rather than duplicating a session check here.
+def root(client: GatewayApiClientDep) -> RedirectResponse:
+    """SETUP-003: root now checks gateway-api's `GET /setup/status` first --
+    `initialized: false` (fresh install) redirects to `/setup` instead of
+    `/runs`/`/login`; `initialized: true` (unchanged behavior) redirects to
+    `/runs`, which itself redirects to `/login` via the existing session
+    dependency if no tenant session cookie is present. A transport failure
+    talking to gateway-api degrades to the existing `/runs` path rather than
+    blocking the root route entirely -- gateway-api being briefly unreachable
+    should not itself prevent an already-logged-in tenant from reaching
+    `/runs` (which has its own, independent failure handling once reached).
+
+    Takes `GatewayApiClientDep` directly (the same injectable/mockable
+    provider `app.routers.setup`'s own routes use) rather than calling
+    `setup.is_initialized_via_default_client()`, so this route's own tests
+    can override the client the same way every other route's tests already
+    do (`app.dependency_overrides[get_gateway_api_client]`).
     """
+    initialized = setup.is_initialized(client)
+    if initialized is False:
+        return RedirectResponse(url="/setup")
     return RedirectResponse(url="/runs")
 
 

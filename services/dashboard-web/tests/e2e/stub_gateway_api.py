@@ -44,6 +44,14 @@ app = FastAPI()
 
 _runs: dict[str, dict] = {}
 
+# SETUP-003: minimal `/setup/status` + `/setup/initialize` fixture, only what
+# the wizard's own e2e flow (test_setup_wizard.py) exercises. Starts
+# uninitialized (matching a genuinely fresh install) -- the existing
+# test_core_loop.py flows never hit `/setup/status` (they navigate straight
+# to `/login`, never `/`), so this default does not change their behavior.
+_initialized = False
+_tenant: dict | None = None
+
 
 def _require_valid_key(authorization: str | None) -> None:
     if authorization != f"Bearer {VALID_API_KEY}":
@@ -82,6 +90,28 @@ def _fake_split(split_index: int) -> dict:
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/setup/status")
+def setup_status() -> dict:
+    return {"initialized": _initialized}
+
+
+@app.post("/setup/initialize", status_code=201)
+async def setup_initialize(request: Request) -> dict:
+    global _initialized, _tenant
+
+    if _initialized:
+        raise HTTPException(status_code=409, detail="already initialized")
+
+    body = await request.json()
+    _tenant = {
+        "tenant_id": "e2e-wizard-tenant",
+        "tenant_name": body["tenant_name"],
+        "api_key": VALID_API_KEY,
+    }
+    _initialized = True
+    return _tenant
 
 
 @app.get("/runs")

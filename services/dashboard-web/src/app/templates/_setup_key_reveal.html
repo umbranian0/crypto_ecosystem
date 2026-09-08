@@ -1,0 +1,12 @@
+{# SETUP-003: one-time API-key-reveal fragment, parameterized on
+   `tenant_name`/`api_key` -- no /setup-specific literal copy baked in, so
+   SETUP-012 (Settings -> Tenants "create tenant" flow, next sprint) can
+   include this same fragment rather than a second near-identical page
+   (ticket's own DRY check note). Never echoes the raw key into a URL,
+   redirect Location header, or log line -- rendered exactly once, here. #}
+<div class="key-reveal">
+    <p>Tenant <strong>{{ tenant_name }}</strong> created.</p>
+    <p class="warning">Copy this API key for validation runs now -- it cannot be recovered:</p>
+    <pre class="api-key">{{ api_key }}</pre>
+    <p><a href="/login">Continue to log in</a></p>
+</div>
