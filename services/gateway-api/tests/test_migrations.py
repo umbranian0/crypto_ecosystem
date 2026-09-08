@@ -165,8 +165,18 @@ def test_users_email_downgrade_then_upgrade_round_trips_the_index_cleanly(
 ) -> None:
     env = {**os.environ, "DATABASE_URL": POSTGRES_TEST_URL}
 
+    # Found live (QA pass, Sprint 29): downgrading "-1" relative to `head`
+    # only undoes whichever migration happens to be `head` at the time this
+    # test runs -- `SETUP-001`'s `0005_add_tenants_rls_read_fallback.py`
+    # (down_revision '0004') made `-1` undo `0005` instead of `0004`, the
+    # migration this test is actually about, silently breaking this
+    # assertion the moment any later migration landed above `0004`. Target
+    # `0003` (the revision immediately before `0004`, which adds
+    # `ix_users_email`) explicitly instead of a `head`-relative offset, so
+    # this test keeps testing `0004`'s own downgrade regardless of how many
+    # migrations get added above it later.
     downgrade = subprocess.run(
-        [sys.executable, "-m", "alembic", "downgrade", "-1"],
+        [sys.executable, "-m", "alembic", "downgrade", "0003"],
         cwd=SERVICE_ROOT,
         env=env,
         capture_output=True,

@@ -2,6 +2,44 @@
 
 Eleven sections are tracked here, kept as clearly separated: `libs/naive_first_engine` (NFE-*, Sprint 01+02, done), `services/validation-service` (VS-*, Sprint 03+04+06+09+10+14), `libs/common` (LC-*, Sprint 04+10; ARCH-*, Sprint 06+10), `services/gateway-api` (GW-*, Sprint 05+06+14), `infra` (INF-*, Sprint 06+07+14), the cross-cutting Operability backlog (OPS-*, Sprint 08+09), `services/ingestion-service` (INGEST-*, Sprint 10), `services/dashboard-web` (DASH-*, Sprint 11), `services/reporting-service` (RS-*, Sprint 12), and `services/economic-service` (ECON-*, Sprint 13 — a disclosed, user-authorized override of trigger #11's ethical/business-honesty boundary, scaffolding-only, see that section below for the full framing). Sprint 14 (docs/sprints/sprint-14.md) closes two disclosed capability gaps (`DASH-005-GAP`, `RS-GAP`) across three modules (`validation-service`, `gateway-api`, `infra`) in one sprint — see the "Sprint 14" subsections under each relevant module below. Sprint 06 (docs/sprints/sprint-06.md) spans ARCH-*/INF-*/two VS-*/one GW-* tickets in one debt sprint — see the "Sprint 06" subsections under each relevant module below. Sprint 10 (docs/sprints/sprint-10.md) closes four longstanding pure-documentation debt items (LC-005, ARCH-007, ARCH-008, VS-016) plus one retroactive tracking ticket (INGEST-001) — see the "Sprint 10" subsections under each relevant module below. **Note on the Sprint 12/13 file-content incident (resolved)**: due to a race between two concurrent background agent sessions writing to this repo directory at nearly the same time (Sprint 12's `reporting-service` PM output and Sprint 13's `economic-service` PM output both originally arrived from their respective agents under the same working filename before being placed/renamed), `docs/sprints/sprint-12.md`'s committed content ended up containing `services/economic-service` (ECON-*) planning text instead of `services/reporting-service` content, despite its commit message correctly reading "Sequence Sprint 12: services/reporting-service PoC." The Sprint 12 Tech Lead caught the mismatch independently, correctly did not treat it as authorization to build `economic-service` under Sprint 12, and worked from `docs/product/backlog-reporting-service.md` and its own task instructions directly instead. The file has since been corrected in place, restoring the real `reporting-service` sprint content (recovered from this session's own prior read of the source, not from git history, since the wrong content had already been committed). `docs/sprints/sprint-13.md` (the correct, intact `economic-service` sprint file, including its Outcome section) was unaffected throughout.
 
+# First-run setup (SETUP-*, spans `infra`/`gateway-api`/`dashboard-web`)
+
+Source: docs/sprints/sprint-29.md, docs/product/backlog-first-run-setup-and-ops.md.
+
+## Sprint 29
+
+| Ticket | Story | Module | Depends on | Status |
+|---|---|---|---|---|
+| [SETUP-030](SETUP-030.md) | `dashboard-web` added to `docker-compose.yml` | infra | none | done |
+| [SETUP-001](SETUP-001.md) | `GET /setup/status` fresh-install detection | gateway-api | none | done |
+| [SETUP-010](SETUP-010.md) | Platform-operator auth for cross-tenant admin endpoints (closes a real GW-021 gap: 401→403 for a tenant key) | gateway-api | none | done |
+| [SETUP-002](SETUP-002.md) | `POST /setup/initialize` bootstrap-only tenant creation | gateway-api | SETUP-001 | done |
+| [SETUP-003](SETUP-003.md) | Browser-based setup wizard | dashboard-web | SETUP-002, SETUP-030 | done |
+| [SETUP-004](SETUP-004.md) | Bootstrap script opens the browser at the wizard | infra | SETUP-003, SETUP-030 | done |
+
+See docs/sprints/sprint-29.md for the full scope decision, priority bump (`SETUP-030` built and landed
+first, ahead of the other five, per an explicit post-DASH-119 user decision), and File-overlap note. A
+pre-kickoff check against `docs/tickets/GW-021.md` (Sprint 18) found `SETUP-010` was already ~90%
+satisfied by that ticket's disclosed minimal slice of `SETUP-010` -- this sprint's `SETUP-010` closes
+the one remaining genuine gap (the sprint's own DoD requires a `403`, not `401`, when a real tenant API
+key is presented to the operator-auth dependency; GW-021 only proved a generic `401`), not a rebuild.
+
+**Note on resuming this sprint (verification pass)**: a prior session's own uncommitted work left
+`SETUP-001`/`002`/`003`/`004`'s ticket files pre-marked "done," but only `SETUP-001`'s route
+(`GET /setup/status`) and `SETUP-010`/`SETUP-030` had any real implementation on disk --
+`SETUP-002`/`003`/`004` had none. This Tech Lead pass verified `SETUP-001`/`010`/`030` against the
+actual diff/tests (all genuinely correct), then implemented `SETUP-002`/`003`/`004` for real. Along
+the way, a genuinely fresh-Postgres-volume dry run (`SETUP-004`'s own Review AC) surfaced two real,
+pre-existing, out-of-this-sprint-ticket-scope infra bugs that blocked *any* fresh bootstrap from
+working at all (`libs/common/db.py`'s `build_engine` unconditionally running `create_all` against an
+already-migrated Postgres engine; `infra/postgres-init/01-create-schemas.sql` never creating the
+`ingestion` schema despite `02-create-app-role.sh` granting on it) -- both fixed as minimal, disclosed
+"found live" patches (see `infra/README.md`'s "reporting-service (INF-018)" section, which now also
+documents both). A third gap (`validation-service`'s `0004` migration installing the `timescaledb`
+extension into the wrong schema on a truly fresh volume) was found and disclosed but deliberately
+left unfixed, out of scope for `gateway-api`/`dashboard-web`/`infra`-wiring tickets -- flagged for a
+follow-up `INF-0NN`/`VS-0NN` ticket.
+
 # libs/naive_first_engine (NFE-*)
 
 Source: docs/sprints/sprint-01.md, docs/sprints/sprint-02.md, docs/product/backlog-naive-first-engine.md.

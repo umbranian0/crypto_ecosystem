@@ -203,3 +203,87 @@ now also means "finish this one first," not just "no blocking dependency."
 - **Epic D, remainder**: `SETUP-031` (portability audit) → `SETUP-032` (fresh-machine single-command
   dry run, depends on `SETUP-004`/`SETUP-030` from this sprint plus `SETUP-031`) → `SETUP-033`
   (CI smoke test, Could, depends on `OPS-001` already shipped plus `SETUP-032`).
+
+## Outcome
+
+All six tickets (`SETUP-001`/`002`/`003`/`004`/`010`/`030`) verified `done` by the Tech Lead against
+their own ticket files' Review acceptance criteria, not merely the dev/prior-session self-report.
+
+**Resumption note**: this sprint was picked up mid-flight from a prior session's uncommitted work.
+`SETUP-010` and `SETUP-030` were genuinely complete and correct as found (verified against their
+ticket files, diffs, and a live re-run of the full test matrix) and committed as-is. `SETUP-001`'s
+route code existed and was correct; its ticket file had been pre-marked "done" but nothing else in
+`SETUP-002`/`003`/`004` had any implementation on disk despite those ticket files also claiming
+"done" — those three were implemented for real in this pass, not re-derived from scratch (the ticket
+files' own Design sections were accurate and were followed).
+
+**What shipped**:
+- `SETUP-001`: `GET /setup/status` (`services/gateway-api/src/app/routers/setup.py`), backed by
+  `TenantRepository.tenant_exists()` on both SQLite/Postgres backends, migration `0005` (RLS read
+  fallback for `tenants`).
+- `SETUP-002`: `POST /setup/initialize` (same router file), calling `provision()` moved into
+  `services/gateway-api/src/app/provisioning.py` (imported by both this route and
+  `scripts/provision_tenant.py`'s CLI wrapper — no second tenant-creation code path).
+  `services/gateway-api/tests/test_setup_initialize.py` (new).
+- `SETUP-010`: `services/gateway-api/src/app/dependencies/operator_auth.py`'s `403`-for-a-real-tenant-
+  key distinction, already complete as found.
+- `SETUP-003`: `services/dashboard-web/src/app/routers/setup.py` (new), `templates/setup.html`/
+  `_setup_key_reveal.html`/`setup_key_reveal.html` (new), `main.py`'s root route now branches on
+  `gateway-api`'s setup status. `tests/test_setup_wizard.py` (15 unit tests) and
+  `tests/e2e/test_setup_wizard.py` (2 new Selenium flows, `tests/e2e/stub_gateway_api.py` extended
+  with `/setup/status`/`/setup/initialize`).
+- `SETUP-004`: `infra/bootstrap.sh`/`.ps1` gain steps 5–6 (start `dashboard-web`, open/print the
+  wizard URL); the `provision_tenant.py`-print step demoted to step 7, unchanged in content.
+- `SETUP-030`: already complete as found (`services/dashboard-web/Dockerfile`,
+  `infra/docker-compose.yml`'s `dashboard-web` entry).
+
+**Two real, pre-existing infra bugs found live during `SETUP-004`'s own fresh-Postgres-volume dry
+run and fixed as minimal, disclosed patches (out of this sprint's ticket scope but directly blocking
+its Review AC)**: `libs/common/src/naive_first_common/db.py`'s `build_engine` no longer runs
+`Base.metadata.create_all` against a Postgres URL (Alembic migrations already own schema creation
+there; the unconditional call previously raised on a genuinely fresh, already-migrated volume) —
+`libs/common/tests/test_db.py` gained a regression test. `infra/postgres-init/01-create-schemas.sql`
+now also creates the `ingestion` schema (`02-create-app-role.sh` already granted on it; the missing
+schema silently failed that entire multi-schema `GRANT`, leaving `naive_first_app` with zero
+privileges anywhere). A third gap (`validation-service`'s `0004` migration installing the
+`timescaledb` extension into the wrong schema on a fresh volume) was found and disclosed in
+`infra/README.md` but deliberately left unfixed — out of scope for this sprint's tickets, flagged for
+a follow-up `INF-0NN`/`VS-0NN` ticket.
+
+**Test results**: `gateway-api` — **173 passed, zero failures**, full suite including
+`test_migrations.py`, run against a genuinely fresh Postgres volume (SQLite + Postgres-backed suites
+together, including `test_setup_status.py`/`test_setup_initialize.py`/updated
+`test_operator_auth.py`). This required one fix found by the QA pass below:
+`test_migrations.py::test_users_email_downgrade_then_upgrade_round_trips_the_index_cleanly` downgraded
+`"-1"` relative to `head`, which this sprint's own `0005_add_tenants_rls_read_fallback.py` migration
+(the new `head`) silently repointed at undoing `0005` instead of `0004`, the migration the test is
+actually about — fixed to target revision `0003` explicitly (the revision immediately before `0004`)
+so it survives future migrations landing above it. `dashboard-web` — 239 unit passed (up from 230) + 7
+e2e passed (up from 5), zero regressions. `libs/common` — 30 passed (up from 29).
+
+**Live verification**: a genuinely fresh Postgres volume, full `infra/bootstrap.ps1` run end to end —
+`GET /setup/status` → `{"initialized": false}`, root redirected to `/setup`, the wizard form rendered,
+submission returned `201` with the raw key shown exactly once, `/login` with that key succeeded, and a
+second `/setup` visit redirected straight to `/login`. Bootstrap script run a second time against the
+now-initialized stack: exit code `0`, exactly one `tenants` row, browser-open step confirmed to launch
+a real browser process (not just "did not error").
+
+**QA**: an independent `qa` subagent validated this batch against the actual code/diffs (not this
+Outcome section's claims) — full test suites re-run independently (matched: 239 dashboard-web unit +
+7 e2e, 30 libs/common), positioning check read directly against `setup.html`/`_setup_key_reveal.html`/
+`setup_key_reveal.html` (compliant), raw-key handling and the `409`-before-write guard read directly
+in source (both hold), `get_authenticated_operator`'s repository-lookup-only-on-failure-branch
+confirmed by reading the function body, and `build_engine`'s Postgres skip confirmed safe for every
+current caller (`validation-service`/`reporting-service`/`ingestion-service`/`gateway-api`, all
+Alembic-migration-owned). One real regression found: the `test_migrations.py` downgrade test above —
+fixed by the Tech Lead and re-verified with a full 173-passed run against a genuinely fresh Postgres
+volume. QA did not independently reproduce the live fresh-Docker-bootstrap dry run itself (no
+app-service containers were up in its environment) and disclosed relying on this section's own
+live-verification account for that one piece — everything else was independently verified against
+source, not self-report. **Verdict: go**, conditional on the one fix above, which has been applied and
+confirmed.
+
+**Deviations from the plan**: none in scope — the two infra fixes above were necessary to make
+`SETUP-004`'s own Review AC (a genuinely fresh dry run) actually true, not scope additions to any
+ticket's own acceptance criteria. The `test_migrations.py` fix (found by QA) was likewise necessary to
+make the sprint's own "zero regressions" DoD line actually true, not a scope addition.

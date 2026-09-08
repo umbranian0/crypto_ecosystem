@@ -72,7 +72,7 @@ one-line rationale ties back to what it unlocks and its module's owns/does-not-o
 
 ## Epic A — First-run automatic setup
 
-### SETUP-001 — `gateway-api`: fresh-install detection endpoint [Must]
+### SETUP-001 — `gateway-api`: fresh-install detection endpoint [Must] — done
 
 **As** `dashboard-web`'s setup flow **I want** an unauthenticated `GET /setup/status` endpoint that
 reports whether any tenant exists yet **so that** the UI can decide whether to show the setup wizard
@@ -80,13 +80,13 @@ or the ordinary login page, without needing any credential to ask the question i
 (there is, by definition, no credential yet on a fresh install).
 
 Acceptance criteria:
-- [ ] `GET /setup/status` (no auth) returns `{"initialized": true|false}` — `true` once at least one
+- [x] `GET /setup/status` (no auth) returns `{"initialized": true|false}` — `true` once at least one
   row exists in the `tenants` table, `false` otherwise.
-- [ ] The response contains **only** this boolean — no tenant names, counts, ids, or any other
+- [x] The response contains **only** this boolean — no tenant names, counts, ids, or any other
   identifying detail — so this endpoint cannot become a tenant-enumeration side channel for anything
   that can merely reach `gateway-api`'s public port.
-- [ ] A test covers both the zero-tenant and the ≥1-tenant state.
-- [ ] `gateway-api`'s README documents this as the one deliberate, narrow unauthenticated endpoint on
+- [x] A test covers both the zero-tenant and the ≥1-tenant state.
+- [x] `gateway-api`'s README documents this as the one deliberate, narrow unauthenticated endpoint on
   the service, and states why (chicken-and-egg: no credential can exist to gate a check for "does a
   credential exist yet") — the same reasoning `provision_tenant.py`'s own docstring already applies to
   itself, now given a network-safe read-only counterpart.
@@ -95,7 +95,9 @@ Rationale for priority: Must — every other story in this epic needs this signa
 render; nothing else in the epic is buildable without it.
 Depends on: none
 
-### SETUP-002 — `gateway-api`: bootstrap-only tenant + admin-key creation endpoint [Must]
+See `docs/tickets/SETUP-001.md` for the full implementation record.
+
+### SETUP-002 — `gateway-api`: bootstrap-only tenant + admin-key creation endpoint [Must] — done
 
 **As** the setup wizard **I want** a `POST /setup/initialize` endpoint that creates the first tenant
 and mints its first API key, but only while `SETUP-001`'s check reports `initialized: false` **so
@@ -103,53 +105,56 @@ that** the browser flow can replace today's `docker compose exec ... provision_t
 without opening a general-purpose, permanently-available public tenant-signup endpoint.
 
 Acceptance criteria:
-- [ ] `POST /setup/initialize` accepts `{"tenant_name": str}` and internally calls the **exact same**
+- [x] `POST /setup/initialize` accepts `{"tenant_name": str}` and internally calls the **exact same**
   `provision()` function `provision_tenant.py` already uses (no second, parallel tenant-creation code
-  path — DRY per implementation-plan.md section 9).
-- [ ] If a tenant already exists (`initialized: true`), the endpoint returns `409 Conflict` and
+  path — DRY per implementation-plan.md section 9). `provision()` now lives in `app/provisioning.py`
+  (moved out of `scripts/provision_tenant.py`, which imports it back as a thin CLI wrapper) since
+  `scripts/` is not part of this service's packaged wheel.
+- [x] If a tenant already exists (`initialized: true`), the endpoint returns `409 Conflict` and
   creates nothing — this is what makes re-running the golden path against an already-initialized
   system a safe no-op instead of a duplicate-tenant bug.
-- [ ] The raw API key is returned in the response body exactly once, matching `provision_tenant.py`'s
+- [x] The raw API key is returned in the response body exactly once, matching `provision_tenant.py`'s
   existing one-time-reveal contract; it is never logged (the shared `provision()` function's existing
   `extra=` discipline — `tenant_id` only, never the raw key — already guarantees this without change).
-- [ ] `gateway-api`'s README documents this endpoint explicitly as a narrow, deliberate exception to
+- [x] `gateway-api`'s README documents this endpoint explicitly as a narrow, deliberate exception to
   "no public tenant-creation surface exists" elsewhere in that same README — the `409`-after-first-tenant
   guard is the entire thing standing between "first-run convenience" and "an open public signup form,"
   and that tradeoff is stated in writing, not left implicit.
-- [ ] A test proves: first call succeeds and creates exactly one tenant + one key; a second call
+- [x] A test proves: first call succeeds and creates exactly one tenant + one key; a second call
   (even with a different `tenant_name`) returns `409` and the tenant table still has exactly one row.
+  Also live-verified against a genuinely fresh Compose stack.
 
 Rationale for priority: Must — this is the one genuinely new piece of network-reachable scope the
 whole epic depends on; every other story here is UI/orchestration wrapped around it.
 Depends on: SETUP-001
 
-### SETUP-003 — `dashboard-web`: browser-based setup wizard [Must]
+### SETUP-003 — `dashboard-web`: browser-based setup wizard [Must] — done
 
 **As** an operator standing up the platform for the first time **I want** `dashboard-web` to detect a
 fresh install and show me a setup form (tenant name → submit → API key shown once) instead of a login
 page **so that** I no longer need a terminal/`docker exec` step to get a usable tenant and key.
 
 Acceptance criteria:
-- [ ] `dashboard-web`'s root route checks `SETUP-001`'s `/setup/status`; if `initialized: false`, it
+- [x] `dashboard-web`'s root route checks `SETUP-001`'s `/setup/status`; if `initialized: false`, it
   redirects to `/setup` instead of `/login`.
-- [ ] `GET /setup` renders a tenant-name form; `POST /setup` calls `SETUP-002`'s `/setup/initialize`.
-- [ ] On success, the raw API key is shown exactly once on a confirmation page with an explicit
+- [x] `GET /setup` renders a tenant-name form; `POST /setup` calls `SETUP-002`'s `/setup/initialize`.
+- [x] On success, the raw API key is shown exactly once on a confirmation page with an explicit
   "copy this now — it cannot be recovered" warning, mirroring `provision_tenant.py`'s own one-time-reveal
   discipline, followed by a link to `/login`.
-- [ ] If `/setup` is visited after initialization (`initialized: true`), it redirects straight to
+- [x] If `/setup` is visited after initialization (`initialized: true`), it redirects straight to
   `/login` rather than re-rendering the form or surfacing `SETUP-002`'s `409` as an error — no path in
   the UI can trigger that conflict by accident.
-- [ ] Extends `dashboard-web`'s existing Selenium E2E suite (`DASH-009`) with a flow covering: fresh
+- [x] Extends `dashboard-web`'s existing Selenium E2E suite (`DASH-009`) with a flow covering: fresh
   stub `gateway-api` (zero tenants) → wizard shown → submit → key displayed once → `/login` succeeds
   with that key.
-- [ ] Positioning check: the wizard's copy describes what's being created as a "tenant" and an "API
+- [x] Positioning check: the wizard's copy describes what's being created as a "tenant" and an "API
   key for validation runs" — never anything implying trading/prediction capability (CLAUDE.md).
 
 Rationale for priority: Must — the actual user-facing deliverable this epic exists to produce; without
 it the "browser-based, not a CLI script" promise is just an API, not a real flow.
 Depends on: SETUP-002
 
-### SETUP-004 — `infra`: bootstrap script brings up the full stack and lands the operator in the wizard [Must]
+### SETUP-004 — `infra`: bootstrap script brings up the full stack and lands the operator in the wizard [Must] — done
 
 **As** a developer standing up this platform for the first time **I want**
 `infra/bootstrap.sh`/`.ps1` to bring up every service (including `dashboard-web`, per `SETUP-030`) and
@@ -157,17 +162,19 @@ open my browser at `dashboard-web`'s root **so that** "one command → a working
 not a partial sequence that still ends in a manual step.
 
 Acceptance criteria:
-- [ ] The bootstrap script's final step starts `dashboard-web` via Compose (depends on `SETUP-030`)
+- [x] The bootstrap script's final step starts `dashboard-web` via Compose (depends on `SETUP-030`)
   and opens the default browser at `http://localhost:<dashboard-port>/` — or, if the environment has
   no way to launch a browser (e.g. a headless CI runner), prints that same URL instead of failing.
-- [ ] The current final step ("print the `provision_tenant.py` invocation") is **kept, not deleted**,
+  Live-verified: the browser-open step (`Start-Process`) genuinely launched a browser process.
+- [x] The current final step ("print the `provision_tenant.py` invocation") is **kept, not deleted**,
   documented underneath as the non-interactive/CI-friendly alternative — same "demote, don't delete"
   convention `infra/README.md` already applies to its own hand-run sequences.
-- [ ] Running the full script twice in a row against an already-initialized stack produces **no
+- [x] Running the full script twice in a row against an already-initialized stack produces **no
   duplicate tenant and no non-zero exit** — Compose `up` is already idempotent, migrations are already
   idempotent (`INF-016`), and the wizard itself now redirects to `/login` instead of erroring
   (`SETUP-003`'s own AC) — this story's own Definition of Done is running the script twice and
-  confirming exactly one tenant exists afterward.
+  confirming exactly one tenant exists afterward. Live-verified against a genuinely fresh Postgres
+  volume: exactly one `tenants` row after two full runs, exit code `0` both times.
 
 Rationale for priority: Must — closes the loop the whole epic exists to close: one command, not "one
 command plus a manual `docker exec` plus a separately-started `dashboard-web`."
@@ -188,20 +195,28 @@ choosing the smallest correct mechanism rather than a multi-admin-user system no
 
 ### SETUP-010 — `gateway-api`: platform-operator authentication for cross-tenant admin endpoints [Must]
 
+**Status: done** (`GW-021`, Sprint 18, shipped the mechanism as an explicitly disclosed minimal slice
+of this story; `SETUP-010` itself, Sprint 29, closed the one remaining gap `GW-021` left open — see
+`docs/tickets/SETUP-010.md` for the full discovered-done analysis).
+
 **As** `dashboard-web`'s Settings area **I want** a distinct operator-level authentication mechanism,
 separate from any tenant's own API key **so that** no tenant's ordinary credential can list, create,
 or revoke any tenant (including itself, or another tenant it should have no visibility into).
 
 Acceptance criteria:
-- [ ] A new operator credential exists out of band from tenant API keys (e.g. a single
+- [x] A new operator credential exists out of band from tenant API keys (e.g. a single
   `OPERATOR_TOKEN` env var, hashed with the same `hashlib.sha256` convention tenant keys already use,
   checked by a new `get_authenticated_operator` FastAPI dependency, structurally separate from
-  `get_authenticated_tenant`).
+  `get_authenticated_tenant`). — `GW-021`.
 - [ ] Every endpoint under `/tenants` (list/create/revoke, `SETUP-011`) requires the operator
-  dependency — never `get_authenticated_tenant`.
-- [ ] A test proves a real tenant's own API key, presented to any `/tenants` endpoint, is rejected
-  (`403`) — the cross-boundary case this story exists to close.
-- [ ] `gateway-api`'s README documents this as a second, narrower auth mechanism, states plainly it is
+  dependency — never `get_authenticated_tenant`. — unchecked: `SETUP-011`'s `/tenants` endpoints don't
+  exist yet (next sprint, correctly deferred, not a gap in this ticket).
+- [x] A test proves a real tenant's own API key, presented to any `/tenants` endpoint (in practice,
+  today, `get_authenticated_operator`'s own test route — no `/tenants` route exists yet), is rejected
+  (`403`) — the cross-boundary case this story exists to close. `GW-021` originally shipped this same
+  test asserting `401`; `SETUP-010` corrected it to `403` (`test_tenant_api_key_presented_as_operator_token_is_rejected`,
+  plus new revoked-key and unknown-value regression tests, `services/gateway-api/tests/test_operator_auth.py`).
+- [x] `gateway-api`'s README documents this as a second, narrower auth mechanism, states plainly it is
   a deliberate stopgap (one shared operator secret, not a multi-admin-user system), and names the
   concrete trigger for revisiting it (a second real human operator who needs their own distinguishable
   credential) — same "disclosed interim, not silent" convention this platform already applies elsewhere
@@ -418,6 +433,9 @@ Depends on: none
 
 ### SETUP-030 — `dashboard-web` added to `docker-compose.yml` as a real service [Must]
 
+**Status: done (Sprint 29).** See `docs/tickets/SETUP-030.md` and `infra/README.md`'s
+"dashboard-web (SETUP-030)" section for the full implementation.
+
 **As** a developer running this stack locally **I want** `dashboard-web` to have a working `Dockerfile`
 and a `docker-compose.yml` entry connected to `gateway-api` over the internal Compose network **so
 that** `docker compose up` runs the entire platform (`postgres`/`redis`/`validation-service`/
@@ -432,24 +450,32 @@ stale in exactly the way `INF-018` found `reporting-service`'s equivalent wordin
 its own Compose-wiring follow-up. This story is that same category of follow-up for `dashboard-web`.
 
 Acceptance criteria:
-- [ ] `services/dashboard-web/Dockerfile` exists, builds via its own `pyproject.toml` (`uv`-managed),
+- [x] `services/dashboard-web/Dockerfile` exists, builds via its own `pyproject.toml` (`uv`-managed),
   matching the `OPS-004`-verified non-root/port-binding precedent already established for
   `validation-service`/`gateway-api`/`reporting-service`.
-- [ ] `infra/docker-compose.yml` defines a `dashboard-web` entry (`build: ../services/dashboard-web`)
-  on a documented host port (e.g. `8003`), with `GATEWAY_API_URL` set to the internal Compose hostname
-  (`http://gateway-api:8000`), not `localhost`.
-- [ ] Port binding: for this local-first phase, bind `127.0.0.1`-only, consistent with the existing
+- [x] `infra/docker-compose.yml` defines a `dashboard-web` entry (`build: ../services/dashboard-web`)
+  on a documented host port (`8004`, `DASHBOARD_WEB_PORT`), with `GATEWAY_API_URL` set to the internal
+  Compose hostname (`http://gateway-api:8000`), not `localhost`.
+- [x] Port binding: for this local-first phase, bind `127.0.0.1`-only, consistent with the existing
   "`gateway-api` is the only internet-facing service" convention (`dashboard-web` itself never talks
   directly to a database, only to `gateway-api`, so this doesn't change its trust boundary) — **explicitly
   flagged in `infra/README.md` as a decision to revisit** the day a non-localhost operator needs to
   reach this UI directly (e.g. a real remote pilot deployment), since a human operator reaching a UI is
   a different exposure shape than a service-to-service call.
-- [ ] `infra/README.md`'s "not yet wired into compose" list is updated to remove `dashboard-web`,
+- [x] `infra/README.md`'s "not yet wired into compose" list is updated to remove `dashboard-web`,
   cross-referencing this story the same way `INF-018`'s section cross-references `RS-GAP`.
-- [ ] Full-stack smoke test: `docker compose up` brings up all six services; `dashboard-web`'s own
+- [x] Full-stack smoke test: `docker compose up` brings up all six services; `dashboard-web`'s own
   `/health` (`DASH-008`) returns `200` reflecting `gateway-api`'s real health, proving Compose-network
-  reachability end to end.
-- [ ] No change to any file under `services/dashboard-web/src/` beyond what's needed for the
+  reachability end to end. Verified live (see `docs/tickets/SETUP-030.md`'s Test section for the exact
+  commands/note): a stray local `python.exe` process already held host port 8004 in this execution
+  environment, so `docker compose up -d --build` on the full stack failed only on `dashboard-web`'s
+  own host-port bind (an environment collision, not a bug in this ticket's files) — worked around by
+  running the built `infra-dashboard-web` image standalone, attached to the real `infra_default`
+  Compose network, published to an alternate host port (`18004`); `curl http://localhost:18004/health`
+  returned `200 {"status":"ok"}`, and the container logs show a clean uvicorn startup. This proves the
+  image/Compose-network wiring itself, not the specific host port number, which is otherwise free on a
+  machine without that stray process.
+- [x] No change to any file under `services/dashboard-web/src/` beyond what's needed for the
   Dockerfile/env wiring itself — packaging/wiring only, same non-goal `INF-003`/`INF-004`/`INF-018`
   already hold themselves to.
 
