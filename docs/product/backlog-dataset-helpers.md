@@ -10,6 +10,14 @@ live client-side split estimate and the server-side `MAX_SPLIT_COUNT=500` upper-
 already ship; no story here re-derives that formula or duplicates that UI surface),
 `docs/product/backlog-first-run-setup-and-ops.md` (SETUP-015, read for cross-reference — a read-only
 Settings panel for service config, a different kind of "helper" than what's proposed here, no overlap),
+`docs/adr/0007-forecast-horizon-summary-unit-and-scope.md` (read in full — establishes `horizon` as a
+dataset-sampling-interval-relative integer, not a fixed platform-wide unit; today only
+hourly-sampled, so `horizon` reads as hours for every existing source, an assumption named
+`ASSUMED_SAMPLING_INTERVAL_HOURS` in `horizon_summary.html`'s own code, disclosed there but nowhere
+near the run-submission form itself), `docs/product/backlog-forecast-horizon-summary.md` (FHS-001–004,
+read for cross-reference — ships `horizon_summary.html`'s fixed 7/15/30-day picker; DH-008 below adds
+a reciprocal link from `run_new.html`, it does not touch that feature's own scope or its
+hourly-only assumption),
 `libs/naive_first_engine/src/naive_first_engine/splitting.py` (`generate_splits`, both branches, read
 in full), `services/validation-service/src/app/dataset_source.py` (`InlineOrLocalFileDatasetSource`,
 `ObjectStorageDatasetSource`, `IngestionServiceDatasetSource`, `CompositeDatasetSource`, read in
@@ -17,7 +25,12 @@ full), `services/validation-service/src/app/routers/runs.py` (`create_run`, read
 exactly what RSS-004's guardrail does and does not check), `services/ingestion-service/src/app/routers/datasets.py`
 and `src/app/repositories/postgres_repository.py` (`read_series`, `_TABLE_SPECS`, read in full — confirms
 what's enforced at the DB layer vs. left to the caller), `services/dashboard-web/src/app/templates/run_new.html`
-(the shipped `computeEstimatedSplits()` client-side estimator, read in full).
+(the shipped `computeEstimatedSplits()` client-side estimator, read in full — confirmed its Horizon
+field's tooltip, `data-tooltip="How many steps ahead to validate against, e.g. 1 for one-step-ahead.
+Must be at least 1."`, names no unit and no dataset-frequency dependence at all),
+`services/dashboard-web/src/app/templates/horizon_summary.html` (read in full — frames horizon
+exclusively in fixed "7/15/30 days," with an ADR-0007 link in its own intro paragraph, but nothing
+reciprocal exists on the submission side).
 
 ## What's actually already true in the code (read, not assumed)
 
@@ -62,6 +75,16 @@ currently catches:
    count, here is a configuration that would work*" proactively. That's genuinely new scope, not an
    extension of RSS-002/004's reactive estimate — it must not be built by duplicating or replacing
    `computeEstimatedSplits()`, only by sitting next to it.
+8. **The Horizon field on `run_new.html` names no unit and no dataset-frequency dependence at all**
+   (a real, previously-undocumented gap flagged in the same DASH-121 bug-hunt sweep that produced
+   several of this backlog's other findings). Its tooltip says only "How many steps ahead to
+   validate against, e.g. 1 for one-step-ahead" — nothing tells a tenant whether "24" means 24
+   hours, 24 days, or 24 of whatever the selected dataset's own sampling interval happens to be,
+   even though ADR-0007 already established (for the separate Forecast Horizon Summary feature)
+   that the answer is dataset-sampling-frequency-dependent, not a fixed platform constant. A tenant
+   who submits `horizon: 24` meaning hours, then later browses `horizon_summary.html`'s fixed
+   "7/15/30 days" picker, has no way to reconcile the two screens' framing without reading source
+   code or this ADR.
 
 ## Scope
 
@@ -322,6 +345,53 @@ input to the same formula, not what the formula does or claims.
 New scope vs. extension: extension of DH-006, contingent on RSS-003.
 Depends on: DH-006, RSS-003
 
+### DH-008 — Surface the selected dataset's sampling interval and horizon-unit meaning on the run-submission form [Must]
+**As** a user filling in the Horizon field on `run_new.html` **I want** an inline hint telling me the
+selected dataset's sampling interval and what my `horizon` number means in that dataset's own units
+**so that** I don't submit a run believing "24" means days when the dataset's own frequency makes it
+hours (or vice versa), and so that a later look at the Forecast Horizon Summary's fixed "7/15/30 days"
+picker doesn't leave me unable to reconcile the two screens without reading source code or an ADR.
+
+Acceptance criteria:
+- [ ] When a stored (`ingestion-service`) dataset is selected via `dataset_reference_source`, a
+  `field-hint`-styled element next to the Horizon label states the dataset's known sampling interval
+  and restates the Horizon field's meaning in that unit — e.g. "This dataset (`binance_price_btcusdt_1h`)
+  is sampled hourly, so `horizon: 24` here means 24 hours ahead, not 24 days." The interval is read
+  from data already available client-side today (`dataset.source`'s naming convention documents the
+  interval for the one existing connector per ADR-0007; if/when a per-dataset interval field exists on
+  `RunSummaryResponse`/the datasets list response, this hint switches to reading it directly rather
+  than parsing the source name — a Tech Lead call on which is cheaper given what ships first, not
+  re-litigated here).
+- [ ] The Horizon field's existing `data-tooltip` text is updated to state plainly, regardless of
+  whether a stored dataset is selected, that `horizon` is a count of the dataset's own sampling steps,
+  not a fixed hour/day unit — e.g. appending "This is a count of the dataset's own sampling steps, not
+  a fixed hour or day unit — see the hint below once you've selected a dataset." This applies even for
+  the local-file-path/inline-payload modes, where the sampling interval isn't known client-side, so the
+  hint element for those two modes states plainly that the interval is whatever the submitted data's own
+  timestamp spacing turns out to be, rather than showing a false silence.
+- [ ] The hint text includes a plain-text pointer to the Forecast Horizon Summary page (`/runs/horizon-summary`)
+  and states in one clause that that page presents horizon in fixed days assuming hourly sampling — the
+  same reciprocal disclosure `horizon_summary.html` already gives in the other direction via its ADR-0007
+  link, closing the gap in both directions rather than one.
+- [ ] No new backend field, no new endpoint, no change to `POST /runs`'s accepted payload or to
+  `naive_first_engine`/`validation-service`'s handling of `horizon` — this is presentation-only, reading
+  data the form already has (`dataset.source`, `data-row-count`, etc., per RSS-001) or documented in
+  ADR-0007, exactly as ADR-0007 itself scoped `horizon_summary.html`'s own build ("no schema/contract
+  field changes... interprets it at render time").
+- [ ] Copy avoids any claim about which unit or horizon length is "better" or "recommended" — this is a
+  units-clarity fix only, not a suggestion helper (that's DH-006's job, and DH-092 explicitly declines
+  the "pick a horizon for the user" version of this idea).
+
+Leakage/honesty check: this story changes no computation and no validation-protocol behavior — it only
+makes an existing, already-true fact (horizon's unit is dataset-sampling-interval-relative, per
+ADR-0007) visible at the one place a tenant sets the value, instead of leaving it discoverable only by
+reading source code or a separate feature's ADR.
+New scope vs. extension: extends `dashboard-web`'s existing `run_new.html` form (same file RSS-001/002
+already extend) and its existing tooltip/hint pattern — no new module, no re-litigation of ADR-0007's
+own scope decision for `horizon_summary.html`.
+Depends on: none (does not require DH-001–007; may optionally reuse whatever per-dataset metadata
+DH-004's gap-report endpoint exposes later, but does not require it to ship first)
+
 ### Won't-fix (explicitly declined, with reasoning)
 
 ### DH-090 — Auto-interpolate or auto-fill detected gaps [Won't, this backlog]
@@ -369,7 +439,7 @@ Depends on: none
 
 | Priority | Count | IDs |
 |---|---|---|
-| Must | 3 | DH-001, DH-003, DH-005 |
+| Must | 4 | DH-001, DH-003, DH-005, DH-008 |
 | Should | 2 | DH-002, DH-006 |
 | Could | 2 | DH-004, DH-007 |
 | Won't | 3 | DH-090, DH-091, DH-092 |
@@ -382,3 +452,8 @@ shape RSS-004 itself was. DH-001→DH-002→DH-003 form a natural sequence insid
 sequenced together. DH-006 is the epic's actual "helper" deliverable in the sense the request named,
 but depends on RSS-001/002 (already shipped) and should ship after DH-005 so the suggestion helper
 and the zero-split guardrail agree on the same lower bound rather than being tuned independently.
+**DH-008 is a Must despite its small size**: it is a pure copy/presentation fix with no dependencies,
+closes a live cross-feature confusion between `run_new.html` and `horizon_summary.html` flagged in
+DASH-121's bug-hunt sweep, and — unlike DH-006/DH-007 — needs no other story to land first; it should
+ship in the same sprint as DH-005 as another "cheap, correct, no-dependency" fix rather than be
+deferred behind the larger Epic B suggestion-helper work.

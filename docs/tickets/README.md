@@ -299,6 +299,24 @@ by the Tech Lead, unchanged.
 
 See docs/sprints/sprint-06.md Phase 1, Track A. A prior grooming session produced 10 binding decisions (see sprint-06.md task framing / each ticket's Design section) that these four tickets carry as given facts. ARCH-002 is the sprint's single highest cross-service regression risk (per-request engine construction fix touching both services' DI wiring). Deferred: ARCH-005 (Should, tracking story), ARCH-006 (Won't), ARCH-007 (Should, tracking story — added 2026-08-09, protocol-agnostic service-identification convention; not yet scheduled to a sprint), ARCH-008 (Should, tracking story — added 2026-08-09, document the `Security()`/`APIKeyHeader` auth pattern; not yet scheduled to a sprint).
 
+## Sprint 30
+
+Source: docs/sprints/sprint-30.md, docs/product/backlog-dataset-helpers.md.
+
+| Ticket | Story | Depends on | Status |
+|---|---|---|---|
+| [DH-005](DH-005.md) | Reject a configuration that produces zero splits | none | in-progress |
+| [DH-001](DH-001.md) | Disclose the sort-on-load that already happens silently | DH-005 (file-order only) | in-progress |
+| [DH-002](DH-002.md) | Detect and disclose exact full-row duplicate timestamps | DH-001 | in-progress |
+| [DH-003](DH-003.md) | Detect and block same-timestamp-different-value conflicts | DH-002 | in-progress |
+
+See docs/sprints/sprint-30.md for the full scope decision and file-overlap risk note. DH-008 (below,
+`dashboard-web` section) is the fifth story in this sprint. Executed strictly in the sprint's stated
+order (DH-005 -> DH-008 -> DH-001 -> DH-002 -> DH-003), one dev agent at a time — `dataset_source.py`'s
+DH-001/002/003 chain is never parallelized (same file, each depends on the prior's return-shape
+change), and DH-005/DH-008 both touch different regions of the same `run_new.html`, sequenced rather
+than run concurrently to avoid a same-file clobber.
+
 # services/gateway-api (GW-*)
 
 Source: docs/sprints/sprint-05.md, docs/product/backlog-gateway-api.md.
@@ -919,6 +937,19 @@ in `src/app/routers/runs.py`) plus a new regression test
 **Sprint 27 outcome**: all four in-scope stories (FHS-001, FHS-002, FHS-003, FHS-004) done, one
 post-review bug found by QA and fixed same-day (see FHS-002 note above). Final suite count: 185
 passed, 5 deselected (e2e), 0 failures.
+
+## Sprint 30
+
+Source: docs/sprints/sprint-30.md, docs/product/backlog-dataset-helpers.md.
+
+| Ticket | Story | Depends on | Status |
+|---|---|---|---|
+| [DH-008](DH-008.md) | Surface the selected dataset's sampling interval and horizon-unit meaning on the run-submission form | none (sequenced after DH-005, same file, different region) | in-progress |
+
+See `services/validation-service (VS-*)`'s own Sprint 30 subsection above for DH-005/001/002/003 (the
+other four stories in this sprint, all `validation-service`-owned with a `dashboard-web` rendering
+extension each). DH-005 and this ticket both touch `run_new.html`; DH-005 lands first per the sprint
+plan's stated order.
 
 # services/reporting-service (RS-*)
 
