@@ -119,3 +119,39 @@ sprint) is flagged high-scrutiny in the backlog: any resulting interface additio
   extra reviewer pass required per the backlog), once MDF-003's assembled shape is known.
 - **MDF-005** — positioning/copy discipline for multimodal results, once MDF-003 defines the lineage
   data it renders.
+
+## Outcome
+
+Both ADRs reviewed by the Tech Lead and accepted as-is — no deficiency found against the DoD, no ADR
+edits required.
+
+- **MDF-001** (`docs/adr/0008-multimodal-fusion-architecture-and-leakage-posture.md`, `status: accepted`):
+  states the join lives inside `services/validation-service` as a new `feature_dataset.py` module
+  (sibling to `dataset_source.py`), with an explicit finding that this is *not* a pull-forward against
+  an un-fired trigger (trigger #3 already fired) and no ADR-0003-style disclosure is required; documents
+  per-connector-type (`BinancePriceConnector`/`BlockchainInfoConnector`/`RedditSentimentConnector`)
+  publication/confirmation lag, revision risk, and minimum safe purge-gap/alignment rule in a table; and
+  confirms (not corrects) that `CompositeDatasetSource` is single-reference-with-mode-dispatch only, not
+  multi-field composition, read directly against `dataset_source.py`.
+- **MDF-002** (`docs/adr/0009-multimodal-timestamp-alignment-design.md`, `status: accepted`): states a
+  per-source-pair resampling/alignment rule keyed off each source's `fetched_at` (never a nominal
+  timestamp, never a future-dated value); a required `missing_timestamp_policy` field with no silent
+  default (`422` if omitted); confirms the target series' own index is authoritative and is fed to
+  `generate_splits` unchanged, strictly before splitting (`splitting.py` requires no change); and
+  includes a worked example combining real `binance_price_btcusdt_1h` and `blockchain_info_hash-rate`
+  data over a four-hour window under `"drop_row"`.
+- **No source touched.** `git status` was clean at review time and `git show fc7b7c0 --stat` confirms
+  commit `fc7b7c0` ("Sprint 31 (in progress): MDF-001/002 fusion architecture and alignment ADRs
+  drafted") changed exactly three files — the two ADRs and this sprint plan — zero lines under
+  `libs/naive_first_engine`, `services/validation-service/src/`, or any other source tree.
+- `docs/product/backlog-multimodal-dataset-fusion.md`'s MDF-001/002 entries are now marked
+  "Status: Done (Sprint 31)" with acceptance-criteria boxes checked and a pointer to where each is
+  satisfied in ADR-0008/0009 (matching the DH-item convention from Sprint 30). MDF-003 is now annotated
+  "unblocked, next" — both of its blocking dependencies are closed. MDF-004/005 left unchanged.
+- QA was not raised for this sprint: it is pure decision-work (two ADRs, no code, no leakage-sensitive
+  logic executed, no lifecycle/state-machine change, nothing rendering a number to an end user) — the
+  QA gate applies to shipped code, and none shipped this sprint. The next sprint that implements MDF-003
+  (real join code against a leakage-sensitive surface) will require QA before sign-off.
+- **Next**: MDF-003 (`validation-service` dataset assembly) is the priority story for the following MDF
+  sprint, to be ticketed by the Tech Lead per ADR-0008's authorized location/shape once that sprint is
+  planned.

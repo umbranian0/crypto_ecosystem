@@ -74,29 +74,46 @@ kind of honest finding this platform exists to surface.
 
 ### MDF-001 — Decide the fusion architecture and leakage posture per connector type [Must, blocking]
 
+**Status: Done (Sprint 31).** See `docs/adr/0008-multimodal-fusion-architecture-and-leakage-posture.md`
+(accepted). No source code was written or touched — decision-work only, per this story's own acceptance
+criteria.
+
 As the Tech Lead/Architect, I need a written decision on where multi-source dataset assembly lives and what each
 connector type's leakage risk is, before any join code is written, because this determines whether the work is a
 `validation-service` extension or new scope, and because getting a connector's lag/leakage treatment wrong
 directly threatens this platform's core validity claim.
 
 Acceptance criteria:
-- ADR (or dated `services/validation-service/README.md` section, matching this repo's existing pattern for
+- [x] ADR (or dated `services/validation-service/README.md` section, matching this repo's existing pattern for
   scope decisions) states: (a) where the join happens — most likely a new dataset-assembly step inside
   `validation-service` that resolves N `{source, field}` references into one aligned feature table before
   `naive_first_engine` is invoked, versus a standalone feature-store service — with a stated reason if it's not
   the validation-service-extension option; (b) whether this counts as pulling a component forward against an
   un-fired trigger (per `implementation-plan.md`'s trigger table) and, if so, the same ADR-0003-style disclosure
   already used for the two prior ingestion-connector pull-forwards.
-- For each of the three existing connector types (price, on-chain, sentiment), the ADR documents: known
+  Satisfied by ADR-0008 (a): join lives inside `validation-service` (new `feature_dataset.py`, sibling to
+  `dataset_source.py`); explicit no-pull-forward finding with reasoning tied to trigger #3 already having
+  fired and the module's own README-stated bounded context.
+- [x] For each of the three existing connector types (price, on-chain, sentiment), the ADR documents: known
   publication/confirmation lag, whether any field can be revised after initial publication, and the resulting
   minimum safe purge-gap or alignment rule for that source — reusing/extending the "documented causal lag"
   concept `docs/solution-design.md` already assigns to the sentiment/on-chain connector, rather than inventing a
   new one.
-- Explicitly confirms or corrects this backlog's reading of `CompositeDatasetSource` (finding #4 above) — states
+  Satisfied by ADR-0008 (b): per-connector table (`BinancePriceConnector`, `BlockchainInfoConnector`,
+  `RedditSentimentConnector`) with lag, revision-risk, and minimum purge-gap/alignment rule for each, plus
+  the binding `fetched_at`-not-nominal-timestamp constraint carried into MDF-002.
+- [x] Explicitly confirms or corrects this backlog's reading of `CompositeDatasetSource` (finding #4 above) — states
   whether it already supports multi-field composition or is single-field-with-fallback-sources only.
-- No fusion or join code is written until this closes.
+  Satisfied by ADR-0008 (c): confirmed (not corrected) as single-reference-with-mode-dispatch only, read
+  directly against `dataset_source.py`.
+- [x] No fusion or join code is written until this closes.
+  Confirmed via `git status`/`git diff` scoped to `libs/naive_first_engine`, `services/validation-service/src/`,
+  and every other source tree — commit `fc7b7c0` touched only the two ADRs and `docs/sprints/sprint-31.md`.
 
 ### MDF-002 — Timestamp alignment / frequency-reconciliation design for a multi-source feature set [Must]
+
+**Status: Done (Sprint 31).** See `docs/adr/0009-multimodal-timestamp-alignment-design.md` (accepted). No
+source code was written or touched.
 
 As the Tech Lead, I need a documented alignment strategy for combining series sampled at different frequencies
 (e.g. minute-level price, hourly on-chain, daily-or-irregular sentiment) into one row-aligned table, because
@@ -106,19 +123,33 @@ own schedule.
 Depends on: MDF-001.
 
 Acceptance criteria:
-- Design doc states, per source-pair, the resampling/alignment rule (e.g. forward-fill a slower series onto the
+- [x] Design doc states, per source-pair, the resampling/alignment rule (e.g. forward-fill a slower series onto the
   faster series's index, only ever using values timestamped strictly before or at each row's own timestamp minus
   that source's confirmed lag from MDF-001 — never interpolating using a future-dated value).
-- States the missing-timestamp policy (drop the row vs. carry-forward vs. exclude the source from that run) and
+  Satisfied by ADR-0009's "Per-source-pair resampling/alignment rule" section (price-onto-price, on-chain-
+  onto-target, sentiment-onto-target), all keyed off `fetched_at` per ADR-0008 (b).
+- [x] States the missing-timestamp policy (drop the row vs. carry-forward vs. exclude the source from that run) and
   requires it be a config choice recorded on the run, not a silent default, so two runs' results are comparable
   when they use different policies.
-- States how the final aligned table's own `DatetimeIndex` is derived (which source's clock is authoritative)
+  Satisfied by ADR-0009's "Missing-timestamp policy" section: required `missing_timestamp_policy` field
+  (`"drop_row"` / `"forward_fill_exhausted_as_null_then_drop"` / `"exclude_source"`), no default, `422` if
+  omitted, persisted on the run record.
+- [x] States how the final aligned table's own `DatetimeIndex` is derived (which source's clock is authoritative)
   and confirms this index is what gets passed to `generate_splits` unchanged — i.e. this step happens strictly
   before splitting/purge-gap, never after, so the purge gap still operates on the real combined-data risk window.
-- Includes at least one worked example combining real data from two of the three existing connectors, showing
+  Satisfied by ADR-0009's "Authoritative clock for the final aligned index" section: target series' own index
+  is authoritative; explicit confirmation `generate_splits` receives it unchanged, strictly before splitting;
+  `splitting.py` requires no change.
+- [x] Includes at least one worked example combining real data from two of the three existing connectors, showing
   the aligned table and calling out any row dropped or filled.
+  Satisfied by ADR-0009's "Worked example" section: `binance_price_btcusdt_1h` (target) +
+  `blockchain_info_hash-rate` (feature) over a four-hour window under `"drop_row"`, with the dropped row and
+  each forward-filled row called out explicitly.
 
 ### MDF-003 — `validation-service` dataset assembly for a multi-source feature set [Must]
+
+**Status: unblocked, next.** MDF-001 and MDF-002 are both done (Sprint 31) — this story is now the
+sequencing priority for the following MDF sprint, per the backlog's own dependency chain.
 
 As a tenant, I want to specify multiple `{source, field}` references when submitting a validation run so my
 candidate model can be scored using a combined feature set instead of a single series, while the run is still
