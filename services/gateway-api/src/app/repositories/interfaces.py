@@ -26,7 +26,7 @@ shared default method, so there is nothing an ABC would buy over a Protocol
 here.
 
 `tenant_id`-first convention (backlog AC2) and its exceptions: every method
-takes `tenant_id` as its first parameter after `self`, except exactly four,
+takes `tenant_id` as its first parameter after `self`, except exactly five,
 each documented individually at its own definition below because each has a
 different reason a tenant isn't yet known at call time:
 - `TenantRepository.create_tenant` -- a tenant has no id yet at creation time.
@@ -37,9 +37,12 @@ different reason a tenant isn't yet known at call time:
   the tenant either; `email` alone is the correct lookup key.
 - `TenantRepository.tenant_exists` (SETUP-001) -- takes no arguments at all;
   a fresh-install check is inherently not about any one tenant.
-No other method has an exception: `create_key`, `revoke_key`, and
-`create_user` all take `tenant_id` first, since in each of those cases a
-tenant is already known by the caller.
+- `TenantRepository.list_tenants` (SETUP-011) -- takes no arguments at all;
+  a cross-tenant listing is inherently an operator-only, tenant-agnostic
+  read, not a question about any one tenant.
+No other method has an exception: `create_key`, `revoke_key`, `create_user`,
+and `list_api_keys` all take `tenant_id` first, since in each of those cases
+a tenant is already known by the caller.
 """
 
 from __future__ import annotations
@@ -95,6 +98,15 @@ class TenantRepository(typing.Protocol):
 
     def get_tenant(self, tenant_id: str) -> TenantRecord | None: ...
 
+    def list_tenants(self) -> list[TenantRecord]:
+        """`SETUP-011`: every tenant, for the operator-only `GET /tenants`
+        listing. Not `tenant_id`-first (a fifth documented exception,
+        alongside `create_tenant`/`get_by_hash`/`get_user_by_email`/
+        `tenant_exists`): a cross-tenant listing is inherently an
+        operator-only, tenant-agnostic read.
+        """
+        ...
+
     def tenant_exists(self) -> bool:
         """`SETUP-001`: does at least one `tenants` row exist yet -- the
         fresh-install check `GET /setup/status` needs. Not `tenant_id`-first
@@ -137,3 +149,13 @@ class ApiKeyRepository(typing.Protocol):
         ...
 
     def revoke_key(self, tenant_id: str, key_id: str) -> None: ...
+
+    def list_api_keys(self, tenant_id: str) -> list[ApiKeyRecord]:
+        """`SETUP-011`: every key belonging to `tenant_id`, for the
+        operator-only `GET /tenants` listing (each tenant's keys) and for
+        `POST /tenants/{tenant_id}/api-keys/{key_id}/revoke`'s
+        does-this-key-belong-to-this-tenant lookup. `tenant_id`-first, the
+        ordinary case -- unlike `get_by_hash`, the caller here already knows
+        the tenant.
+        """
+        ...

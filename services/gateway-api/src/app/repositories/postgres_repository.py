@@ -130,6 +130,20 @@ class PostgresTenantRepository:
                 session.execute(select(Tenant.id).limit(1)).first() is not None
             )
 
+    def list_tenants(self) -> list[TenantRecord]:
+        # SETUP-011: a fourth tenant-agnostic read, alongside get_by_hash/
+        # get_user_by_email/tenant_exists -- deliberately does NOT call
+        # _set_tenant_scope. Confirmed (not assumed) that migration 0005's
+        # existing `USING (id = current_setting(...) OR NULLIF(...) IS
+        # NULL)` fallback on `tenants` already covers a `SELECT *`, not just
+        # tenant_exists()'s single-row `LIMIT 1` read -- a USING clause
+        # applies row-by-row to every SELECT against the table regardless of
+        # how many rows the query would otherwise return, so no new
+        # migration is needed for this method.
+        with Session(self._engine) as session:
+            tenants = session.execute(select(Tenant)).scalars().all()
+            return [_tenant_to_record(tenant) for tenant in tenants]
+
 
 class PostgresUserRepository:
     """Postgres implementation of `UserRepository` (GW-003)."""
@@ -215,3 +229,15 @@ class PostgresApiKeyRepository:
                 .values(revoked_at=datetime.utcnow())
             )
             session.commit()
+
+    def list_api_keys(self, tenant_id: str) -> list[ApiKeyRecord]:
+        # SETUP-011: tenant_id-first, ordinary case -- scopes app.tenant_id
+        # like every other tenant-known method on this class, so RLS's
+        # ordinary strict USING clause (0002) applies unchanged; no fallback
+        # needed here (unlike list_tenants above).
+        with Session(self._engine) as session:
+            _set_tenant_scope(session, tenant_id)
+            api_keys = session.execute(
+                select(ApiKey).where(ApiKey.tenant_id == tenant_id)
+            ).scalars().all()
+            return [_api_key_to_record(api_key) for api_key in api_keys]

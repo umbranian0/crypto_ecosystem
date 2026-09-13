@@ -96,6 +96,13 @@ class SQLiteTenantRepository:
                 session.execute(select(Tenant.id).limit(1)).first() is not None
             )
 
+    def list_tenants(self) -> list[TenantRecord]:
+        # SETUP-011: cross-tenant read (fifth documented exception on
+        # TenantRepository) -- no tenant_id filter, by design.
+        with Session(self._engine) as session:
+            tenants = session.execute(select(Tenant)).scalars().all()
+            return [_tenant_to_record(tenant) for tenant in tenants]
+
 
 class SQLiteUserRepository:
     """SQLite implementation of `UserRepository` (GW-003)."""
@@ -167,3 +174,13 @@ class SQLiteApiKeyRepository:
                 .values(revoked_at=datetime.utcnow())
             )
             session.commit()
+
+    def list_api_keys(self, tenant_id: str) -> list[ApiKeyRecord]:
+        # SETUP-011: tenant_id-first, ordinary case -- scoped in the SQL
+        # WHERE clause itself, per this module's own tenant-isolation
+        # convention (docstring above).
+        with Session(self._engine) as session:
+            api_keys = session.execute(
+                select(ApiKey).where(ApiKey.tenant_id == tenant_id)
+            ).scalars().all()
+            return [_api_key_to_record(api_key) for api_key in api_keys]

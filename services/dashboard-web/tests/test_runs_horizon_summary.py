@@ -106,6 +106,49 @@ def test_horizon_summary_days_7_shows_only_horizon_168_run(monkeypatch) -> None:
     assert RUN_HORIZON_720["id"] not in response.text
 
 
+def test_horizon_summary_out_of_range_days_rejected_with_422(monkeypatch) -> None:
+    """QA-found (Sprint 31 UAT sweep): an out-of-range `days` (not one of
+    `HORIZON_SUMMARY_DAY_OPTIONS` -- 7/15/30) used to silently render 200 with
+    no active day-tab and an empty `runs` list, indistinguishable from "no
+    completed runs at a valid horizon". Now rejected up front with a 422, and
+    gateway-api must never even be called.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("gateway-api must not be called for an out-of-range 'days'")
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    for out_of_range_days in (999, -1):
+        response = client.get(f"/runs/horizon-summary?days={out_of_range_days}")
+        assert response.status_code == 422
+
+
+def test_horizon_summary_days_zero_and_non_integer_rejected(monkeypatch) -> None:
+    """QA regression: `days=0` (falsy but still a value the user explicitly
+    set) and a non-integer `days` (FastAPI's own query coercion failure, not
+    the `not in HORIZON_SUMMARY_DAY_OPTIONS` guard) must both be rejected
+    before gateway-api is ever called, same as any other out-of-range value.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("gateway-api must not be called for an invalid 'days'")
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get("/runs/horizon-summary?days=0")
+    assert response.status_code == 422
+
+    response = client.get("/runs/horizon-summary?days=not-a-number")
+    assert response.status_code == 422
+
+
 def test_horizon_summary_days_30_shows_disjoint_set(monkeypatch) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json=RUNS_BODY)
@@ -198,6 +241,83 @@ def test_horizon_summary_requires_session(monkeypatch) -> None:
 
     assert response.status_code == 303
     assert response.headers["location"] == "/login"
+
+
+def _make_run(index: int, horizon: int = 168, status: str = "completed") -> dict:
+    return {
+        "id": f"run-{index:04d}-0000-0000-0000-000000000000",
+        "tenant_id": "tenant-a",
+        "dataset_id": "dataset-1",
+        "horizon": horizon,
+        "status": status,
+        "created_at": f"2026-08-{(index % 28) + 1:02d}T00:00:00Z",
+        "completed_at": f"2026-08-{(index % 28) + 1:02d}T01:00:00Z",
+    }
+
+
+def test_horizon_summary_sees_runs_beyond_the_old_default_20_limit(monkeypatch) -> None:
+    """DASH-122 regression: prior to this fix, `runs_horizon_summary` called
+    `GET /runs` with no explicit `limit`, silently getting only the endpoint's
+    own `limit=20` default -- a tenant with 25 runs at the matching horizon
+    would never see the 21st-25th on this page. All 25 fit in one
+    `_RUNS_LIST_PAGE_SIZE=100` page, so this also proves the simple case (not
+    just the >100 pagination case below).
+    """
+    runs = [_make_run(i) for i in range(25)]
+    body = {"items": runs, "limit": 100, "offset": 0, "total": 25}
+
+    calls: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/runs"
+        calls.append(dict(request.url.params))
+        return httpx.Response(200, json=body)
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get("/runs/horizon-summary?days=7")
+
+    assert response.status_code == 200
+    for run in runs[20:25]:
+        assert run["id"] in response.text
+    assert len(calls) == 1
+    assert calls[0]["limit"] == "100"
+
+
+def test_horizon_summary_pages_through_more_than_one_hundred_runs(monkeypatch) -> None:
+    """DASH-122 regression: validation-service's `GET /runs` hard-caps
+    `limit` at 100 (`le=100`, a real `422` above it) -- a tenant with more
+    than 100 runs needs more than one page. This proves `runs_horizon_summary`
+    actually pages through `offset=0`/`offset=100` rather than stopping at
+    the first page.
+    """
+    runs = [_make_run(i) for i in range(150)]
+    total = len(runs)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/runs"
+        limit = int(request.url.params["limit"])
+        offset = int(request.url.params["offset"])
+        assert limit == 100
+        page = runs[offset : offset + limit]
+        return httpx.Response(
+            200, json={"items": page, "limit": limit, "offset": offset, "total": total}
+        )
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get("/runs/horizon-summary?days=7")
+
+    assert response.status_code == 200
+    # 121st-125th runs (index 120-124) live only on the second page (offset=100).
+    for run in runs[120:125]:
+        assert run["id"] in response.text
 
 
 def test_horizon_summary_template_has_no_banned_positioning_words() -> None:

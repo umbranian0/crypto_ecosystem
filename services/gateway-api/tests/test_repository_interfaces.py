@@ -87,6 +87,9 @@ class _FakeTenantRepository:
     def tenant_exists(self) -> bool:
         return bool(self._tenants)
 
+    def list_tenants(self) -> list[TenantRecord]:
+        return list(self._tenants.values())
+
 
 class _FakeUserRepository:
     """Minimal in-memory implementation proving the interface is implementable."""
@@ -146,6 +149,9 @@ class _FakeApiKeyRepository:
                     revoked_at=datetime.now(timezone.utc).replace(tzinfo=None),
                 )
 
+    def list_api_keys(self, tenant_id: str) -> list[ApiKeyRecord]:
+        return [record for record in self._keys_by_hash.values() if record.tenant_id == tenant_id]
+
 
 def test_fake_tenant_repository_satisfies_protocol_and_round_trips() -> None:
     repo: TenantRepository = _FakeTenantRepository()
@@ -157,6 +163,7 @@ def test_fake_tenant_repository_satisfies_protocol_and_round_trips() -> None:
     assert repo.get_tenant(tenant.id) == tenant
     assert repo.get_tenant("other-tenant") is None
     assert repo.tenant_exists() is True
+    assert repo.list_tenants() == [tenant]
 
 
 def test_fake_user_repository_satisfies_protocol_and_looks_up_by_email() -> None:
@@ -175,6 +182,8 @@ def test_fake_api_key_repository_satisfies_protocol_and_looks_up_by_hash_and_rev
     key = repo.create_key("tenant-1", "hash-abc")
     assert repo.get_by_hash("hash-abc") == key
     assert repo.get_by_hash("nonexistent-hash") is None
+    assert repo.list_api_keys("tenant-1") == [key]
+    assert repo.list_api_keys("tenant-2") == []
 
     repo.revoke_key("tenant-1", key.id)
     revoked = repo.get_by_hash("hash-abc")

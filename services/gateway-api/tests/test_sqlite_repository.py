@@ -165,3 +165,88 @@ def test_identity_lookups_resolve_regardless_of_tenant(tenant_repo, user_repo, k
     assert key_repo.get_by_hash("hash-tenant-a").revoked_at is None
 
     assert user_a.id != user_b.id
+
+
+def test_list_tenants_empty(tenant_repo) -> None:
+    """SETUP-011."""
+    assert tenant_repo.list_tenants() == []
+
+
+def test_list_tenants_returns_every_tenant(tenant_repo) -> None:
+    """SETUP-011: cross-tenant read, no tenant_id filter by design."""
+    tenant_a = tenant_repo.create_tenant("Tenant A")
+    tenant_b = tenant_repo.create_tenant("Tenant B")
+
+    listed = tenant_repo.list_tenants()
+
+    assert {tenant.id for tenant in listed} == {tenant_a.id, tenant_b.id}
+
+
+def test_list_api_keys_empty_for_a_tenant_with_no_keys(tenant_repo, key_repo) -> None:
+    """SETUP-011."""
+    tenant = tenant_repo.create_tenant("Acme Corp")
+
+    assert key_repo.list_api_keys(tenant.id) == []
+
+
+def test_list_api_keys_scoped_to_tenant_id_and_reflects_revocation(tenant_repo, key_repo) -> None:
+    """SETUP-011: tenant_id-first, scoped in the SQL WHERE clause itself --
+    another tenant's keys never appear, and a revoked key still appears with
+    its `revoked_at` set (revocation is a flag, not a delete).
+    """
+    tenant_a = tenant_repo.create_tenant("Tenant A")
+    tenant_b = tenant_repo.create_tenant("Tenant B")
+    key_a1 = key_repo.create_key(tenant_a.id, "hash-a1")
+    key_a2 = key_repo.create_key(tenant_a.id, "hash-a2")
+    key_repo.create_key(tenant_b.id, "hash-b1")
+    key_repo.revoke_key(tenant_a.id, key_a2.id)
+
+    listed = key_repo.list_api_keys(tenant_a.id)
+
+    assert {key.id for key in listed} == {key_a1.id, key_a2.id}
+    by_id = {key.id: key for key in listed}
+    assert by_id[key_a1.id].revoked_at is None
+    assert by_id[key_a2.id].revoked_at is not None
+
+
+def test_list_tenants_empty(tenant_repo) -> None:
+    """SETUP-011."""
+    assert tenant_repo.list_tenants() == []
+
+
+def test_list_tenants_returns_every_tenant(tenant_repo) -> None:
+    """SETUP-011."""
+    tenant_a = tenant_repo.create_tenant("Tenant A")
+    tenant_b = tenant_repo.create_tenant("Tenant B")
+
+    listed = tenant_repo.list_tenants()
+
+    assert {tenant.id for tenant in listed} == {tenant_a.id, tenant_b.id}
+
+
+def test_list_api_keys_empty(tenant_repo, key_repo) -> None:
+    """SETUP-011."""
+    tenant = tenant_repo.create_tenant("Acme Corp")
+
+    assert key_repo.list_api_keys(tenant.id) == []
+
+
+def test_list_api_keys_scoped_to_tenant_with_mixed_active_and_revoked(
+    tenant_repo, key_repo
+) -> None:
+    """SETUP-011: only the requested tenant's keys come back, in whatever
+    active/revoked mix they're in.
+    """
+    tenant_a = tenant_repo.create_tenant("Tenant A")
+    tenant_b = tenant_repo.create_tenant("Tenant B")
+    active_key = key_repo.create_key(tenant_a.id, "hash-active")
+    revoked_key = key_repo.create_key(tenant_a.id, "hash-revoked")
+    key_repo.revoke_key(tenant_a.id, revoked_key.id)
+    key_repo.create_key(tenant_b.id, "hash-b")
+
+    listed = key_repo.list_api_keys(tenant_a.id)
+
+    assert {key.id for key in listed} == {active_key.id, revoked_key.id}
+    listed_by_id = {key.id: key for key in listed}
+    assert listed_by_id[active_key.id].revoked_at is None
+    assert listed_by_id[revoked_key.id].revoked_at is not None

@@ -272,6 +272,98 @@ def test_trend_requires_session(monkeypatch) -> None:
     assert response.headers["location"] == "/login"
 
 
+def _make_run(index: int, dataset_id: str = "dataset-1", horizon: int = 24) -> dict:
+    return {
+        "id": f"run-{index:04d}-0000-0000-0000-000000000000",
+        "dataset_id": dataset_id,
+        "horizon": horizon,
+        "status": "completed",
+        "created_at": f"2026-08-{(index % 28) + 1:02d}T00:00:00Z",
+        "completed_at": f"2026-08-{(index % 28) + 1:02d}T01:00:00Z",
+    }
+
+
+def test_trend_group_selector_sees_runs_beyond_the_old_default_20_limit(monkeypatch) -> None:
+    """DASH-122 regression: prior to this fix, `runs_trend` called `GET /runs`
+    with no explicit `limit`, silently getting only the endpoint's own
+    `limit=20` default -- with 25 runs in the group, the 21st-25th would
+    never appear in the group selector. All 25 fit in one
+    `_RUNS_LIST_PAGE_SIZE=100` page, so this also proves the simple case (not
+    just the >100 pagination case below).
+    """
+    runs = [_make_run(i) for i in range(25)]
+    body = {"items": runs, "limit": 100, "offset": 0, "total": 25}
+
+    calls: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/runs":
+            calls.append(dict(request.url.params))
+            return httpx.Response(200, json=body)
+        if request.url.path.endswith("/splits"):
+            return httpx.Response(200, json=[_split(0, model_mae=1.0, naive0_mae=2.0)])
+        raise AssertionError(f"unexpected call: {request.url.path}")
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get("/runs/trend")
+
+    assert response.status_code == 200
+    assert len(calls) == 1
+    assert calls[0]["limit"] == "100"
+
+    response = client.get(f"/runs/trend?dataset_id=dataset-1&horizon=24&metric=mae")
+    assert response.status_code == 200
+    for run in runs[20:25]:
+        assert run["id"] in response.text
+
+
+def test_trend_pages_through_more_than_one_hundred_runs(monkeypatch) -> None:
+    """DASH-122 regression: validation-service's `GET /runs` hard-caps
+    `limit` at 100 (`le=100`, a real `422` above it) -- a tenant/group with
+    more than 100 runs needs more than one page. This proves `runs_trend`
+    actually pages through `offset=0`/`offset=100` and its consistency
+    indicator/trend chart reflect runs beyond the first page.
+    """
+    runs = [_make_run(i) for i in range(150)]
+    total = len(runs)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/runs":
+            limit = int(request.url.params["limit"])
+            offset = int(request.url.params["offset"])
+            assert limit == 100
+            page = runs[offset : offset + limit]
+            return httpx.Response(
+                200, json={"items": page, "limit": limit, "offset": offset, "total": total}
+            )
+        if request.url.path.endswith("/splits"):
+            return httpx.Response(
+                200,
+                json=[
+                    {**_split(0, model_mae=1.0, naive0_mae=2.0), "dm_verdict": "better",
+                     "dm_statistic": -2.0, "dm_pvalue": 0.01},
+                ],
+            )
+        raise AssertionError(f"unexpected call: {request.url.path}")
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get("/runs/trend?dataset_id=dataset-1&horizon=24&metric=mae")
+
+    assert response.status_code == 200
+    # 121st-125th runs (index 120-124) live only on the second page (offset=100).
+    for run in runs[120:125]:
+        assert run["id"] in response.text
+    assert "Beat Naive0 in 150 of 150 completed runs" in response.text
+
+
 def test_trend_template_has_no_banned_positioning_words() -> None:
     template_path = (
         pathlib.Path(__file__).parent.parent / "src" / "app" / "templates" / "runs_trend.html"

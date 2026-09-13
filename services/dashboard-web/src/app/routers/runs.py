@@ -225,6 +225,24 @@ exists or is reachable. A run at or under the cap (the vast majority) is
 unaffected: `rendered_splits is splits` and `splits_truncated` is `False`,
 so every downstream builder/template branch receives the exact same input,
 and therefore renders byte-identical output, to before this ticket.
+
+DASH-122: fixes a real correctness bug found by the DBA agent during a
+performance review -- `GET /runs` (proxied through gateway-api's GW-016,
+itself proxying validation-service's VS-022) defaults to `limit=20` when no
+`limit` query param is supplied. `runs_horizon_summary` (FHS-002) and
+`runs_trend` (RAV-009/RAV-010) both called it with no explicit `limit` and
+filtered/grouped the result client-side -- for a tenant with more than 20
+runs, any matching run outside the 20 most recent silently never appeared on
+either page. Root cause fix: `_fetch_all_runs` below pages through the same
+`GET /runs` call with `limit`/`offset` (VS-022's own hard `le=100` ceiling
+means even a single maximal-`limit` request is insufficient once a tenant
+exceeds 100 runs, so this is a real paging loop, not a bigger one-shot
+`limit`) until the full, `total`-bounded run list has been fetched. Both
+routes now call `_fetch_all_runs` instead of a bare, unparameterized
+`client.get(..., "/runs", ...)` -- no new backend endpoint, no new
+pagination UI. `runs_list` (DASH-005-01) itself is deliberately untouched --
+it forwards a caller-supplied `limit`/`offset` unmodified by design (its own
+docstring), not this bug's territory.
 """
 
 from __future__ import annotations
@@ -232,7 +250,7 @@ from __future__ import annotations
 import json
 
 import httpx
-from fastapi import APIRouter, Form, Request
+from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from naive_first_common.contracts import (
     DatasetSummaryResponse,
@@ -265,6 +283,25 @@ _MISSING_DATASET_REFERENCE_ERROR = (
     "for the dataset reference."
 )
 _INVALID_INLINE_JSON_ERROR = "Inline payload must be valid JSON."
+
+
+def _human_readable_run_request_error(exc: ValueError | ValidationError) -> str:
+    """QA-found (Sprint 31 UAT sweep): `RunRequest(...)` construction failures
+    in `run_new_submit` below used to redisplay `str(exc)` verbatim, which for
+    a `ValidationError` is Pydantic's own internal error text (model class
+    name, `type=...` codes, a `pydantic.dev` docs link) -- never meant for an
+    end user. Mirrors the same hand-written, human-readable style as
+    `_MISSING_DATASET_REFERENCE_ERROR`/`_INVALID_INLINE_JSON_ERROR` above:
+    names the offending field(s) via `exc.errors()` where available (a
+    `ValidationError`), falling back to a generic message for a plain
+    `ValueError` (e.g. a non-integer `horizon`/`purge_gap_hours`/etc., raised
+    by this route's own `int(...)` calls before `RunRequest` is even
+    constructed).
+    """
+    if isinstance(exc, ValidationError):
+        fields = ", ".join(str(error["loc"][-1]) for error in exc.errors())
+        return f"One or more fields have an invalid value: {fields}."
+    return "One or more fields have an invalid value."
 
 # FHS-002 / docs/adr/0007-forecast-horizon-summary-unit-and-scope.md: `horizon`
 # is a count of the dataset's own sampling steps, not a fixed time unit
@@ -392,6 +429,60 @@ def _call_downstream(fn, *args, **kwargs) -> tuple[httpx.Response | None, int | 
         return None, 504
 
 
+# DASH-122: validation-service's `GET /runs` (VS-022) enforces a hard
+# `Query(default=20, ge=1, le=100)` ceiling (`services/validation-service/
+# src/app/routers/runs.py`) -- out-of-range `limit` values (including
+# anything above 100) are rejected with a `422`, they are never silently
+# clamped. That means a single request, even at the maximum allowed `limit`,
+# cannot guarantee "the tenant's full run history" once a tenant has more
+# than 100 runs -- passing a large one-shot `limit` (this ticket's Analysis
+# section considered and rejected that shape) would just move the same
+# silent-truncation bug from 20 to 100. `_fetch_all_runs` below pages through
+# the existing `limit`/`offset` params (no new backend endpoint) until every
+# run has been fetched.
+_RUNS_LIST_PAGE_SIZE = 100
+
+
+def _fetch_all_runs(
+    client: httpx.Client, headers: dict[str, str]
+) -> tuple[list[RunSummaryResponse] | None, httpx.Response | None, int | None]:
+    """DASH-122: pages through gateway-api's `GET /runs` (GW-016, proxying
+    validation-service's VS-022) using `_RUNS_LIST_PAGE_SIZE`-sized pages
+    until the full set of the tenant's runs has been fetched (using the
+    response envelope's own `total` field, and stopping early if a page comes
+    back short, per VS-022's own `{items, limit, offset, total}` contract --
+    no new backend endpoint, no client-side re-sort of the server's own
+    `created_at DESC` order). Returns `(runs, None, None)` on success, or
+    `(None, response, transport_status)` on the first non-200/transport
+    failure encountered, mirroring `_call_downstream`'s own return shape so
+    callers reuse the exact same `_render_error_for_status` branch every
+    other route in this file already uses -- no new failure-handling shape.
+    """
+    all_runs: list[RunSummaryResponse] = []
+    offset = 0
+    while True:
+        response, transport_status = _call_downstream(
+            client.get,
+            "/runs",
+            headers=headers,
+            params={"limit": _RUNS_LIST_PAGE_SIZE, "offset": offset},
+        )
+        if transport_status is not None:
+            return None, response, transport_status
+        if response.status_code != 200:
+            return None, response, None
+
+        body = response.json()
+        page_items = [RunSummaryResponse(**item) for item in body["items"]]
+        all_runs.extend(page_items)
+
+        offset += _RUNS_LIST_PAGE_SIZE
+        if len(page_items) < _RUNS_LIST_PAGE_SIZE or offset >= body["total"]:
+            break
+
+    return all_runs, None, None
+
+
 def _fetch_ingestion_datasets(
     client: httpx.Client, headers: dict[str, str]
 ) -> list[DatasetSummaryResponse]:
@@ -507,17 +598,27 @@ def runs_horizon_summary(
             {"days": None, "horizon": None, "runs": None},
         )
 
+    # QA-found (Sprint 31 UAT sweep): an out-of-range `days` (e.g. 999 or -1)
+    # used to fall through silently -- 200, no day-tab marked active, an
+    # empty `runs` list indistinguishable from "no completed runs at a valid
+    # horizon". Rejected up front against the selector's own supported set
+    # instead, matching this route's/this file's existing convention of a
+    # 4xx for a rejected request rather than a silently degraded 200.
+    if days not in HORIZON_SUMMARY_DAY_OPTIONS:
+        raise HTTPException(status_code=422, detail="Unsupported 'days' value.")
+
     horizon = _horizon_for_days(days)
 
     with httpx.Client(base_url=base_url, timeout=DOWNSTREAM_HTTP_TIMEOUT_SECONDS) as client:
-        response, transport_status = _call_downstream(client.get, "/runs", headers=headers)
-        if transport_status is not None:
-            return _render_error_for_status(request, transport_status)
-        if response.status_code != 200:
-            return _render_error_for_status(request, response.status_code)
-
-        body = response.json()
-        all_runs = [RunSummaryResponse(**item) for item in body["items"]]
+        # DASH-122: was a single `GET /runs` call with no `limit`, silently
+        # defaulting to the endpoint's own `limit=20` and missing any
+        # matching run outside the 20 most recent -- now pages through the
+        # tenant's full run history via `_fetch_all_runs`.
+        all_runs, error_response, transport_status = _fetch_all_runs(client, headers)
+        if all_runs is None:
+            if transport_status is not None:
+                return _render_error_for_status(request, transport_status)
+            return _render_error_for_status(request, error_response.status_code)
 
     matching_runs = [
         run for run in all_runs if run.horizon == horizon and run.status == "completed"
@@ -667,7 +768,11 @@ def run_new_submit(
             return templates.TemplateResponse(
                 request,
                 "run_new.html",
-                {"error": str(exc), "values": values, "datasets": datasets},
+                {
+                    "error": _human_readable_run_request_error(exc),
+                    "values": values,
+                    "datasets": datasets,
+                },
                 status_code=422,
             )
 
@@ -707,14 +812,15 @@ def runs_trend(
     Analysis section).
     """
     with httpx.Client(base_url=base_url, timeout=DOWNSTREAM_HTTP_TIMEOUT_SECONDS) as client:
-        response, transport_status = _call_downstream(client.get, "/runs", headers=headers)
-        if transport_status is not None:
-            return _render_error_for_status(request, transport_status)
-        if response.status_code != 200:
-            return _render_error_for_status(request, response.status_code)
-
-        body = response.json()
-        all_runs = [RunSummaryResponse(**item) for item in body["items"]]
+        # DASH-122: was a single `GET /runs` call with no `limit`, silently
+        # defaulting to the endpoint's own `limit=20` and missing any
+        # group/run outside the 20 most recent -- now pages through the
+        # tenant's full run history via `_fetch_all_runs`.
+        all_runs, error_response, transport_status = _fetch_all_runs(client, headers)
+        if all_runs is None:
+            if transport_status is not None:
+                return _render_error_for_status(request, transport_status)
+            return _render_error_for_status(request, error_response.status_code)
 
         groups: dict[tuple[str, int], list[RunSummaryResponse]] = {}
         for run in all_runs:

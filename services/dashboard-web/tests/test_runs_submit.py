@@ -244,6 +244,41 @@ def test_run_new_submit_invalid_horizon_redisplays_form(monkeypatch) -> None:
     assert "No ingested datasets yet" not in response.text
 
 
+def test_run_new_submit_invalid_horizon_shows_human_readable_error(monkeypatch) -> None:
+    """QA-found (Sprint 31 UAT sweep, unfiled ticket as of this test): a
+    client-side Pydantic `RunRequest(...)` construction failure (e.g.
+    `horizon=0`, `services/dashboard-web/src/app/routers/runs.py`'s
+    `run_new_submit`, the `except (ValueError, ValidationError) as exc`
+    branch) currently renders `str(exc)` verbatim into the `.error` paragraph
+    -- e.g. "1 validation error for RunRequest\\nhorizon\\n  Input should be
+    greater than or equal to 1 [type=greater_than_equal, ...]\\n    For
+    further information visit https://errors.pydantic.dev/...". This leaks
+    the internal Pydantic model's class name and a pydantic.dev doc link to
+    the end user and is inconsistent with this same route's other two
+    hand-written, human-readable error strings
+    (`_MISSING_DATASET_REFERENCE_ERROR`/`_INVALID_INLINE_JSON_ERROR`). This
+    test currently fails, documenting the gap for the Tech Lead to route to
+    a dev agent; QA does not patch this production-behavior fix itself.
+    """
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/ingestion/datasets"
+        return _ONE_STORED_DATASET_RESPONSE
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    form = {**VALID_FORM, "horizon": "0"}
+
+    response = client.post("/runs/new", data=form)
+
+    assert response.status_code == 422
+    assert "RunRequest" not in response.text
+    assert "pydantic.dev" not in response.text
+    assert "type=greater_than_equal" not in response.text
+
+
 def test_run_new_submit_422_from_gateway_api_redisplays_form(monkeypatch) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/ingestion/datasets":

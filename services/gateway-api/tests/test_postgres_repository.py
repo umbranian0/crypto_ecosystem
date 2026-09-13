@@ -432,3 +432,118 @@ def test_set_local_scope_does_not_leak_across_pooled_connection_reuse(
     assert user_b.id in seen_as_b
     assert user_a.id not in seen_as_b
     assert current_tenant_b == tenant_b.id
+
+
+def test_list_tenants_returns_every_tenant_via_migrated_engine(tenant_repo, unique) -> None:
+    """SETUP-011: via `migrated_engine`'s superuser connection -- proves the
+    method itself returns every row it should. The RLS-fallback-actually-
+    works claim is proven separately below via `restricted_role_engine`.
+    """
+    tenant_a = tenant_repo.create_tenant(f"PG Tenant A (list, {unique})")
+    tenant_b = tenant_repo.create_tenant(f"PG Tenant B (list, {unique})")
+
+    listed_ids = {tenant.id for tenant in tenant_repo.list_tenants()}
+
+    assert tenant_a.id in listed_ids
+    assert tenant_b.id in listed_ids
+
+
+def test_list_tenants_resolves_despite_rls_via_restricted_role(restricted_role_engine, unique) -> None:
+    """SETUP-011/migration 0005: `list_tenants()` must work with
+    `app.tenant_id` unset -- proven under `restricted_role_engine` (see
+    module docstring), a real non-superuser/non-BYPASSRLS role, so this
+    actually exercises migration 0005's permissive read fallback on the
+    `tenants` RLS policy (confirmed in this ticket's Analysis: the existing
+    `USING` clause fallback already covers a multi-row `SELECT *`, not just
+    `tenant_exists()`'s single-row `LIMIT 1` read -- no new migration
+    needed).
+    """
+    tenant_repo = PostgresTenantRepository(engine=restricted_role_engine)
+
+    tenant_a = tenant_repo.create_tenant(f"PG Tenant A (list, restricted, {unique})")
+    tenant_b = tenant_repo.create_tenant(f"PG Tenant B (list, restricted, {unique})")
+
+    listed_ids = {tenant.id for tenant in tenant_repo.list_tenants()}
+
+    assert tenant_a.id in listed_ids
+    assert tenant_b.id in listed_ids
+
+
+def test_list_api_keys_scoped_to_tenant_id_and_reflects_revocation(tenant_repo, key_repo, unique) -> None:
+    """SETUP-011: tenant_id-first, ordinary case -- scopes app.tenant_id like
+    every other tenant-known method, so RLS's ordinary strict USING clause
+    applies unchanged and another tenant's keys never appear.
+    """
+    tenant_a = tenant_repo.create_tenant(f"PG Tenant A (list keys, {unique})")
+    tenant_b = tenant_repo.create_tenant(f"PG Tenant B (list keys, {unique})")
+    key_a1 = key_repo.create_key(tenant_a.id, f"pg-list-hash-a1-{unique}")
+    key_a2 = key_repo.create_key(tenant_a.id, f"pg-list-hash-a2-{unique}")
+    key_repo.create_key(tenant_b.id, f"pg-list-hash-b1-{unique}")
+    key_repo.revoke_key(tenant_a.id, key_a2.id)
+
+    listed = key_repo.list_api_keys(tenant_a.id)
+
+    assert {key.id for key in listed} == {key_a1.id, key_a2.id}
+    by_id = {key.id: key for key in listed}
+    assert by_id[key_a1.id].revoked_at is None
+    assert by_id[key_a2.id].revoked_at is not None
+
+
+def test_list_tenants_returns_every_tenant_via_migrated_engine(tenant_repo) -> None:
+    """SETUP-011: `migrated_engine`'s superuser connection sees every
+    tenant regardless of RLS -- the deliberate cross-tenant read fallback
+    proof (under a real non-superuser role) is the test right below.
+    """
+    tenant_a = tenant_repo.create_tenant("PG Tenant A (list_tenants)")
+    tenant_b = tenant_repo.create_tenant("PG Tenant B (list_tenants)")
+
+    listed = tenant_repo.list_tenants()
+
+    listed_ids = {tenant.id for tenant in listed}
+    assert tenant_a.id in listed_ids
+    assert tenant_b.id in listed_ids
+
+
+def test_list_tenants_resolves_across_tenants_despite_rls_via_restricted_role(
+    restricted_role_engine,
+) -> None:
+    """SETUP-011: `list_tenants()` is a fourth documented tenant-agnostic
+    read (alongside `get_by_hash`/`get_user_by_email`/`tenant_exists`) --
+    proven under `restricted_role_engine` (see module docstring), a real
+    non-superuser/non-BYPASSRLS role, so this actually exercises migration
+    0005's permissive `USING` fallback on `tenants` for a multi-row
+    `SELECT *`, not just `tenant_exists()`'s single-row `LIMIT 1` read.
+    """
+    tenant_repo = PostgresTenantRepository(engine=restricted_role_engine)
+
+    tenant_a = tenant_repo.create_tenant("PG Tenant A (list_tenants, restricted)")
+    tenant_b = tenant_repo.create_tenant("PG Tenant B (list_tenants, restricted)")
+
+    listed = tenant_repo.list_tenants()
+
+    listed_ids = {tenant.id for tenant in listed}
+    assert tenant_a.id in listed_ids
+    assert tenant_b.id in listed_ids
+
+
+def test_list_api_keys_scoped_to_tenant_and_reflects_revocation(
+    tenant_repo, key_repo, unique
+) -> None:
+    """SETUP-011: `list_api_keys(tenant_id)` -- tenant_id-first, ordinary
+    case, scoped via `_set_tenant_scope` like every other tenant-known
+    method on this class. Another tenant's keys never appear, and a
+    revoked key still appears with `revoked_at` set (flag, not a delete).
+    """
+    tenant_a = tenant_repo.create_tenant("PG Tenant A (list_api_keys)")
+    tenant_b = tenant_repo.create_tenant("PG Tenant B (list_api_keys)")
+    active_key = key_repo.create_key(tenant_a.id, f"pg-list-active-{unique}")
+    revoked_key = key_repo.create_key(tenant_a.id, f"pg-list-revoked-{unique}")
+    key_repo.revoke_key(tenant_a.id, revoked_key.id)
+    key_repo.create_key(tenant_b.id, f"pg-list-other-tenant-{unique}")
+
+    listed = key_repo.list_api_keys(tenant_a.id)
+
+    listed_by_id = {key.id: key for key in listed}
+    assert set(listed_by_id) == {active_key.id, revoked_key.id}
+    assert listed_by_id[active_key.id].revoked_at is None
+    assert listed_by_id[revoked_key.id].revoked_at is not None
