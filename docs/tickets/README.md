@@ -21,11 +21,32 @@ Source: docs/sprints/sprint-29.md, docs/product/backlog-first-run-setup-and-ops.
 
 | Ticket | Story | Module | Depends on | Status |
 |---|---|---|---|---|
-| [SETUP-011](SETUP-011.md) | `GET/POST /tenants` + revoke, operator-authenticated | gateway-api | SETUP-010 | in-progress |
-| [SETUP-012](SETUP-012.md) | Settings → Tenants page | dashboard-web | SETUP-011 | todo |
-| [SETUP-015](SETUP-015.md) | Settings: read-only Environment panel | dashboard-web | none | in-progress |
-| [SETUP-021](SETUP-021.md) | Recent-errors ring buffer + `/monitoring` panel | libs/common, gateway-api, dashboard-web | SETUP-010, OPS-006 | todo |
+| [SETUP-011](SETUP-011.md) | `GET/POST /tenants` + revoke, operator-authenticated | gateway-api | SETUP-010 | done |
+| [SETUP-012](SETUP-012.md) | Settings → Tenants page | dashboard-web | SETUP-011 | done |
+| [SETUP-015](SETUP-015.md) | Settings: read-only Environment panel | dashboard-web | none | done |
+| [SETUP-021](SETUP-021.md) | Recent-errors ring buffer + `/monitoring` panel | libs/common, gateway-api, dashboard-web | SETUP-010, OPS-006 | in-progress (shared ring-buffer handler + per-service `/diagnostics/recent-errors` endpoints landed; `/monitoring` rendering panel not yet built) |
 | [SETUP-022](SETUP-022.md) | Validation-run throughput on `/monitoring` | gateway-api, dashboard-web | SETUP-020 (satisfied) | todo |
+
+**Sprint 32 status (partial)**: SETUP-011/012/015 done, verified against real diffs and the full
+`services/gateway-api` (200/200) and `services/dashboard-web` (267/267, 7 e2e deselected) suites,
+re-run clean before commit. SETUP-021 is in progress (its `libs/common`/`gateway-api`/`dashboard-web`
+diagnostics-endpoint groundwork is built and tested, but the `/monitoring` rendering panel is not).
+SETUP-022 is not started. Sprint 32 is therefore not yet closed — no Outcome section until SETUP-021/022
+land.
+
+# infra (INF-*) — urgent fix, outside sprint numbering
+
+| Ticket | Story | Depends on | Status |
+|---|---|---|---|
+| INF-019 | Wire `ingestion-service`/`reporting-service` into `infra/migrate.sh`/`.ps1` and package their Alembic `migrations/`/`alembic.ini` into both Dockerfiles | INF-005, INF-016 | done |
+
+A fresh-volume install never ran either service's real Alembic migrations — `naive_first_app`
+(INF-014) has no `CREATE` privilege to auto-create their schemas, so both services silently had no
+tables on a genuinely fresh Postgres volume. Fixed by extending `infra/migrate.sh`/`.ps1` to also
+accept `ingestion-service`/`reporting-service` (same `naive_first` migration-time role, same pattern,
+no new mechanism) and copying `migrations/`/`alembic.ini` into both services' Dockerfiles so
+`alembic upgrade head` is runnable from inside each image, matching `validation-service`/`gateway-api`'s
+existing packaging.
 
 See docs/sprints/sprint-32.md for the full sequencing rationale (`SETUP-011`→`SETUP-012` chain,
 `SETUP-015` parallel-eligible, `SETUP-021` before `SETUP-022` due to shared `monitoring.html`/
@@ -1899,3 +1920,79 @@ QA: not raised as a separate agent for this single, same-pass, structurally low-
 leakage-sensitive logic, no lifecycle/state-machine change, no user-facing numeric output changed) —
 consistent with the DASH-119/DASH-120 precedent of Tech-Lead-only verification for same-pass live bug
 fixes of this shape.
+
+# DASH-122 — `GET /runs` client-side callers silently truncated to the first 20 runs (dashboard-web)
+
+| Ticket | Story | Depends on | Status |
+|---|---|---|---|
+| [DASH-122](DASH-122.md) | `runs_horizon_summary` (FHS-002) and `runs_trend` (RAV-009/RAV-010) both call gateway-api's `GET /runs` (GW-016 -> validation-service's VS-022) with no explicit `limit`, silently getting only the endpoint's own `limit=20` default and then filtering/grouping client-side — a tenant with more than 20 runs could have matching runs that never appear on either page | none | done |
+
+Found live by the DBA agent during a performance review. Checked validation-service's `GET /runs`
+(`VS-022`, `services/validation-service/src/app/routers/runs.py`) before deciding the fix shape:
+`limit: int = Query(default=20, ge=1, le=100)` — a hard `422`-enforced ceiling of 100, never
+clamped, which rules out "just pass a bigger `limit`" as sufficient on its own (a tenant with more
+than 100 runs would still be silently truncated, just at a different number). Fix: a new
+`_fetch_all_runs` helper in `services/dashboard-web/src/app/routers/runs.py` pages through the
+existing `limit`/`offset` params (100 at a time) until the response envelope's own `total` is
+satisfied, reused by both `runs_horizon_summary` and `runs_trend` — no new backend endpoint, no new
+pagination UI. `runs_list` (`DASH-005-01`) is deliberately untouched: it forwards a
+caller-supplied `limit`/`offset` unmodified by its own existing design, not this bug's territory.
+
+**Tests**: four new regression tests (two per route) — a 25-run fixture (all on one page, proving
+the simple over-20 case) and a 150-run fixture (proving real pagination across the `le=100`
+server-side ceiling, asserting runs only reachable via a second `offset=100` page appear in the
+rendered output). Full suite re-run directly by the Tech Lead:
+`.venv\Scripts\python.exe -m pytest -q -m "not e2e"` — **257 passed**, 7 deselected (e2e), 0 failed
+(253 baseline + 4 new). One unrelated failure seen mid-investigation
+(`test_run_new_submit_invalid_horizon_shows_human_readable_error`, touching
+`tests/test_runs_submit.py`, a file already modified by concurrent in-flight Sprint 32 work this
+ticket never touched) did not reproduce on the final full-suite run and was confirmed out of this
+ticket's scope.
+
+**QA**: raised synchronously per this ticket's own instruction (leakage-insensitive but user-facing
+data-completeness bug, on the same lifecycle-adjacent surface as DASH-119). Independently verified:
+`_fetch_all_runs` is a genuine `limit=100`/increasing-`offset` paging loop (not a bigger single-shot
+`limit=`), confirmed via `git diff` that `runs_list` (`DASH-005-01`)'s own `limit`/`offset`
+forwarding is byte-for-byte unchanged, confirmed the loop cannot infinite-loop even against a
+malformed `total` (offset strictly increases every iteration), confirmed all four new tests are
+non-tautological (assert on the actual `limit`/`offset` sent and on specific second-page run IDs
+appearing in rendered output), and confirmed no existing `FHS-002`/`RAV-009`/`RAV-010` test
+assertion was altered. Full suite re-run twice by QA: one run hit an order-dependent flake in
+`tests/test_setup_wizard.py` (`test_post_setup_success_shows_the_raw_key_once`, unrelated to this
+ticket, no `runs.py`/`runs`-test-file involvement, isolated-file run 9/9 green) against a working
+tree with substantial uncommitted concurrent Sprint 32 work; a second full run came back clean
+(**257 passed**, 7 deselected, 0 failed). **QA verdict: GO**, with two disclosed non-blocking gaps:
+(1) the `test_setup_wizard.py` flake should be filed as its own suite-hygiene ticket, out of this
+ticket's scope, not silently ignored; (2) no live-Compose-stack reproduction against a real
+>100-run tenant was performed, accepted as unnecessary since this is a pure client-side
+pagination-parameterization bug fully covered by the mocked-transport regression tests. Full QA
+report kept by the Tech Lead; not re-litigated here.
+
+# DASH-123 — QA UAT sweep: raw Pydantic error leak + silent out-of-range `days` (dashboard-web)
+
+| Ticket | Story | Depends on | Status |
+|---|---|---|---|
+| [DASH-123](DASH-123.md) | Two minor, fully-diagnosed QA-found defects in `run_new_submit`/`runs_horizon_summary`: (1) a client-side `RunRequest` `ValidationError` rendered Pydantic's raw internal error text (model class name, `pydantic.dev` link) verbatim to the end user instead of a hand-written message matching this route's other two error strings; (2) `GET /runs/horizon-summary?days=<out-of-range>` silently rendered `200` with no active tab and an empty result set instead of rejecting the request | none | done |
+
+Found by a QA UAT sweep (Sprint 31), same urgent-fix precedent as DASH-119/120/121/NFE-019 —
+ticket + minimal fix + QA re-verify, no scope creep.
+
+**Fix**: `_human_readable_run_request_error(exc)` added next to
+`_MISSING_DATASET_REFERENCE_ERROR`/`_INVALID_INLINE_JSON_ERROR` in `runs.py`, replacing `str(exc)` in
+`run_new_submit`'s `except (ValueError, ValidationError)` branch — names the offending field(s) via
+`exc.errors()` for a `ValidationError`, generic fallback for a plain `ValueError`. `runs_horizon_summary`
+now raises `HTTPException(422)` when `days` is set but not one of the existing
+`HORIZON_SUMMARY_DAY_OPTIONS = (7, 15, 30)`, before any downstream call.
+
+**Tests**: the pre-existing failing regression test,
+`test_runs_submit.py::test_run_new_submit_invalid_horizon_shows_human_readable_error`, now passes. New
+test `test_runs_horizon_summary.py::test_horizon_summary_out_of_range_days_rejected_with_422` added
+(days=999/-1 → 422, gateway-api never called) and passes. Full suite at the time of this ticket's own
+fix: 256 passed plus one failure in unrelated in-flight work (`test_runs_trend.py`), independently
+resolved by DASH-122 landing concurrently in the same tree — **267 passed**, 7 deselected (e2e), 0
+failed once both land together.
+
+QA: raised synchronously per this ticket's explicit instruction — **GO**. QA independently confirmed
+both fixes, added one further edge-case regression test (`days=0`/non-integer `days`, already
+correctly rejected, no code change needed), and confirmed no leakage/lifecycle/positioning code was
+touched. See `docs/tickets/DASH-123.md` for the full ticket.
