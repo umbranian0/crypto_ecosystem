@@ -60,6 +60,36 @@ here (this is not a log-aggregation feature).</p>
 {% endif %}
 {% endfor %}
 
+<h2>Validation-run throughput</h2>
+<p>Total validation runs and their outcome breakdown over the last 24 hours, across all tenants.
+This is a plain operational/pipeline-health record only -- how many validation runs ran and
+whether they completed -- not a claim about how well any model does.</p>
+{% if runs_summary is none %}
+<p>Log in as an operator (<a href="/operator-login">/operator-login</a>) to view validation-run
+throughput.</p>
+{% else %}
+<div class="table-scroll">
+<table>
+    <thead>
+        <tr>
+            <th>Total runs (last 24h)</th>
+            <th>% completed</th>
+            <th>% failed</th>
+            <th>% running</th>
+        </tr>
+    </thead>
+    <tbody>
+        <tr>
+            <td>{{ runs_summary.total }}</td>
+            <td>{{ "%.1f"|format(runs_summary.completed_pct) }}%</td>
+            <td>{{ "%.1f"|format(runs_summary.failed_pct) }}%</td>
+            <td>{{ "%.1f"|format(runs_summary.running_pct) }}%</td>
+        </tr>
+    </tbody>
+</table>
+</div>
+{% endif %}
+
 <h2>Last crawl status</h2>
 <p>Most recent ingestion connector run per source, for your own tenant. This is a plain
 run-status record only, not a claim about data quality or the source's usefulness. Refreshes

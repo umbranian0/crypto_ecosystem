@@ -169,7 +169,14 @@ def test_monitoring_template_has_no_banned_positioning_words() -> None:
     )
     text = template_path.read_text(encoding="utf-8").lower()
 
-    for banned in ("prediction", "forecast", "signal", "recommendation"):
+    for banned in (
+        "prediction",
+        "forecast",
+        "signal",
+        "recommendation",
+        "model performance",
+        "accuracy",
+    ):
         assert banned not in text, f"banned positioning word {banned!r} found in monitoring.html"
 
 
@@ -433,6 +440,11 @@ def test_monitoring_recent_errors_gateway_api_populated_for_logged_in_operator(m
                     ]
                 },
             )
+        if request.url.path == "/system/runs-summary":
+            return httpx.Response(
+                200,
+                json={"total": 0, "completed_pct": 0.0, "failed_pct": 0.0, "running_pct": 0.0},
+            )
         raise AssertionError(f"unexpected request: {request.url.path}")  # pragma: no cover
 
     _patch_transport(monkeypatch, handler)
@@ -483,6 +495,58 @@ def test_monitoring_recent_errors_page_discloses_no_persistence_and_no_cross_ser
     assert response.status_code == 200
     assert "not persisted across a service restart" in response.text
     assert "no cross-service search" in response.text
+
+
+# SETUP-022: "Validation-run throughput" section
+
+
+def test_monitoring_runs_summary_login_prompt_for_anonymous_visitor(monkeypatch) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/system/health"
+        return _health_response()
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    response = client.get("/monitoring")
+
+    assert response.status_code == 200
+    assert "Validation-run throughput" in response.text
+    assert "Log in as an operator" in response.text
+
+
+def test_monitoring_runs_summary_populated_for_logged_in_operator(monkeypatch) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/system/health":
+            return _health_response()
+        if request.url.path == "/system/runs-summary":
+            assert request.headers.get("x-operator-token") == "op-token-setup-022"
+            return httpx.Response(
+                200,
+                json={
+                    "total": 10,
+                    "completed_pct": 70.0,
+                    "failed_pct": 20.0,
+                    "running_pct": 10.0,
+                },
+            )
+        if request.url.path == "/diagnostics/recent-errors":
+            return httpx.Response(200, json={"items": []})
+        raise AssertionError(f"unexpected request: {request.url.path}")  # pragma: no cover
+
+    _patch_transport(monkeypatch, handler)
+
+    operator_session_id = get_operator_session_store().create("op-token-setup-022")
+    client = TestClient(app)
+    client.cookies.set("operator_session_id", operator_session_id)
+
+    response = client.get("/monitoring")
+
+    assert response.status_code == 200
+    assert "Validation-run throughput" in response.text
+    assert "70.0%" in response.text
+    assert "20.0%" in response.text
+    assert "10.0%" in response.text
 
 
 def test_crawl_status_fragment_downstream_failure_renders_small_error_fragment(

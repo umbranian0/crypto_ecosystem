@@ -513,22 +513,27 @@ version (an in-memory ring buffer, no new infra dependency) so it can't quietly 
 already-declined scope.
 Depends on: SETUP-010, OPS-006 (already shipped)
 
-### SETUP-022 — Basic operational signal: run throughput and failure rate [Should]
+### SETUP-022 — Basic operational signal: run throughput and failure rate [Should] — done (SETUP-022, Sprint 32)
 
 **As** an operator **I want** the Monitoring page to show a simple count of runs submitted and their
 status breakdown (completed/failed/running) over a recent window **so that** I have a basic read on
 whether the validation pipeline itself is healthy, not just whether each process is up.
 
 Acceptance criteria:
-- [ ] Reuses `validation-service`'s/`gateway-api`'s existing `GET /runs` list endpoint (`VS-022`/`GW-016`)
-  and its existing `status` field. If that endpoint cannot yet answer "count by status" cheaply, extend
-  it minimally (e.g. an optional summary parameter) rather than inventing a new parallel endpoint — DRY
-  per implementation-plan.md section 9.
-- [ ] The Monitoring page shows: total runs (window), % failed, % completed, % still running —
-  labeled explicitly as **"validation-run throughput"**, never as "model performance" or anything
-  implying a trading/prediction signal (CLAUDE.md's core positioning constraint: this is operability
-  signal about the platform's own pipeline, never a claim about any model's accuracy).
-- [ ] No alerting/threshold/paging behavior is added anywhere in this story — this is a number on a
+- [x] Reuses `validation-service`'s/`gateway-api`'s existing `GET /runs` list endpoint (`VS-022`/`GW-016`)
+  and its existing `status` field. Implemented as a new, narrow, operator-authenticated aggregate
+  endpoint (`GET /system/runs-summary`, gateway-api) that calls the existing `GET /runs` once per known
+  tenant (reconstructing `X-Tenant-Id` from gateway-api's own tenant repository, no raw tenant API key
+  needed) rather than a duplicate list contract — no `services/validation-service/src/` file touched, per
+  this sprint's scope boundary. See `docs/tickets/SETUP-022.md`'s Outcome section for the full writeup,
+  including the `"pending"`→`running_pct` status-vocabulary mapping (validation-service has no literal
+  `"running"` status today).
+- [x] The Monitoring page shows: total runs (last 24h, fixed window), % failed, % completed, % still
+  running — labeled explicitly as **"validation-run throughput"**, never as "model performance" or
+  anything implying a trading/prediction signal (CLAUDE.md's core positioning constraint: this is
+  operability signal about the platform's own pipeline, never a claim about any model's accuracy). Gated
+  behind an operator session (`/operator-login`), not a tenant session.
+- [x] No alerting/threshold/paging behavior is added anywhere in this story — this is a number on a
   page, not a trigger for a notification.
 
 Rationale for priority: Should — genuinely useful "is the pipeline healthy" signal, built on data

@@ -24,15 +24,42 @@ Source: docs/sprints/sprint-29.md, docs/product/backlog-first-run-setup-and-ops.
 | [SETUP-011](SETUP-011.md) | `GET/POST /tenants` + revoke, operator-authenticated | gateway-api | SETUP-010 | done |
 | [SETUP-012](SETUP-012.md) | Settings → Tenants page | dashboard-web | SETUP-011 | done |
 | [SETUP-015](SETUP-015.md) | Settings: read-only Environment panel | dashboard-web | none | done |
-| [SETUP-021](SETUP-021.md) | Recent-errors ring buffer + `/monitoring` panel | libs/common, gateway-api, dashboard-web | SETUP-010, OPS-006 | in-progress (shared ring-buffer handler + per-service `/diagnostics/recent-errors` endpoints landed; `/monitoring` rendering panel not yet built) |
-| [SETUP-022](SETUP-022.md) | Validation-run throughput on `/monitoring` | gateway-api, dashboard-web | SETUP-020 (satisfied) | todo |
+| [SETUP-021](SETUP-021.md) | Recent-errors ring buffer + `/monitoring` panel | libs/common, gateway-api, dashboard-web | SETUP-010, OPS-006 | done |
+| [SETUP-022](SETUP-022.md) | Validation-run throughput on `/monitoring` | gateway-api, dashboard-web | SETUP-020 (satisfied) | done |
 
-**Sprint 32 status (partial)**: SETUP-011/012/015 done, verified against real diffs and the full
-`services/gateway-api` (200/200) and `services/dashboard-web` (267/267, 7 e2e deselected) suites,
-re-run clean before commit. SETUP-021 is in progress (its `libs/common`/`gateway-api`/`dashboard-web`
-diagnostics-endpoint groundwork is built and tested, but the `/monitoring` rendering panel is not).
-SETUP-022 is not started. Sprint 32 is therefore not yet closed — no Outcome section until SETUP-021/022
-land.
+**Sprint 32 Outcome**: all six in-scope tickets (SETUP-011/012/015/020/021/022) are done, each verified
+against real diffs (not just dev-agent self-reports) and re-run test suites.
+
+- SETUP-011/012/015: done in an earlier pass this sprint, verified against real diffs and the full
+  `services/gateway-api` (200/200) and `services/dashboard-web` (267/267, 7 e2e deselected) suites,
+  re-run clean before commit.
+- SETUP-020: no code change — confirmed already fully satisfied by `GW-022`/`DASH-113`/`DASH-109`
+  (see docs/sprints/sprint-32.md's own finding), marked done in the backlog this sprint.
+- SETUP-021: closed in this pass. `libs/common`'s `RecentErrorsHandler`/both services'
+  `/diagnostics/recent-errors` endpoints were already correctly built and tested by a prior pass; this
+  pass completed the missing `/monitoring` rendering panel (`operator.py`/`monitoring.html`) and,
+  during Tech Lead review, found and fixed a real bug: the gateway-api recent-errors fetch had been
+  wired to the tenant session header instead of the operator session header, which would have silently
+  401'd against a real gateway-api (only passed in tests because the mock transport doesn't check
+  headers) — fixed via a new `OptionalOperatorTokenHeaderDep`, with a regression test proving a tenant
+  session alone can never populate that panel. See `docs/tickets/SETUP-021.md`'s Review section.
+- SETUP-022: built in this pass on top of SETUP-021's already-merged state (both touch
+  `monitoring.html`/`operator.py`, landed sequentially per the sprint's file-overlap note). New
+  operator-authenticated `GET /system/runs-summary` (gateway-api) aggregates run counts across all
+  tenants over a fixed 24h window by reconstructing `X-Tenant-Id` per tenant from gateway-api's own
+  tenant repository and calling `validation-service`'s existing `GET /runs` — no
+  `services/validation-service/src/` file touched, confirmed via `git status --porcelain`. Labeled
+  exactly "Validation-run throughput" on `/monitoring`, gated behind the same
+  `OptionalOperatorTokenHeaderDep` SETUP-021 introduced (correctly reused, not the tenant-session
+  dependency). `running_pct` is computed from validation-service's real `"pending"` status (there is no
+  literal `"running"` status in that service today) — mapping disclosed in both the endpoint's
+  docstring and the README. See `docs/tickets/SETUP-022.md`'s Outcome section for the full writeup.
+- **Final suite counts, personally re-run by the Tech Lead**: `libs/common` 37 passed; `services/gateway-api`
+  206 passed, 1 warning (unrelated pre-existing deprecation notice); `services/dashboard-web` 276
+  passed, 7 deselected (Selenium E2E, environment-gated, unaffected). Zero regressions across all three
+  suites at every stage of this sprint.
+- **QA verdict**: see the `qa` subagent's independent validation pass below (raised after all six
+  tickets were Tech-Lead-verified done, per this platform's standing QA-gate process).
 
 # infra (INF-*) — urgent fix, outside sprint numbering
 

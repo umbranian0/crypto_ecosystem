@@ -1,7 +1,7 @@
 # SETUP-022 — Basic operational signal: run throughput and failure rate
 
 **Sprint**: 32. **Modules**: `services/gateway-api` (minimal, only if needed) and
-`services/dashboard-web`. **Status**: todo. **Priority**: Should.
+`services/dashboard-web`. **Status**: done. **Priority**: Should.
 **Depends on**: `SETUP-020` (confirmed already satisfied, per `docs/sprints/sprint-32.md`'s own
 finding — not a blocker). **Sequence**: land strictly after `SETUP-021` merges (both touch
 `monitoring.html`/`operator.py`) to avoid a same-file collision.
@@ -78,28 +78,28 @@ transport-error pattern.
 
 ## Implementation acceptance criteria
 
-- [ ] `/monitoring` shows total runs/% failed/% completed/% running over a fixed recent window,
+- [x] `/monitoring` shows total runs/% failed/% completed/% running over a fixed recent window,
   labeled explicitly **"validation-run throughput"** — this exact phrase, never "model performance,"
   "accuracy," "signal," or anything implying prediction quality.
-- [ ] The underlying data is a real aggregate across recent runs' `status` field — not a fabricated or
+- [x] The underlying data is a real aggregate across recent runs' `status` field — not a fabricated or
   placeholder number.
-- [ ] The endpoint(s) added are operator-authenticated; no tenant-only credential path is
+- [x] The endpoint(s) added are operator-authenticated; no tenant-only credential path is
   reused/exposed for this cross-tenant aggregate.
-- [ ] No alerting/threshold/paging behavior is added anywhere in this ticket.
+- [x] No alerting/threshold/paging behavior is added anywhere in this ticket.
 
 ## Test acceptance criteria
 
-- [ ] A test for the new `gateway-api` (and, if added, `validation-service`) endpoint(s): correct
+- [x] A test for the new `gateway-api` (and, if added, `validation-service`) endpoint(s): correct
   percentage math for a fixed set of fixture runs across all four states (`completed`/`failed`/
   `running`/queued-or-other, whatever the real status vocabulary is — confirm it by reading
   `validation-service`'s actual `status` values, don't assume), zero-runs-in-window renders `0`s not a
   divide-by-zero error, and operator-auth is enforced (`401`/`403` per each service's existing gate
   behavior).
-- [ ] `services/dashboard-web/tests/test_monitoring.py` extended: mocks the new summary response,
+- [x] `services/dashboard-web/tests/test_monitoring.py` extended: mocks the new summary response,
   asserts the exact "validation-run throughput" label renders and that none of "model performance,"
   "prediction," "forecast," or "signal" appears anywhere on the page (extending the existing
   banned-word test, not a new one).
-- [ ] Full affected suites run, zero regressions.
+- [x] Full affected suites run, zero regressions.
 
 ## Review acceptance criteria (Tech Lead verifies personally)
 
@@ -114,9 +114,45 @@ transport-error pattern.
 
 ## Documentation acceptance criteria
 
-- [ ] `services/gateway-api/README.md` documents the new endpoint, the fixed window, the
+- [x] `services/gateway-api/README.md` documents the new endpoint, the fixed window, the
   "validation-run throughput" framing, and the resolved tenant-enumeration approach (no
   `services/validation-service/src/` file touched, per this sprint's explicit scope boundary).
-- [ ] `services/dashboard-web/README.md` documents the new `/monitoring` section.
-- [ ] `docs/product/backlog-first-run-setup-and-ops.md`'s `SETUP-022` acceptance boxes checked, status
+- [x] `services/dashboard-web/README.md` documents the new `/monitoring` section.
+- [x] `docs/product/backlog-first-run-setup-and-ops.md`'s `SETUP-022` acceptance boxes checked, status
   marked done, citing this ticket.
+
+## Outcome / Review (Tech Lead)
+
+**Resolved design decision** (this ticket's one real judgment call): gateway-api's `GET
+/system/runs-summary` (`services/gateway-api/src/app/routers/system.py`) enumerates tenants via the
+already-existing `TenantRepositoryDep` (SETUP-011's own dependency), reconstructs `X-Tenant-Id` locally
+per tenant, and calls `validation-service`'s existing `GET /runs` once per tenant (paginated, capped at
+5 pages / 500 runs per tenant — a disclosed simplification for realistic Compose-stack volumes). This
+works because `validation-service` trusts gateway-api's own `X-Tenant-Id` attestation (confirmed by
+reading `build_downstream_headers`/`get_tenant_context`) — no raw tenant API key is needed, so this
+does not require touching `services/validation-service/src/` at all, satisfying the sprint's explicit
+scope boundary.
+
+**Status-vocabulary finding**: `validation-service`'s real run `status` values are
+`"pending"`/`"completed"`/`"failed"` — there is no `"running"` literal ever written (runs resolve
+synchronously). `running_pct` is computed as the `"pending"` share; this mapping is documented in the
+endpoint's docstring and `services/gateway-api/README.md`.
+
+**Review checks performed**:
+- Read the rendered `monitoring.html` output directly: the section header is the exact string
+  "Validation-run throughput"; page copy states "not a claim about how well any model does" and
+  contains no "model performance"/"accuracy"/"prediction"/"forecast"/"signal"/"recommendation" text
+  anywhere. `test_monitoring_template_has_no_banned_positioning_words` extended to also check
+  "model performance"/"accuracy".
+- Confirmed the endpoint returns only aggregate counts (`total`/`completed_pct`/`failed_pct`/
+  `running_pct`) — no run id, tenant id, or per-tenant breakdown in the response body, so no
+  individual tenant's data is exposed to the operator via this endpoint.
+- Confirmed `/system/runs-summary` is gated by `get_authenticated_operator` (GW-021) exactly like
+  `GET /tenants` — no new/weaker auth path.
+- Confirmed the dashboard-web panel reuses `OptionalOperatorTokenHeaderDep` (the same dependency
+  SETUP-021 introduced for the recent-errors panel) rather than the tenant `OptionalDownstreamHeadersDep`
+  — this was the exact class of bug found and fixed during SETUP-021's own review, so this was checked
+  specifically here and confirmed correct on first pass.
+- Re-ran both affected suites: `services/gateway-api` 206 passed (was 200); `services/dashboard-web`
+  276 passed, 7 deselected (was 274). Zero regressions. `git status --porcelain -- services/validation-service/src`
+  confirmed empty throughout.

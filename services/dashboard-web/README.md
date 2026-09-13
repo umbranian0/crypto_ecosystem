@@ -1684,3 +1684,34 @@ route`/`test_revoke_own_session_cannot_reach_route`).
   session state, and the disclosed-limitations copy. `RecentErrorsHandler.clear()` (added to
   `libs/common`, its own unit test in `libs/common/tests/test_diagnostics.py`) resets the shared
   module-level singleton between tests.
+
+### Validation-run throughput panel on /monitoring (SETUP-022)
+
+- Landed strictly after `SETUP-021`'s recent-errors panel (above) merged, per this sprint's own
+  file-overlap sequencing note (`docs/sprints/sprint-32.md`) -- both touch `monitoring.html`/
+  `operator.py`'s `monitoring()`.
+- `GET /monitoring` (`monitoring()`, same route, no new route) now also calls `gateway-api`'s new
+  `GET /system/runs-summary` (`SETUP-022`, gateway-api) via a new `_fetch_runs_summary` helper,
+  reusing the exact `operator_headers: OptionalOperatorTokenHeaderDep` parameter `SETUP-021`'s own
+  recent-errors fetch already added to this route -- no second operator-auth parameter, no new gate.
+  `operator_headers is None` (the common case for this page's otherwise-unauthenticated audience)
+  renders a "log in as an operator" prompt for this panel only, same precedent the recent-errors panel
+  established, rather than showing fabricated data.
+- `monitoring.html`'s new **"Validation-run throughput"** section (this exact label, verbatim) shows
+  total runs / % completed / % failed / % running over the fixed last-24h window `gateway-api`'s
+  endpoint computes. Copy is deliberately framed as a plain operational/pipeline-health record ("how
+  many validation runs ran and whether they completed") and never uses "model performance",
+  "accuracy", "prediction", "forecast", or "signal" -- the ticket's single highest-stakes review item
+  per `CLAUDE.md`'s core positioning rule.
+- **Status-vocabulary mapping**: `running_pct` reflects `validation-service`'s `"pending"` status count
+  (there is no `"running"` literal in the real status vocabulary today) -- see `gateway-api/README.md`'s
+  own writeup for the full detail; this service just renders the percentage gateway-api already computed,
+  no re-derivation here.
+- **Tests**: `tests/test_monitoring.py` extended with an anonymous-visitor login-prompt case for this
+  panel and a logged-in-operator case asserting the mocked `total`/`completed_pct`/`failed_pct`/
+  `running_pct` values render; the existing banned-positioning-word test extended to also check
+  "model performance" and "accuracy" (in addition to "prediction"/"forecast"/"signal"/"recommendation")
+  against the whole rendered page, including this new section. Two pre-existing operator-session tests
+  (`SETUP-021`'s own logged-in-operator cases) updated to also stub `/system/runs-summary` /
+  `/diagnostics/recent-errors` in their fake transport handlers, since `monitoring()` now issues both
+  calls whenever an operator session is present.

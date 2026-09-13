@@ -120,6 +120,21 @@ that has actually stopped -- and relabeled as an explicit restart-from-
 checkpoint action. No backend route change: `trigger_crawl` below is
 byte-for-byte unchanged, only the template's own gating/copy changed.
 
+SETUP-022: extends this same `GET /monitoring` route (not a new page/route,
+per this ticket's own file-overlap sequencing note) with a "Validation-run
+throughput" panel -- total runs / % completed / % failed / % running over a
+fixed last-24h window, fetched from gateway-api's new operator-authenticated
+`GET /system/runs-summary` (same file, GW-022's sibling endpoint). Reuses the
+exact `operator_headers: OptionalOperatorTokenHeaderDep` parameter SETUP-021's
+recent-errors panel already added to this same route -- no second parameter,
+same operator-session gate, same "None means show a login prompt, don't
+fabricate data" precedent `_fetch_gateway_api_recent_errors` above already
+established. Framed purely as a plain operational/pipeline-health record (how
+many validation runs ran and whether they completed) -- this copy must never
+use "model performance"/"accuracy"/"prediction"/"forecast"/"signal", the
+ticket's single highest-stakes review item per CLAUDE.md's core positioning
+rule.
+
 DASH-116: `POST /monitoring/connectors/{source}/cancel` is the complementary
 "stop this crawl" action for `queued`/`running`/`cancelling` rows in the
 crawl-status panel. Calls gateway-api's real `GW-027` proxy (`POST
@@ -228,6 +243,23 @@ def _fetch_gateway_api_recent_errors(client: httpx.Client, headers: dict[str, st
     if transport_status is not None or response.status_code != 200:
         return None
     return response.json()["items"]
+
+
+def _fetch_runs_summary(client: httpx.Client, headers: dict[str, str]) -> dict | None:
+    """SETUP-022: `headers` is the operator-token header dict (same shape
+    `_fetch_gateway_api_recent_errors` above already uses), not the tenant
+    `Authorization` header -- gateway-api's `/system/runs-summary` is
+    operator-authenticated (GW-021), same reasoning as that sibling helper's
+    own docstring. Any transport failure or non-200 collapses to `None`,
+    the same "one bad downstream must not fail the whole aggregate"
+    principle already established in this module.
+    """
+    response, transport_status = _call_downstream(
+        client.get, "/system/runs-summary", headers=headers
+    )
+    if transport_status is not None or response.status_code != 200:
+        return None
+    return response.json()
 
 
 def _format_progress(entry: dict, now: datetime) -> str:
@@ -367,6 +399,9 @@ def monitoring(
             if operator_headers is not None
             else None
         )
+        runs_summary = (
+            _fetch_runs_summary(client, operator_headers) if operator_headers is not None else None
+        )
 
     recent_errors = {
         "dashboard-web": recent_errors_handler.snapshot(),
@@ -376,7 +411,12 @@ def monitoring(
     return templates.TemplateResponse(
         request,
         "monitoring.html",
-        {"services": services, "crawl_statuses": crawl_statuses, "recent_errors": recent_errors},
+        {
+            "services": services,
+            "crawl_statuses": crawl_statuses,
+            "recent_errors": recent_errors,
+            "runs_summary": runs_summary,
+        },
     )
 
 
