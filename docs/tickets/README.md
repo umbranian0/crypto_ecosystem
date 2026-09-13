@@ -128,6 +128,20 @@ diff" per this ticket's own Review acceptance criteria). A follow-up ticket to e
 not filed by this ticket itself, per this repo's own "a ticket spanning two modules should be two tickets"
 rule.
 
+**Tech Lead review**: personally verified AC1-AC7 against the actual diff (not the dev agent's self-report)
+-- alignment-before-split ordering traced directly in `runs.py`, `run_validation_protocol`'s call site
+confirmed still receiving only the target `series`, `git status --porcelain libs/naive_first_engine`
+confirmed empty, `FeatureFoldScaler.fit` confirmed only ever called on an already-sliced `train_df`. Both
+suites re-run independently and reproduced: `services/validation-service` 202 passed (2 of those flaky in
+combined runs due to a pre-existing `datetime.utcnow()` resolution race in
+`test_sqlite_repository.py::test_list_runs_*`, unrelated to this diff -- both pass reliably in isolation,
+confirmed by a direct re-run); `libs/naive_first_engine` 95 passed. **One real cross-module regression
+found and fixed at review** (same category as MR-001's precedent): the shared `contracts.py` change added
+two new `RunDetailResponse` fields, which broke `services/gateway-api`'s
+`tests/test_runs_routing.py::test_get_run_forwards_and_returns_full_detail_shape` (an exact-field-set
+assertion). Fixed directly -- added `feature_lineage`/`has_multimodal_features` to that test's expected key
+set; `services/gateway-api`'s full suite re-run, 209 passed, 0 failed. Ticket marked **done**.
+
 **Sprint 32 Outcome**: all six in-scope tickets (SETUP-011/012/015/020/021/022) are done, each verified
 against real diffs (not just dev-agent self-reports) and re-run test suites.
 

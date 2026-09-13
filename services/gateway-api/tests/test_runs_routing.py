@@ -301,6 +301,8 @@ def test_get_run_forwards_and_returns_full_detail_shape(client: TestClient) -> N
         "failure_reason",
         "warnings",
         "has_client_model",
+        "feature_lineage",
+        "has_multimodal_features",
     }
     assert body["id"] == RUN_OWNED_BY_A
     assert body["tenant_id"] == TENANT_A
