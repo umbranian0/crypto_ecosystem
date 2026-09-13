@@ -375,6 +375,8 @@ def _monitoring_page_response(monkeypatch, client: TestClient, crawl_status: str
             return httpx.Response(
                 200, json={"status": crawl_status, "timestamp": "2026-01-02T00:00:00", "row_count": 24}
             )
+        if request.url.path == "/diagnostics/recent-errors":
+            return httpx.Response(200, json={"items": []})
         raise AssertionError(f"unexpected request: {request.url.path}")  # pragma: no cover
 
     _patch_transport(monkeypatch, handler)

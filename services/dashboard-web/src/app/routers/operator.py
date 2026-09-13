@@ -154,6 +154,7 @@ from app.dependencies.downstream import (
 )
 from app.dependencies.operator_session import (
     OperatorSessionStoreDep,
+    OptionalOperatorTokenHeaderDep,
     RequireOperatorSessionDep,
     cookie_secure,
 )
@@ -211,13 +212,14 @@ def recent_errors(
 
 
 def _fetch_gateway_api_recent_errors(client: httpx.Client, headers: dict[str, str]) -> list[dict] | None:
-    """SETUP-021: same `OptionalDownstreamHeadersDep`-gated pattern the
-    crawl-status panel (`_fetch_crawl_statuses`, DASH-109) already uses -- an
-    anonymous visitor (no tenant session) sees no per-service error detail,
-    since `gateway-api`'s own `/diagnostics/recent-errors` requires an
-    operator token this route has no way to supply on an anonymous visitor's
-    behalf. Any transport failure or non-200 collapses to `None`, the same
-    "one bad downstream must not fail the whole aggregate" principle
+    """SETUP-021: `headers` here is the operator-token header dict
+    (`{"X-Operator-Token": ...}`, `OptionalOperatorTokenHeaderDep`), not the
+    tenant `Authorization` header `_fetch_crawl_statuses` uses -- gateway-api's
+    `/diagnostics/recent-errors` is operator-authenticated (GW-021), so a
+    visitor with no *operator* session sees no per-service error detail (the
+    caller passes `None` in that case, this helper is never invoked). Any
+    transport failure or non-200 collapses to `None`, the same "one bad
+    downstream must not fail the whole aggregate" principle
     `_fetch_crawl_statuses` already established.
     """
     response, transport_status = _call_downstream(
@@ -319,7 +321,13 @@ def _fetch_crawl_statuses(client: httpx.Client, headers: dict[str, str]) -> list
 
 
 @router.get("/monitoring")
-def monitoring(request: Request, base_url: GatewayApiUrlDep, headers: OptionalDownstreamHeadersDep):
+def monitoring(
+    request: Request,
+    base_url: GatewayApiUrlDep,
+    headers: OptionalDownstreamHeadersDep,
+    operator_headers: OptionalOperatorTokenHeaderDep,
+    recent_errors_handler: RecentErrorsHandlerDep,
+):
     """Unauthenticated, matching `GW-022`'s own no-auth design choice for
     `GET /system/health` -- no `require_operator_session`/
     `DownstreamHeadersDep` on this route. `headers` is `None` for an
@@ -327,6 +335,22 @@ def monitoring(request: Request, base_url: GatewayApiUrlDep, headers: OptionalDo
     redirecting to `/login`; the "last crawl status" panel below degrades to
     a login prompt in that case (see this module's own docstring, DASH-109's
     auth design decision).
+
+    SETUP-021: also gathers `recent_errors`, one entry per service --
+    `dashboard-web`'s own last-50-`WARNING`+ buffer is read directly (no HTTP
+    call, it's in-process), and `gateway-api`'s own buffer is fetched via
+    `_fetch_gateway_api_recent_errors` gated on `OptionalOperatorTokenHeaderDep`
+    (`operator_session.py`, SETUP-021 addition) -- deliberately NOT the tenant
+    `OptionalDownstreamHeadersDep` used for the crawl-status panel below, since
+    gateway-api's `/diagnostics/recent-errors` is operator-authenticated
+    (`X-Operator-Token`, GW-021), a structurally separate credential from a
+    tenant's `Authorization: Bearer` header -- forwarding the tenant header
+    there would either fail (401) or, worse, blur the two auth mechanisms this
+    codebase deliberately keeps apart (see `operator_session.py`'s own
+    docstring). A visitor with no operator session (the common case for
+    `/monitoring`'s otherwise-unauthenticated audience) sees `None`, rendered
+    as a login-to-view-as-operator prompt, same convention as the crawl-status
+    panel's own login prompt.
     """
     with httpx.Client(base_url=base_url, timeout=DOWNSTREAM_HTTP_TIMEOUT_SECONDS) as client:
         response, transport_status = _call_downstream(client.get, "/system/health")
@@ -338,9 +362,21 @@ def monitoring(request: Request, base_url: GatewayApiUrlDep, headers: OptionalDo
         services = response.json()
 
         crawl_statuses = _fetch_crawl_statuses(client, headers) if headers is not None else None
+        gateway_api_recent_errors = (
+            _fetch_gateway_api_recent_errors(client, operator_headers)
+            if operator_headers is not None
+            else None
+        )
+
+    recent_errors = {
+        "dashboard-web": recent_errors_handler.snapshot(),
+        "gateway-api": gateway_api_recent_errors,
+    }
 
     return templates.TemplateResponse(
-        request, "monitoring.html", {"services": services, "crawl_statuses": crawl_statuses}
+        request,
+        "monitoring.html",
+        {"services": services, "crawl_statuses": crawl_statuses, "recent_errors": recent_errors},
     )
 
 

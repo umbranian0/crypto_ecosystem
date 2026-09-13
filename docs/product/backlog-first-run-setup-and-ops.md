@@ -482,7 +482,7 @@ task, built entirely on health-check work (`OPS-005`) that already exists — th
 story in this epic.
 Depends on: none (`OPS-005` already shipped)
 
-### SETUP-021 — Recent-errors visibility (in-process ring buffer, not a log aggregator) [Should]
+### SETUP-021 — Recent-errors visibility (in-process ring buffer, not a log aggregator) [Should] — done (SETUP-021, Sprint 32)
 
 **As** an operator **I want** to see the last N warning/error-level log events from each service on
 the Monitoring page **so that** I have some visibility into recent failures without
@@ -490,20 +490,23 @@ the Monitoring page **so that** I have some visibility into recent failures with
 (`OPS-007` already declined that as out of scope for now).
 
 Acceptance criteria:
-- [ ] Each FastAPI service adds a small in-process `logging.Handler` keeping the last N (e.g. 50)
+- [x] Each FastAPI service adds a small in-process `logging.Handler` keeping the last N (e.g. 50)
   `WARNING`+ records in an in-memory ring buffer — the **same** log records `OPS-006`'s existing JSON
   formatter/correlation-id convention already produces, via one additional handler, not a second
   logging system.
-- [ ] A new endpoint (e.g. `GET /diagnostics/recent-errors`, operator-authenticated per `SETUP-010`)
+- [x] A new endpoint (e.g. `GET /diagnostics/recent-errors`, operator-authenticated per `SETUP-010`)
   returns the buffer's contents (`timestamp`, `level`, `logger`, `message`, `correlation_id`) — never a
   raw exception traceback containing a request body or secret value, matching the discipline this
   platform already applies to every error message shown to any caller.
-- [ ] Explicitly out of scope, stated in this story itself: no persistence across a restart (a real,
+- [x] Explicitly out of scope, stated in this story itself: no persistence across a restart (a real,
   disclosed limitation, same category as `dashboard-web`'s own `SessionStore`), and no cross-service
   log-search/correlation UI beyond "list these N events per service, one column is the correlation id
   you can then grep manually" — a real log-aggregation backend is `OPS-007`'s territory, not this
   story's.
-- [ ] `dashboard-web`'s `/monitoring` page renders these events per service, most-recent first.
+- [x] `dashboard-web`'s `/monitoring` page renders these events per service, most-recent first. Note:
+  gateway-api's panel requires an *operator* session (`/operator-login`), not a tenant session — see
+  `docs/tickets/SETUP-021.md`'s Review section for the auth-mixing bug this closing pass found and
+  fixed.
 
 Rationale for priority: Should — real, asked-for visibility, deliberately built as the cheapest correct
 version (an in-memory ring buffer, no new infra dependency) so it can't quietly reopen `OPS-007`'s

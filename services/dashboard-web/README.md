@@ -1649,3 +1649,38 @@ route`/`test_revoke_own_session_cannot_reach_route`).
   `SETUP-003` tests re-run unmodified and pass. Full suite (`.venv\Scripts\python.exe -m pytest -q`):
   267 unit passed (up from 257), 7 deselected (the Selenium E2E suite, not re-run this ticket, not
   touched by this ticket's changes), zero regressions.
+
+### Recent-errors panel on /monitoring (SETUP-021)
+
+- `src/app/dependencies/diagnostics.py`: a module-level `naive_first_common.RecentErrorsHandler()`
+  singleton (`recent_errors_handler`) behind a `Depends()` provider (`RecentErrorsHandlerDep`), mirrors
+  `gateway-api`'s own `app/dependencies/diagnostics.py` shape. `src/app/main.py` attaches this same
+  instance to the root logger (`logging.getLogger().addHandler(recent_errors_handler)`) -- one additional
+  observer of the `logging` module's event stream, the Observer pattern this ticket's Design section
+  calls for.
+- `GET /diagnostics/recent-errors` (`src/app/routers/operator.py`, gated by `require_operator_session`,
+  `DASH-113`'s existing operator gate, reused unmodified) returns `{"items": [...]}`, this process's own
+  last 50 `WARNING`-and-above log records, most-recent first.
+- `GET /monitoring` (`monitoring()`, same route) now also gathers a `recent_errors` context var --
+  `dashboard-web`'s own buffer read directly in-process (no HTTP call), plus `gateway-api`'s own
+  `GET /diagnostics/recent-errors` fetched via `_fetch_gateway_api_recent_errors`, gated on
+  `OptionalOperatorTokenHeaderDep` (`app/dependencies/operator_session.py`) -- **not** the tenant
+  `OptionalDownstreamHeadersDep` the crawl-status panel (`DASH-109`) uses. `gateway-api`'s
+  `/diagnostics/recent-errors` is operator-authenticated (`X-Operator-Token`, GW-021), a structurally
+  separate credential from a tenant's `Authorization: Bearer` header -- the two are never interchanged. A
+  visitor with no *operator* session (the common case for `/monitoring`'s otherwise-unauthenticated
+  audience, including a logged-in tenant) sees a "log in as an operator" prompt for `gateway-api`'s panel;
+  `dashboard-web`'s own panel always renders regardless of any session, since it needs no HTTP call.
+- `monitoring.html`'s new "Recent errors" section renders one sub-table per service key in
+  `recent_errors`, most-recent first (the handler's own `.snapshot()` ordering, not re-sorted), and states
+  the buffer's disclosed limitations in page copy: no persistence across a service restart (an in-memory
+  buffer only), and no cross-service search UI (still `OPS-007`'s declined log-aggregation scope).
+- **Buffer size**: last 50 `WARNING`+ records per service, in-memory only, reset on every process restart.
+- **Tests**: `tests/test_operator_diagnostics.py` (new) covers the operator gate on this service's own
+  `GET /diagnostics/recent-errors` (unauthenticated redirects to `/operator-login`; authenticated returns
+  emitted `WARNING`+ records, an `INFO` call never appears). `tests/test_monitoring.py` extended with the
+  anonymous-visitor login-prompt case for `gateway-api`'s panel, a logged-in-tenant case asserting
+  `gateway-api`'s mocked recent-errors content renders, dashboard-web's own buffer rendering regardless of
+  session state, and the disclosed-limitations copy. `RecentErrorsHandler.clear()` (added to
+  `libs/common`, its own unit test in `libs/common/tests/test_diagnostics.py`) resets the shared
+  module-level singleton between tests.

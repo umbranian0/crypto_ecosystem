@@ -23,10 +23,14 @@ new mocking convention.
 
 from __future__ import annotations
 
+import logging
+
 import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from app.dependencies.diagnostics import recent_errors_handler
+from app.dependencies.operator_session import get_operator_session_store
 from app.dependencies.session import get_session_store
 from app.main import app
 
@@ -37,6 +41,13 @@ RAW_KEY = "monitoring-test-raw-api-key"
 def _clear_sessions():
     yield
     get_session_store()._sessions.clear()
+    get_operator_session_store()._sessions.clear()
+
+
+@pytest.fixture(autouse=True)
+def _clear_recent_errors():
+    yield
+    recent_errors_handler.clear()
 
 
 def _patch_transport(monkeypatch, handler) -> None:
@@ -220,6 +231,8 @@ def test_monitoring_crawl_status_panel_populated_for_logged_in_tenant(monkeypatc
                     "row_count": 24,
                 },
             )
+        if request.url.path == "/diagnostics/recent-errors":
+            return httpx.Response(200, json={"items": []})
         raise AssertionError(f"unexpected request: {request.url.path}")  # pragma: no cover
 
     _patch_transport(monkeypatch, handler)
@@ -243,6 +256,8 @@ def test_monitoring_crawl_status_panel_empty_for_logged_in_tenant_with_no_datase
         if request.url.path == "/system/health":
             return _health_response()
         if request.url.path == "/ingestion/datasets":
+            return httpx.Response(200, json={"items": []})
+        if request.url.path == "/diagnostics/recent-errors":
             return httpx.Response(200, json={"items": []})
         raise AssertionError(f"unexpected request: {request.url.path}")  # pragma: no cover
 
@@ -287,6 +302,8 @@ def _crawl_status_handler(request: httpx.Request) -> httpx.Response:
                 "row_count": None,
             },
         )
+    if request.url.path == "/diagnostics/recent-errors":
+        return httpx.Response(200, json={"items": []})
     raise AssertionError(f"unexpected request: {request.url.path}")  # pragma: no cover
 
 
@@ -345,6 +362,127 @@ def test_crawl_status_fragment_requires_tenant_session() -> None:
 
     assert response.status_code == 303
     assert response.headers["location"] == "/login"
+
+
+# SETUP-021: "Recent errors" section
+
+
+def test_monitoring_recent_errors_gateway_api_login_prompt_for_anonymous_visitor(
+    monkeypatch,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/system/health"
+        return _health_response()
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    response = client.get("/monitoring")
+
+    assert response.status_code == 200
+    assert "Log in as an operator" in response.text
+
+
+def test_monitoring_recent_errors_gateway_api_does_not_populate_from_a_tenant_session_alone(
+    monkeypatch,
+) -> None:
+    """A tenant session must never satisfy gateway-api's operator-gated
+    `/diagnostics/recent-errors` -- the two credentials are structurally
+    separate (`operator_session.py`'s own docstring). If this test's fake
+    transport ever receives a request to that path, the tenant session was
+    wrongly forwarded as an operator credential -- fail loudly rather than
+    silently returning a plausible-looking response.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/system/health":
+            return _health_response()
+        if request.url.path == "/ingestion/datasets":
+            return httpx.Response(200, json={"items": []})
+        raise AssertionError(f"unexpected request: {request.url.path}")  # pragma: no cover
+
+    _patch_transport(monkeypatch, handler)
+
+    session_id = get_session_store().create(RAW_KEY)
+    client = TestClient(app)
+    client.cookies.set("session_id", session_id)
+
+    response = client.get("/monitoring")
+
+    assert response.status_code == 200
+    assert "Log in as an operator" in response.text
+
+
+def test_monitoring_recent_errors_gateway_api_populated_for_logged_in_operator(monkeypatch) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/system/health":
+            return _health_response()
+        if request.url.path == "/diagnostics/recent-errors":
+            assert request.headers.get("x-operator-token") == "op-token-setup-021"
+            return httpx.Response(
+                200,
+                json={
+                    "items": [
+                        {
+                            "timestamp": "2026-01-02T00:00:00+0000",
+                            "level": "WARNING",
+                            "logger": "app.some_module",
+                            "message": "a gateway-api warning for SETUP-021",
+                            "correlation_id": "corr-123",
+                        }
+                    ]
+                },
+            )
+        raise AssertionError(f"unexpected request: {request.url.path}")  # pragma: no cover
+
+    _patch_transport(monkeypatch, handler)
+
+    operator_session_id = get_operator_session_store().create("op-token-setup-021")
+    client = TestClient(app)
+    client.cookies.set("operator_session_id", operator_session_id)
+
+    response = client.get("/monitoring")
+
+    assert response.status_code == 200
+    assert "a gateway-api warning for SETUP-021" in response.text
+    assert "Log in as an operator" not in response.text
+
+
+def test_monitoring_recent_errors_dashboard_web_own_buffer_renders_regardless_of_session(
+    monkeypatch,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/system/health"
+        return _health_response()
+
+    _patch_transport(monkeypatch, handler)
+
+    logging.getLogger("app.test_monitoring_own_buffer").warning(
+        "a dashboard-web warning for SETUP-021"
+    )
+
+    client = TestClient(app)
+    response = client.get("/monitoring")
+
+    assert response.status_code == 200
+    assert "a dashboard-web warning for SETUP-021" in response.text
+
+
+def test_monitoring_recent_errors_page_discloses_no_persistence_and_no_cross_service_search(
+    monkeypatch,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/system/health"
+        return _health_response()
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    response = client.get("/monitoring")
+
+    assert response.status_code == 200
+    assert "not persisted across a service restart" in response.text
+    assert "no cross-service search" in response.text
 
 
 def test_crawl_status_fragment_downstream_failure_renders_small_error_fragment(

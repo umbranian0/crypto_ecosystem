@@ -192,6 +192,8 @@ def test_monitoring_shows_honest_absence_for_blockchain_info_source(monkeypatch)
                     "updated_at": None,
                 },
             )
+        if request.url.path == "/diagnostics/recent-errors":
+            return httpx.Response(200, json={"items": []})
         raise AssertionError(f"unexpected request: {request.url.path}")  # pragma: no cover
 
     _patch_transport(monkeypatch, handler)
@@ -235,6 +237,8 @@ def test_monitoring_shows_row_count_for_binance_source(monkeypatch) -> None:
                     "updated_at": "2026-01-02T00:00:00+00:00",
                 },
             )
+        if request.url.path == "/diagnostics/recent-errors":
+            return httpx.Response(200, json={"items": []})
         raise AssertionError(f"unexpected request: {request.url.path}")  # pragma: no cover
 
     _patch_transport(monkeypatch, handler)

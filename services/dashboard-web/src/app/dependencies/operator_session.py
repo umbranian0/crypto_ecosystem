@@ -118,3 +118,39 @@ def get_operator_token_header(request: Request, store: OperatorSessionStoreDep) 
 
 
 OperatorTokenHeaderDep = Annotated[dict[str, str], Depends(get_operator_token_header)]
+
+
+def get_optional_operator_token_header(
+    request: Request, store: OperatorSessionStoreDep
+) -> dict[str, str] | None:
+    """SETUP-021: non-raising counterpart to `get_operator_token_header` above,
+    mirroring `app.dependencies.downstream.get_optional_session_headers`'s
+    precedent for the tenant-session case (DASH-109) one hop over, for the
+    operator session. `/monitoring` stays reachable with zero session
+    (`require_operator_session`/`OperatorTokenHeaderDep` would redirect); this
+    returns `None` instead so the "gateway-api recent errors" panel can
+    degrade to a login prompt for a visitor with no *operator* session,
+    without gating the whole page behind one.
+
+    Deliberately distinct from `OptionalDownstreamHeadersDep`
+    (`app.dependencies.downstream`, DASH-109): that dependency resolves a
+    *tenant* session into a `Authorization: Bearer <api_key>` header, which
+    satisfies gateway-api's `get_authenticated_tenant`, not its
+    `get_authenticated_operator` (GW-021) -- the two credentials are
+    structurally separate (this module's own docstring) and must never be
+    substituted for each other. `gateway-api`'s `GET /diagnostics/
+    recent-errors` (SETUP-021) requires `X-Operator-Token`; a tenant's own
+    session must never be forwarded there.
+    """
+    session_id = request.cookies.get(_OPERATOR_SESSION_COOKIE_NAME)
+    token = store.get(session_id) if session_id is not None else None
+
+    if token is None:
+        return None
+
+    return {"X-Operator-Token": token}
+
+
+OptionalOperatorTokenHeaderDep = Annotated[
+    dict[str, str] | None, Depends(get_optional_operator_token_header)
+]

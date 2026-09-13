@@ -88,6 +88,19 @@ def test_entry_has_expected_fields() -> None:
     assert entry["message"] == "something went wrong"
 
 
+def test_clear_empties_the_buffer() -> None:
+    handler = RecentErrorsHandler()
+    logger = _make_logger(handler)
+
+    logger.warning("one")
+    logger.warning("two")
+    assert len(handler.snapshot()) == 2
+
+    handler.clear()
+
+    assert handler.snapshot() == []
+
+
 def test_never_includes_exc_info_or_traceback_even_when_logged_with_exc_info() -> None:
     handler = RecentErrorsHandler()
     logger = _make_logger(handler)

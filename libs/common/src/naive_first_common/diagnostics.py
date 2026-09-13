@@ -53,3 +53,11 @@ class RecentErrorsHandler(logging.Handler):
         """Most-recent-first plain list copy (never a live deque reference)."""
 
         return list(reversed(self._buffer))
+
+    def clear(self) -> None:
+        """Empties the buffer -- test-isolation helper for callers holding a
+        module-level singleton instance across tests (e.g. dashboard-web's
+        `recent_errors_handler`), not used by any production code path.
+        """
+
+        self._buffer.clear()

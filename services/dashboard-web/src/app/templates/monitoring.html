@@ -22,6 +22,44 @@
 </table>
 </div>
 
+<h2>Recent errors</h2>
+<p>Last 50 WARNING-or-above log records per service, most recent first. This is an in-process ring
+buffer only -- it is not persisted across a service restart, and there is no cross-service search UI
+here (this is not a log-aggregation feature).</p>
+{% for service_name, entries in recent_errors.items() %}
+<h3>{{ service_name }}</h3>
+{% if entries is none %}
+<p>Log in as an operator (<a href="/operator-login">/operator-login</a>) to view {{ service_name }}'s recent errors.</p>
+{% elif entries|length == 0 %}
+<p>No recent errors recorded for {{ service_name }}.</p>
+{% else %}
+<div class="table-scroll">
+<table>
+    <thead>
+        <tr>
+            <th>Timestamp</th>
+            <th>Level</th>
+            <th>Logger</th>
+            <th>Message</th>
+            <th>Correlation id</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for entry in entries %}
+        <tr>
+            <td>{{ entry.timestamp }}</td>
+            <td>{{ entry.level }}</td>
+            <td>{{ entry.logger }}</td>
+            <td>{{ entry.message }}</td>
+            <td>{{ entry.correlation_id }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+</div>
+{% endif %}
+{% endfor %}
+
 <h2>Last crawl status</h2>
 <p>Most recent ingestion connector run per source, for your own tenant. This is a plain
 run-status record only, not a claim about data quality or the source's usefulness. Refreshes
