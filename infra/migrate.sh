@@ -3,11 +3,17 @@
 # validation-service / gateway-api, run from the host against the
 # Compose-published Postgres port (not from inside a container).
 #
+# INF-019: extended to also cover ingestion-service / reporting-service --
+# both have real Alembic migration directories that nothing ran, leaving
+# their Postgres schemas never created on a fresh volume (naive_first_app
+# has no CREATE privilege to auto-create them, per INF-014). Same pattern,
+# no new mechanism.
+#
 # Always connects as `naive_first` (migration-time, superuser/schema-owner,
 # INF-014) -- never `naive_first_app` (runtime-only, no CREATE/ownership
 # privileges, would fail at the first CREATE TABLE).
 #
-# Usage: infra/migrate.sh [validation-service|gateway-api|both]
+# Usage: infra/migrate.sh [validation-service|gateway-api|ingestion-service|reporting-service|both]
 # Defaults to `both` if no argument is given.
 set -e
 
@@ -49,15 +55,17 @@ migrate_one() {
 }
 
 case "$service" in
-    validation-service|gateway-api)
+    validation-service|gateway-api|ingestion-service|reporting-service)
         migrate_one "$service"
         ;;
     both)
         migrate_one "validation-service"
         migrate_one "gateway-api"
+        migrate_one "ingestion-service"
+        migrate_one "reporting-service"
         ;;
     *)
-        echo "ERROR: unknown service '$service' (expected validation-service, gateway-api, or both)" >&2
+        echo "ERROR: unknown service '$service' (expected validation-service, gateway-api, ingestion-service, reporting-service, or both)" >&2
         exit 1
         ;;
 esac

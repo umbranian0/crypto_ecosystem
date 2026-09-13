@@ -2,15 +2,21 @@
 # validation-service / gateway-api, run from the host against the
 # Compose-published Postgres port (not from inside a container).
 #
+# INF-019: extended to also cover ingestion-service / reporting-service --
+# both have real Alembic migration directories that nothing ran, leaving
+# their Postgres schemas never created on a fresh volume (naive_first_app
+# has no CREATE privilege to auto-create them, per INF-014). Same pattern,
+# no new mechanism.
+#
 # Always connects as `naive_first` (migration-time, superuser/schema-owner,
 # INF-014) -- never `naive_first_app` (runtime-only, no CREATE/ownership
 # privileges, would fail at the first CREATE TABLE).
 #
-# Usage: infra/migrate.ps1 -Service validation-service|gateway-api|both
+# Usage: infra/migrate.ps1 -Service validation-service|gateway-api|ingestion-service|reporting-service|both
 # Defaults to `both` if -Service is not given.
 
 param(
-    [ValidateSet("validation-service", "gateway-api", "both")]
+    [ValidateSet("validation-service", "gateway-api", "ingestion-service", "reporting-service", "both")]
     [string]$Service = "both"
 )
 
@@ -65,6 +71,8 @@ switch ($Service) {
     "both" {
         Invoke-Migration -Svc "validation-service"
         Invoke-Migration -Svc "gateway-api"
+        Invoke-Migration -Svc "ingestion-service"
+        Invoke-Migration -Svc "reporting-service"
     }
     default {
         Invoke-Migration -Svc $Service

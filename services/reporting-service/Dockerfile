@@ -27,6 +27,14 @@ WORKDIR /repo/services/reporting-service
 COPY pyproject.toml uv.lock README.md ./
 COPY src ./src
 
+# INF-019: migrations/ + alembic.ini copied in so `alembic upgrade head` can
+# be run from inside this image (matches validation-service/gateway-api,
+# which already ship theirs this way; reporting-service's Alembic env was
+# never wired into infra/migrate.sh/.ps1 nor packaged here, so a fresh
+# Postgres volume never got its schema created).
+COPY migrations ./migrations
+COPY alembic.ini ./alembic.ini
+
 RUN uv sync --frozen --no-dev
 
 # Run as a non-root user (matches validation-service/gateway-api's own
