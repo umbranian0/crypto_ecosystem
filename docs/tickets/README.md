@@ -17,6 +17,22 @@ Source: docs/sprints/sprint-29.md, docs/product/backlog-first-run-setup-and-ops.
 | [SETUP-003](SETUP-003.md) | Browser-based setup wizard | dashboard-web | SETUP-002, SETUP-030 | done |
 | [SETUP-004](SETUP-004.md) | Bootstrap script opens the browser at the wizard | infra | SETUP-003, SETUP-030 | done |
 
+## Sprint 32
+
+| Ticket | Story | Module | Depends on | Status |
+|---|---|---|---|---|
+| [SETUP-011](SETUP-011.md) | `GET/POST /tenants` + revoke, operator-authenticated | gateway-api | SETUP-010 | in-progress |
+| [SETUP-012](SETUP-012.md) | Settings → Tenants page | dashboard-web | SETUP-011 | todo |
+| [SETUP-015](SETUP-015.md) | Settings: read-only Environment panel | dashboard-web | none | in-progress |
+| [SETUP-021](SETUP-021.md) | Recent-errors ring buffer + `/monitoring` panel | libs/common, gateway-api, dashboard-web | SETUP-010, OPS-006 | todo |
+| [SETUP-022](SETUP-022.md) | Validation-run throughput on `/monitoring` | gateway-api, dashboard-web | SETUP-020 (satisfied) | todo |
+
+See docs/sprints/sprint-32.md for the full sequencing rationale (`SETUP-011`→`SETUP-012` chain,
+`SETUP-015` parallel-eligible, `SETUP-021` before `SETUP-022` due to shared `monitoring.html`/
+`operator.py`) and the finding that `SETUP-020` was already fully satisfied by `GW-022`/`DASH-113`/
+`DASH-109` (marked done this sprint with no new build work). Scope explicitly excludes
+`libs/naive_first_engine`, `services/validation-service/src/`, and the Sprint 31 multimodal-fusion ADRs.
+
 See docs/sprints/sprint-29.md for the full scope decision, priority bump (`SETUP-030` built and landed
 first, ahead of the other five, per an explicit post-DASH-119 user decision), and File-overlap note. A
 pre-kickoff check against `docs/tickets/GW-021.md` (Sprint 18) found `SETUP-010` was already ~90%
@@ -77,7 +93,7 @@ Source: docs/sprints/sprint-01.md, docs/sprints/sprint-02.md, docs/product/backl
 - **Round 8**: NFE-014 (depends on NFE-005, NFE-006, NFE-013).
 - **Round 9**: NFE-015 (depends on NFE-014, hard gate, run last).
 
-Deferred to Sprint 02: NFE-016, NFE-017, NFE-018 (Should/Could priority). Not scheduled: NFE-019/020 (Won't).
+Deferred to Sprint 02: NFE-016, NFE-017, NFE-018 (Should/Could priority). Not scheduled: NFE-020 (Won't). NFE-019 was originally an unscheduled Won't-priority backlog number from this planning table, but was independently reused later (see "Urgent bug fixes" subsection below) for an unrelated, urgent QA-found leakage fix — that reuse is unrelated to this original Sprint 01 backlog item and does not resurrect it.
 
 ## Sprint 02
 
@@ -90,6 +106,20 @@ Deferred to Sprint 02: NFE-016, NFE-017, NFE-018 (Should/Could priority). Not sc
 ## Execution / parallelization plan (Sprint 02)
 
 - **Round 0 (parallel)**: NFE-016, NFE-017, NFE-018 all run in parallel — disjoint files (new test files for NFE-016; `scripts/check_standalone.*` for NFE-017; `scripts/check_doc_sync.py` + README for NFE-018), no shared data dependency, per sprint-02.md.
+
+## Urgent bug fixes (outside sprint numbering, same precedent as DASH-119/120/121)
+
+| Ticket | Story | Depends on | Status |
+|---|---|---|---|
+| [NFE-019](NFE-019.md) | Fix `generate_splits` accepting a negative `purge_gap`, producing real train/test row overlap in the position-based branch | none (fixes NFE-002/NFE-003) | done |
+
+QA leakage-sweep finding, urgent/blocking severity, fixed same-day. Single guard added at the
+shared `generate_splits` entry point rejecting `purge_gap < 0` for both `int` and `pd.Timedelta`
+kinds with a `ValueError`, matching this module's existing `dm_test.py`/`metrics.py`
+error-handling convention. `_generate_splits_by_time` was already safe and required no change.
+Full suite re-run by the Tech Lead: 95 passed, 0 failed (94 pre-existing + 1 new regression test),
+including the 1h/6h/24h thesis-numbers regression suites. QA independently re-verified the fix
+(see NFE-019.md Review section) before this was marked done.
 
 # services/validation-service (VS-*)
 

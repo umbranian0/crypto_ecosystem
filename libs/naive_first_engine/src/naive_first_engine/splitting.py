@@ -45,6 +45,12 @@ def generate_splits(
     gap; pass `purge_gap=0` (or `pd.Timedelta(0)`) explicitly for adjacent
     train/test with no gap.
     """
+    zero = pd.Timedelta(0) if isinstance(purge_gap, pd.Timedelta) else 0
+    if purge_gap < zero:
+        raise ValueError(
+            f"purge_gap must be >= 0 (negative purge gap causes train/test row "
+            f"overlap); got {purge_gap!r}"
+        )
     if isinstance(step, pd.Timedelta):
         return _generate_splits_by_time(index, train_window, test_window, step, purge_gap)
     return _generate_splits_by_position(index, train_window, test_window, step, purge_gap)

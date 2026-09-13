@@ -1,6 +1,7 @@
 """Tests for the rolling-origin walk-forward splitter (NFE-002)."""
 
 import pandas as pd
+import pytest
 
 from naive_first_engine.splitting import Split, generate_splits
 
@@ -152,3 +153,37 @@ def test_thesis_config_purge_gap_matches_1h_6h_24h_horizons():
         )
         assert split.test_start - split.train_end == pd.Timedelta(hours=24)
         assert split.purge_end - split.purge_start == pd.Timedelta(hours=22)
+
+
+def test_negative_purge_gap_must_not_produce_overlapping_train_test_rows():
+    """QA-added (independent probe, not in the original NFE ticket set): a
+    misconfigured (negative) purge_gap must never let the same index rows
+    appear in both a split's train and test windows -- that is a leakage
+    failure mode by definition (CLAUDE.md: "the purge gap actually applied").
+    Previously FAILED against `_generate_splits_by_position`: with an integer
+    (row-count) purge_gap of -3, `test_start_pos = train_end_pos + purge_gap`
+    lands *inside* the train window (position 7 when train occupies
+    positions 0-9), so `test_start <= train_end` and rows 7-9 were counted as
+    both train and test data for the same split.
+
+    Fixed (NFE-0xx) by rejecting `purge_gap < 0` at the shared `generate_splits`
+    entry point, matching this module's existing convention (see dm_test.py,
+    metrics.py) of raising `ValueError` on invalid input rather than silently
+    producing a wrong-but-plausible-looking result. A negative purge_gap has no
+    valid interpretation (it cannot be satisfied without overlap for both the
+    position-based and time-based branches), so rejecting it is the only
+    guarantee of non-overlap that also works for both `purge_gap` kinds.
+    """
+    index = pd.date_range("2024-01-01", periods=30, freq="h")
+
+    with pytest.raises(ValueError, match="purge_gap"):
+        generate_splits(index, train_window=10, test_window=5, step=5, purge_gap=-3)
+
+    with pytest.raises(ValueError, match="purge_gap"):
+        generate_splits(
+            index,
+            train_window=pd.Timedelta(hours=10),
+            test_window=pd.Timedelta(hours=5),
+            step=pd.Timedelta(hours=5),
+            purge_gap=pd.Timedelta(hours=-3),
+        )

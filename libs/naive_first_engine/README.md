@@ -32,6 +32,8 @@ libs/naive_first_engine/
 
 **Standalone publishability check (NFE-017)**: [`scripts/check_standalone.py`](scripts/check_standalone.py) installs this package into a clean, throwaway venv (no `-e`, no workspace-root resolution) and runs a smoke `import naive_first_engine` + minimal `run_validation_protocol` call from inside it, proving the package is pip-installable and usable standalone. Re-run it (`python scripts/check_standalone.py` from within `libs/naive_first_engine`) whenever `pyproject.toml`'s dependencies change.
 
+**Urgent leakage fix (NFE-019)**: `generate_splits` now raises `ValueError` for any `purge_gap < 0` (both `int` and `pd.Timedelta` kinds), fixed at the shared entry point rather than per-branch. A negative `purge_gap` previously let `_generate_splits_by_position` produce a split whose `test_start` fell inside the train window — real train/test row overlap, not cosmetic. `_generate_splits_by_time` was already structurally safe and required no change. See [docs/tickets/NFE-019.md](../../docs/tickets/NFE-019.md).
+
 ## Public API
 
 Implementation-plan.md section 8: "for libs, the public function signatures in the README stay in sync with the code — CI should fail if they drift." The list below is machine-checked by [`scripts/check_doc_sync.py`](scripts/check_doc_sync.py) (also runnable as `tests/test_doc_sync.py`) — **re-run it after adding, removing, or renaming any public (non-underscore-prefixed) top-level function or class in any of the six modules below.** One line per public function/class, `` `name(args)` `` for functions (default-value expressions included, type annotations omitted — see the script's header comment for why) or `` `ClassName` (class) `` for classes.
