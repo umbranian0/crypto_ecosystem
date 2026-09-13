@@ -145,6 +145,7 @@ import httpx
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import RedirectResponse
 
+from app.dependencies.diagnostics import RecentErrorsHandlerDep
 from app.dependencies.http_client import DOWNSTREAM_HTTP_TIMEOUT_SECONDS
 from app.dependencies.downstream import (
     DownstreamHeadersDep,
@@ -153,6 +154,7 @@ from app.dependencies.downstream import (
 )
 from app.dependencies.operator_session import (
     OperatorSessionStoreDep,
+    RequireOperatorSessionDep,
     cookie_secure,
 )
 from app.main import templates
@@ -193,6 +195,37 @@ def operator_login_submit(
         secure=cookie_secure(),
     )
     return redirect
+
+
+@router.get("/diagnostics/recent-errors")
+def recent_errors(
+    handler: RecentErrorsHandlerDep,
+    _operator: RequireOperatorSessionDep,
+) -> dict:
+    """SETUP-021: this service's own last 50 `WARNING`+ records, gated by
+    `require_operator_session` (`DASH-113`'s existing gate, reused unmodified
+    -- no new auth mechanism). Mirrors `gateway-api`'s own `GET /diagnostics/
+    recent-errors` (`SETUP-021`) response shape (`{"items": [...]}`).
+    """
+    return {"items": handler.snapshot()}
+
+
+def _fetch_gateway_api_recent_errors(client: httpx.Client, headers: dict[str, str]) -> list[dict] | None:
+    """SETUP-021: same `OptionalDownstreamHeadersDep`-gated pattern the
+    crawl-status panel (`_fetch_crawl_statuses`, DASH-109) already uses -- an
+    anonymous visitor (no tenant session) sees no per-service error detail,
+    since `gateway-api`'s own `/diagnostics/recent-errors` requires an
+    operator token this route has no way to supply on an anonymous visitor's
+    behalf. Any transport failure or non-200 collapses to `None`, the same
+    "one bad downstream must not fail the whole aggregate" principle
+    `_fetch_crawl_statuses` already established.
+    """
+    response, transport_status = _call_downstream(
+        client.get, "/diagnostics/recent-errors", headers=headers
+    )
+    if transport_status is not None or response.status_code != 200:
+        return None
+    return response.json()["items"]
 
 
 def _format_progress(entry: dict, now: datetime) -> str:

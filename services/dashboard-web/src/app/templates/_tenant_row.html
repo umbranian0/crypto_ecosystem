@@ -1,0 +1,37 @@
+{# SETUP-012: one tenant's table row, including its keys' metadata-only
+   status -- shared between `settings_tenants.html`'s own initial render
+   (one `{% include %}` per tenant) and the revoke route's HTMX fragment
+   response, so both render identically (ticket Design section: "renders an
+   HTMX fragment... so the table re-renders that key's revoked_at with no
+   manual page reload"). Never renders a raw/full key value -- only
+   `id`/`created_at`/`revoked_at` metadata, matching `SETUP-011`'s own
+   `ApiKeySummary` response shape. #}
+<tr id="tenant-row-{{ tenant.id }}">
+    <td>{{ tenant.name }}</td>
+    <td>{{ tenant.id }}</td>
+    <td>{{ tenant.created_at }}</td>
+    <td>
+        <table class="nested-key-table">
+            <thead>
+                <tr><th>Key id</th><th>Created</th><th>Revoked</th><th></th></tr>
+            </thead>
+            <tbody>
+                {% for key in tenant.api_keys %}
+                <tr>
+                    <td>{{ key.id }}</td>
+                    <td>{{ key.created_at }}</td>
+                    <td>{{ key.revoked_at | default("active", true) }}</td>
+                    <td>
+                        {% if not key.revoked_at %}
+                        <form hx-post="/settings/tenants/{{ tenant.id }}/api-keys/{{ key.id }}/revoke"
+                              hx-target="#tenant-row-{{ tenant.id }}" hx-swap="outerHTML">
+                            <button type="submit">Revoke</button>
+                        </form>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </td>
+</tr>

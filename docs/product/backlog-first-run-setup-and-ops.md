@@ -208,9 +208,8 @@ Acceptance criteria:
   `OPERATOR_TOKEN` env var, hashed with the same `hashlib.sha256` convention tenant keys already use,
   checked by a new `get_authenticated_operator` FastAPI dependency, structurally separate from
   `get_authenticated_tenant`). — `GW-021`.
-- [ ] Every endpoint under `/tenants` (list/create/revoke, `SETUP-011`) requires the operator
-  dependency — never `get_authenticated_tenant`. — unchecked: `SETUP-011`'s `/tenants` endpoints don't
-  exist yet (next sprint, correctly deferred, not a gap in this ticket).
+- [x] Every endpoint under `/tenants` (list/create/revoke, `SETUP-011`) requires the operator
+  dependency — never `get_authenticated_tenant`. — `SETUP-011` (`services/gateway-api/src/app/routers/tenants.py`).
 - [x] A test proves a real tenant's own API key, presented to any `/tenants` endpoint (in practice,
   today, `get_authenticated_operator`'s own test route — no `/tenants` route exists yet), is rejected
   (`403`) — the cross-boundary case this story exists to close. `GW-021` originally shipped this same
@@ -227,7 +226,7 @@ without it, "Settings area" would either go unbuilt or would accidentally let an
 other tenant, which would be a real tenant-isolation regression, not a hypothetical one.
 Depends on: none
 
-### SETUP-011 — `gateway-api`: tenant list/create/revoke admin endpoints [Must]
+### SETUP-011 — `gateway-api`: tenant list/create/revoke admin endpoints [Must] — done
 
 **As** `dashboard-web`'s Settings area **I want** `GET /tenants`, `POST /tenants`, and a revoke
 endpoint exposed as operator-authenticated HTTP endpoints **so that** the same lifecycle actions
@@ -235,44 +234,159 @@ endpoint exposed as operator-authenticated HTTP endpoints **so that** the same l
 over the network instead.
 
 Acceptance criteria:
-- [ ] `GET /tenants` (operator-auth) returns each tenant's `id`/`name`/`created_at` and its API keys'
+- [x] `GET /tenants` (operator-auth) returns each tenant's `id`/`name`/`created_at` and its API keys'
   `id`/`created_at`/`revoked_at` — **never** `key_hash` or any recoverable form of a raw key (raw keys
-  were never persisted in the first place, per `GW-004`/`GW-005`'s existing design).
-- [ ] `POST /tenants` (operator-auth) creates a tenant + first key via the **same** `provision()`
+  were never persisted in the first place, per `GW-004`/`GW-005`'s existing design). — `SETUP-011`.
+- [x] `POST /tenants` (operator-auth) creates a tenant + first key via the **same** `provision()`
   function `SETUP-002` and `provision_tenant.py` already share — one function, three callers (CLI,
-  bootstrap wizard, this endpoint), never three copies (DRY per implementation-plan.md section 9).
-- [ ] `POST /tenants/{id}/api-keys/{key_id}/revoke` (operator-auth) wraps `revoke_api_key.py`'s
-  `revoke()` the same way — one shared function, not a duplicate revocation code path.
-- [ ] Existing CLI scripts are kept, not deleted or deprecated — documented explicitly as "two front
-  doors to the same function," useful for an operator with host access and no browser open.
-- [ ] Tests cover list/create/revoke through the new endpoints and the existing
-  already-revoked-is-a-no-op guarantee `revoke()` already provides.
+  bootstrap wizard, this endpoint), never three copies (DRY per implementation-plan.md section 9). —
+  `SETUP-011`.
+- [x] `POST /tenants/{id}/api-keys/{key_id}/revoke` (operator-auth) resolved to call
+  `ApiKeyRepository.revoke_key(tenant_id, key_id)` directly, not `revoke_api_key.py`'s own `revoke()`
+  wrapper (that wrapper takes a raw key, which an HTTP caller never has post-issuance) — still "one
+  shared function, not a duplicate revocation code path," one level lower in the stack; see
+  `docs/tickets/SETUP-011.md`'s Analysis section and `gateway-api`'s README for the full resolution. —
+  `SETUP-011`.
+- [x] Existing CLI scripts are kept, not deleted or deprecated — documented explicitly as "two front
+  doors to the same function," useful for an operator with host access and no browser open. —
+  `SETUP-011`.
+- [x] Tests cover list/create/revoke through the new endpoints and the existing
+  already-revoked-is-a-no-op guarantee `revoke_key` already provides. — `SETUP-011`
+  (`services/gateway-api/tests/test_tenants_router.py`).
 
 Rationale for priority: Must — the concrete backend half of "replacing the exec-into-container flow,"
 the task's own named ask.
 Depends on: SETUP-010
 
-### SETUP-012 — `dashboard-web`: Settings → Tenants page [Must]
+### SETUP-012 — `dashboard-web`: Settings → Tenants page [Must] — Done (Sprint 32)
 
 **As** an operator **I want** a Settings area in `dashboard-web` listing tenants and their API keys,
 with actions to create a tenant (showing its key once) and revoke a key **so that** I never need a
 terminal for routine tenant management.
 
 Acceptance criteria:
-- [ ] `/settings/tenants` requires the new operator credential (`SETUP-010`) — **not** an ordinary
-  tenant session cookie; a tenant's own logged-in session must not be able to reach this page.
-- [ ] Lists tenants + their keys, keys shown only as metadata (id, created/revoked timestamps) —
-  never a raw or partially-masked key value once creation is past.
-- [ ] "Create tenant" shows the new raw key exactly once on a confirmation page, using the same
+- [x] `/settings/tenants` requires the new operator credential (`SETUP-010`) — **not** an ordinary
+  tenant session cookie; a tenant's own logged-in session must not be able to reach this page. —
+  `SETUP-012` (`services/dashboard-web/tests/test_settings_tenants.py`).
+- [x] Lists tenants + their keys, keys shown only as metadata (id, created/revoked timestamps) —
+  never a raw or partially-masked key value once creation is past. — `SETUP-012`.
+- [x] "Create tenant" shows the new raw key exactly once on a confirmation page, using the same
   one-time-reveal template/partial `SETUP-003`'s wizard already introduced (extracted into one shared
   component rather than a second near-identical page — DRY within this module, per implementation-plan.md
-  section 9).
-- [ ] "Revoke" re-renders the list showing the key's new `revoked_at` with no manual page refresh
-  required.
-- [ ] Positioning check: no copy on this page implies trading/prediction capability (CLAUDE.md).
+  section 9). — `SETUP-012` (new `_one_time_reveal.html`, shared by `_setup_key_reveal.html` and the
+  new `_settings_tenant_created.html`).
+- [x] "Revoke" re-renders the list showing the key's new `revoked_at` with no manual page refresh
+  required. — `SETUP-012` (HTMX fragment swap via `_tenant_row.html`).
+- [x] Positioning check: no copy on this page implies trading/prediction capability (CLAUDE.md). —
+  `SETUP-012` (banned-word test).
 
 Rationale for priority: Must — the actual UI deliverable for the task's named tenant-management ask.
 Depends on: SETUP-011
+
+See `docs/tickets/SETUP-012.md` and `services/dashboard-web/README.md`'s "Settings: tenant management
+(SETUP-012)" section for the full implementation record.
+
+### SETUP-034 — `dashboard-web`: make the existing operator login reachable by clicking through the UI [Must]
+
+**Context (discovered-done check, same discipline `SETUP-010` applied to itself):** `DASH-113`
+(Sprint 18) already shipped a real, distinct operator login flow -- `GET`/`POST /operator-login`
+renders a form, stores the submitted token in `OperatorSessionStore`, and sets an `operator_session_id`
+cookie gating every `/settings/*` route via `require_operator_session` (structurally separate from the
+tenant `session_id` cookie/`SessionStore` -- confirmed in `services/dashboard-web/README.md`'s
+"Operator login and monitoring (DASH-113)" section). **This already is** the "operator enters the
+`OPERATOR_TOKEN` once through a distinct login form and gets a session cookie" mechanism the requesting
+operator asked for -- it does not need to be rebuilt, and this story does not rebuild it. The actual,
+narrow gap: nothing in the rendered UI links to `/operator-login`, `/settings/tenants`,
+`/settings/environment`, or `/monitoring` -- `base.html`'s only `<nav>` block is gated on the tenant
+`session_id` cookie and lists only tenant-facing routes; `login.html` has no link to `/operator-login`
+either. An operator who doesn't already know the exact URL by heart has no way to find this in the
+browser -- confirmed by reading `src/app/templates/base.html` and `login.html` directly. This is the
+entire, concrete cause of the reported pain point ("I cannot get the key and manage them in system... I
+should be able to do it as admin"), not a missing backend capability.
+
+**As** an operator **I want** a visible path to `/operator-login` from the tenant login page, and a
+persistent navigation menu to `/settings/tenants`, `/settings/environment`, and `/monitoring` once an
+operator session is active, plus a way to log that session out **so that** I can reach admin
+functionality by clicking through the UI, the same way a tenant already clicks through theirs, instead
+of hand-typing a URL I'd have to already know.
+
+Acceptance criteria:
+- [ ] `login.html` (the existing tenant login page) adds a small, clearly secondary link to
+  `/operator-login` (e.g. "Platform operator? Log in here") -- styled/positioned so it is obviously not
+  a second way to log in as a tenant, avoiding the exact merge-back-together `SETUP-010`'s README
+  explicitly warned against.
+- [ ] `base.html` gains a second, operator-scoped `<nav>` block, rendered when
+  `request.cookies.get('operator_session_id')` is present, linking to `/settings/tenants`,
+  `/settings/environment`, and `/monitoring`, plus a logout control for that session -- structurally
+  parallel to, but never merged with, the existing tenant nav block (which stays gated on `session_id`
+  only).
+- [ ] The tenant nav block and the new operator nav block render independently based on which cookie(s)
+  are present (a browser could plausibly hold both, e.g. an operator who is also testing as a tenant) --
+  a template test covers all four cookie-presence combinations (tenant only, operator only, both,
+  neither) and asserts the correct block(s) render.
+- [ ] A new `POST /operator-logout` (`src/app/routers/operator.py`, same module `DASH-113` already
+  owns) reuses `OperatorSessionStore.delete` and `Response.delete_cookie` -- the exact same mechanism
+  `DASH-007`'s tenant `POST /logout` already established, not a second one -- and redirects to
+  `/operator-login`. (No operator logout route exists today -- confirmed absent from
+  `services/dashboard-web/README.md`.)
+- [ ] No change to `require_operator_session`, `OperatorSessionStore`, or the `POST /operator-login`
+  handler's own logic -- this story is templates/nav/one new logout route only, not a rebuild of
+  `DASH-113`'s mechanism.
+- [ ] Positioning check: no new copy implies trading/prediction capability (CLAUDE.md).
+
+Rationale for priority: Must -- directly closes the operator's reported real pain point, and the
+backend mechanism it depends on (`DASH-113`) already exists and is already tested; this is the
+smallest change that makes it actually usable, not new infrastructure.
+Depends on: none (SETUP-010/DASH-113 already shipped)
+
+### SETUP-035 — `gateway-api`/`dashboard-web`: reject an invalid operator token at login time, not on first use [Should]
+
+**As** an operator **I want** `POST /operator-login` to tell me immediately if the token I typed is
+wrong, rather than accepting any non-empty value and only failing later on the first `/settings/*`
+call **so that** a typo doesn't look like a successful login until I click into Settings and get a
+generic `error.html`.
+
+Acceptance criteria:
+- [ ] `POST /operator-login` performs one lazy-validation call against an already-existing
+  operator-gated `gateway-api` endpoint (e.g. `GET /tenants`, `SETUP-011`) -- the same "cheap,
+  reuse-what-exists" pattern `DASH-002`'s own tenant-login lazy validation already established (a `403`
+  unambiguously means "invalid token"; any non-`403`/`401` response is treated as valid). No new
+  gateway-api endpoint is introduced solely for this check.
+- [ ] An invalid token redisplays `/operator-login` with a clear "invalid operator token" error, not a
+  silent accept followed by a confusing later failure.
+- [ ] A transport-level failure (gateway-api unreachable) redisplays the form with a generic
+  "unreachable" error, matching `DASH-002`'s own transport-failure convention -- never treated as "token
+  valid."
+- [ ] `services/dashboard-web/README.md`'s "Known gaps" entry for `DASH-113`'s unvalidated-token
+  behavior is removed/updated once this ships.
+
+Rationale for priority: Should -- real correctness/UX improvement, but the token is already fully
+enforced downstream by every real `/settings/*` call (`OperatorTokenHeaderDep` forwards it to
+gateway-api, which does validate) -- this closes a confusing-UX gap, not a security gap, so it doesn't
+block the Must story above.
+Depends on: SETUP-034 (touches the same login route/template)
+
+### SETUP-036 — Distributing the `OPERATOR_TOKEN` value to a fresh operator [Won't, this backlog]
+
+**As** a fresh operator **I want** some in-product way to learn the `OPERATOR_TOKEN` value, since
+today it's an env var I'd need shell/container access to read.
+
+Rationale: **Won't, this backlog.** The operator token is a secret, in the exact same category
+`infra/.env`/`infra/.env.example` already hold every other bootstrap-time secret (`DATABASE_URL`
+credentials, etc.) -- `SETUP-015`'s own "Environment" panel already establishes and tests the rule that
+no secret value is ever rendered in the UI, "even in a redacted-looking form," and that rule should not
+be carved out for this one secret. An operator who can bring the stack up already has the access needed
+to set `OPERATOR_TOKEN` in `infra/.env` before first boot (the same access `infra/bootstrap.ps1`/`.sh`
+themselves require to run at all) -- this is not a new or higher bar than every other secret in that
+file. Building an in-UI "reveal the operator token" affordance would be a real secret-exposure surface
+this platform has deliberately avoided everywhere else. If a future need genuinely requires
+self-service operator-credential issuance without pre-shared-secret/`.env` access (e.g. a hosted,
+multi-operator deployment), that is squarely `SETUP-010`'s own named trigger for revisiting the
+single-shared-secret design ("a second real human operator who needs their own distinguishable
+credential") -- not a gap to patch around in the meantime.
+Depends on: none
+
+---
 
 ### SETUP-013 — Connector schedule/credential configuration in Settings [Won't, this backlog]
 
@@ -309,7 +423,7 @@ real to flip would be exactly the speculative scaffolding `libs/common`'s own RE
 without a redeploy.
 Depends on: none
 
-### SETUP-015 — Settings: read-only "Environment" panel [Should]
+### SETUP-015 — Settings: read-only "Environment" panel [Should] — **Done** (`docs/tickets/SETUP-015.md`)
 
 **As** an operator **I want** a read-only panel in Settings showing which service URLs/ports the
 running stack is configured with (no secrets, no edit capability) **so that** I have one place to see
@@ -317,14 +431,17 @@ what's live without SSHing in or reading `.env` files, while staying honest that
 restart/redeploy to change, not a form submission.
 
 Acceptance criteria:
-- [ ] Shows non-secret connectivity facts (which services exist, their configured hostnames/ports,
+- [x] Shows non-secret connectivity facts (which services exist, their configured hostnames/ports,
   links into the Monitoring page for live status) — explicitly labeled "read-only — change via
-  `infra/.env` and restart the stack, not this page."
-- [ ] No secret value (`DATABASE_URL`, passwords, API keys, `OPERATOR_TOKEN`) is ever rendered, even in
+  `infra/.env` and restart the stack, not this page." (`services/dashboard-web/src/app/routers/
+  settings_environment.py`, `.../templates/settings_environment.html`)
+- [x] No secret value (`DATABASE_URL`, passwords, API keys, `OPERATOR_TOKEN`) is ever rendered, even in
   a redacted-looking form — only the non-secret facts named above. This is not a "hide it behind a
-  toggle" pattern; the data is never sent to the template at all.
-- [ ] This page has **no** POST/edit route — read-only is enforced structurally (no route exists to
-  change any of it), not merely by omitting a button from the template.
+  toggle" pattern; the data is never sent to the template at all. (proven by
+  `tests/test_settings_environment.py`'s secret-value and source-level `os.environ` tests)
+- [x] This page has **no** POST/edit route — read-only is enforced structurally (no route exists to
+  change any of it), not merely by omitting a button from the template. (proven by
+  `tests/test_settings_environment.py`'s source-level test)
 
 Rationale for priority: Should — real operator value (the task's own "view... configuration" ask), but
 scoped strictly to display so it can't become an accidental channel for editing bootstrap-order values
@@ -564,10 +681,20 @@ Depends on: SETUP-032, OPS-001 (external — not yet shipped)
 
 | Priority | Count | IDs |
 |---|---|---|
-| Must | 11 | SETUP-001, 002, 003, 004, 010, 011, 012, 020, 030, 031, 032 |
-| Should | 3 | SETUP-015, 021, 022 |
+| Must | 12 | SETUP-001, 002, 003, 004, 010, 011, 012, 020, 030, 031, 032, 034 |
+| Should | 4 | SETUP-015, 021, 022, 035 |
 | Could | 1 | SETUP-033 |
-| Won't | 3 | SETUP-013, 014, 023 |
+| Won't | 4 | SETUP-013, 014, 023, 036 |
+
+**Addendum (this session):** `SETUP-034`/`035`/`036` were added in response to a live operator-reported
+gap -- "no way to log in as admin/operator through the UI." Investigation (reading
+`services/dashboard-web/README.md`'s "Operator login and monitoring (DASH-113)" section plus the actual
+`base.html`/`login.html` templates) found the backend/session mechanism the report asked for was
+**already shipped** (`DASH-113`, Sprint 18: `GET`/`POST /operator-login`, a structurally distinct
+`operator_session_id` cookie/`OperatorSessionStore`, gating every `/settings/*` route) -- the real,
+narrow gap is that nothing in the rendered UI links to it. `SETUP-034` (Must) closes that; `SETUP-035`
+(Should) is a smaller, separable UX correctness fix to the same route; `SETUP-036` documents why
+"how does an operator learn the token value" is deliberately out of scope, not silently skipped.
 
 Sequencing note for the PM/Tech Lead: `SETUP-030` (dashboard-web in Compose) and `SETUP-010` (operator
 auth) are the two real unlocks everything else in Epics A/B/C sits on top of — schedule those two

@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Environment -- dashboard-web{% endblock %}
+{% block content %}
+<h2>Environment</h2>
+<p><strong>Read-only -- change via <code>infra/.env</code> and restart the stack, not this page.</strong>
+No field on this page is editable.</p>
+<p>Shows only non-secret connectivity facts: which services exist, the env var <em>names</em> (never
+values) that configure each, and the current, non-secret <code>GATEWAY_API_URL</code> value. Secret
+values (database connection strings, the operator token, any API key or password) are never read or
+shown here -- see <a href="/monitoring">/monitoring</a> for live service status.</p>
+<p>Current <code>GATEWAY_API_URL</code>: <code>{{ gateway_api_url }}</code></p>
+<div class="table-scroll">
+<table>
+    <thead>
+        <tr>
+            <th>Service</th>
+            <th>Configurable env var names</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for service in services %}
+        <tr>
+            <td>{{ service.name }}</td>
+            <td>{{ service.env_var_names | join(", ") }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+</div>
+<p>For live connectivity status, see <a href="/monitoring">/monitoring</a>. For per-tenant connector
+credential status, see <a href="/settings/connectors">/settings/connectors</a>. For tenant management,
+see <a href="/settings/tenants">/settings/tenants</a>.</p>
+{% endblock %}

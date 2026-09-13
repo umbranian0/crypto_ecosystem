@@ -1,6 +1,6 @@
 # gateway-api
 
-**Status: implemented (Sprint 05 done — all 9 in-scope Must stories, GW-001 through GW-009, complete: scaffolding, `identity` schema, repository interfaces, interim SQLite implementation, operator provisioning, API-key auth, verified tenant-context forwarding, request routing to `validation-service`, downstream failure handling. Sprint 17 additionally landed GW-010 (API-key revocation) and GW-014 (auth event audit logging). Sprint 18 landed GW-021 (operator-token authentication, a narrow slice of `SETUP-010`), GW-019 (tenant-authenticated proxy to `ingestion-service`'s `POST /connectors/{source}/run`), GW-020 (tenant-authenticated proxy to `ingestion-service`'s `GET /datasets`/`GET /datasets/{source}/series`), and a `DASH-109` addition to that same router: a tenant-authenticated proxy to `ingestion-service`'s `GET /connectors/{source}/status`, for `dashboard-web`'s `/monitoring` "last crawl status" panel. GW-011 not started. See docs/sprints/sprint-05.md, docs/sprints/sprint-17.md, and docs/tickets/README.md for live ticket status). Built ahead of trigger #5 actually firing — see docs/product/backlog-gateway-api.md decision 1. There is still no real pilot client; this backlog stands up the auth/routing mechanism itself as an explicit user override, not because the trigger condition is true. Do not read anything in this README as "a pilot client exists."**
+**Status: implemented (Sprint 05 done — all 9 in-scope Must stories, GW-001 through GW-009, complete: scaffolding, `identity` schema, repository interfaces, interim SQLite implementation, operator provisioning, API-key auth, verified tenant-context forwarding, request routing to `validation-service`, downstream failure handling. Sprint 17 additionally landed GW-010 (API-key revocation) and GW-014 (auth event audit logging). Sprint 18 landed GW-021 (operator-token authentication, a narrow slice of `SETUP-010`), GW-019 (tenant-authenticated proxy to `ingestion-service`'s `POST /connectors/{source}/run`), GW-020 (tenant-authenticated proxy to `ingestion-service`'s `GET /datasets`/`GET /datasets/{source}/series`), and a `DASH-109` addition to that same router: a tenant-authenticated proxy to `ingestion-service`'s `GET /connectors/{source}/status`, for `dashboard-web`'s `/monitoring` "last crawl status" panel. Sprint 32 landed SETUP-011 (`GET /tenants`, `POST /tenants`, `POST /tenants/{tenant_id}/api-keys/{key_id}/revoke` -- operator-only tenant admin endpoints). GW-011 not started. See docs/sprints/sprint-05.md, docs/sprints/sprint-17.md, and docs/tickets/README.md for live ticket status). Built ahead of trigger #5 actually firing — see docs/product/backlog-gateway-api.md decision 1. There is still no real pilot client; this backlog stands up the auth/routing mechanism itself as an explicit user override, not because the trigger condition is true. Do not read anything in this README as "a pilot client exists."**
 
 The only internet-facing service. See [../../docs/solution-design.md](../../docs/solution-design.md) section 3.6 and [../../docs/implementation-plan.md](../../docs/implementation-plan.md) sections 2, 4.
 
@@ -94,6 +94,59 @@ The operator presents the raw key they already have on hand (printed once at pro
   - **`INGEST-012` (live-UAT fix)**: this route originally proxied a downstream path `ingestion-service` never built (`INGEST-009`'s `GET /connectors/{source}/status` is crawl-run status, a different resource from credential presence) -- that gap surfaced in live UAT, not in this ticket's own mocked test suite, the exact lesson `docs/sprints/sprint-18.md`'s UAT addendum names. It now forwards end-to-end to the real `ingestion-service` endpoint for a valid `tenant_id`.
   - **`tenant_id` (required query parameter)**: the caller here is an operator, who has no `TenantContext` of their own to source `X-Tenant-Id` from (unlike every tenant-authenticated proxy route above) -- the operator explicitly names which tenant's credential status to check. A missing `tenant_id` is FastAPI's own required-query-param `422`, resolved before any downstream call is attempted -- not a downstream call with an empty/garbage tenant id. Headers are built by hand here (`{"X-Tenant-Id": tenant_id}`), not via `build_downstream_headers` (GW-007) -- that helper's signature takes a `TenantContext`, which an operator caller does not have; this route is also deliberately narrower than `build_downstream_headers` (no `X-Correlation-Id`) since extending it to carry correlation IDs is a separate, undiscussed change.
   - `get_authenticated_operator` remains the only auth gate on this route -- this fix did not change who may call it, only what they must supply. Proven in `tests/test_operator_routing.py` (mocked transport, tenant_id forwarding, missing-`tenant_id` `422`) and `tests/test_operator_auth.py` (unchanged, re-confirming a tenant's own API key never satisfies `get_authenticated_operator`).
+
+**Tenant admin endpoints (SETUP-011)**: `src/app/routers/tenants.py` provides the operator-only
+`GET /tenants`, `POST /tenants`, `POST /tenants/{tenant_id}/api-keys/{key_id}/revoke` surface,
+replacing the `docker compose exec ... provision_tenant.py`/`revoke_api_key.py` flow with a
+network-reachable one `dashboard-web`'s Settings area (`SETUP-012`) can call. Every route on this
+router is gated by `get_authenticated_operator` (`SETUP-010`) -- there is no tenant-authenticated or
+unauthenticated path onto this surface.
+- **`GET /tenants`**: returns `{items: [{id, name, created_at, api_keys: [{id, created_at,
+  revoked_at}]}]}` -- one entry per tenant, each with its keys' metadata. **`key_hash`/any raw key
+  value never appears anywhere in this response** -- `ApiKeySummary` only carries `id`/`created_at`/
+  `revoked_at`. Backed by the two new read methods this ticket adds to `TenantRepository`/
+  `ApiKeyRepository` (`interfaces.py`, both storage backends): `list_tenants() -> list[TenantRecord]`
+  (a fifth documented tenant-agnostic exception on that interface, alongside `create_tenant`/
+  `get_by_hash`/`get_user_by_email`/`tenant_exists`) and `list_api_keys(tenant_id) ->
+  list[ApiKeyRecord]` (ordinary `tenant_id`-first case).
+- **`POST /tenants`**: body `{tenant_name}`, calls `app.provisioning.provision()` directly -- the
+  exact function `scripts/provision_tenant.py`/`SETUP-002`'s `POST /setup/initialize` already share,
+  no second tenant-creation code path. Returns `{tenant_id, tenant_name, api_key}`, `201`, the raw key
+  shown exactly once (same one-time-reveal contract as `SetupInitializeResponse`). Unlike
+  `POST /setup/initialize`, there is **no `409`-on-already-initialized guard** here -- this is a
+  genuine ongoing multi-tenant creation surface, gated by operator auth instead of the fresh-install
+  check.
+- **`POST /tenants/{tenant_id}/api-keys/{key_id}/revoke`**: resolved revoke-granularity decision (do
+  not read the backlog's own looser "wraps `revoke_api_key.py`'s `revoke()`" wording as literal): that
+  CLI function takes a *raw* API key as input -- the only credential a CLI operator has on hand. An
+  HTTP caller here has no raw key after issuance (shown once, never persisted, `GW-005`'s
+  one-time-reveal contract) -- it only has the key's `id` (metadata, from `GET /tenants`). This route
+  therefore calls `ApiKeyRepository.revoke_key(tenant_id, key_id)` **directly** -- the same repository
+  method `revoke_api_key.py`'s own `revoke()` calls internally after it resolves a raw key to a
+  `key_id`. This is still "one shared function, not a duplicate revocation code path" -- the shared
+  function is `revoke_key` at the repository layer, one level lower than `revoke_api_key.py`'s own
+  CLI-specific `revoke()` wrapper, the correct level to share at here since the two callers start from
+  different inputs (raw key vs. key id). A `key_id` that does not belong to `tenant_id`, or does not
+  exist at all, returns a generic `404` (resolved via `list_api_keys(tenant_id)` and a match on
+  `key_id` -- no new lookup-by-id repository method needed; both "doesn't exist" and "belongs to a
+  different tenant" collapse to the same body, never a distinguishing detail). Already-revoked is a
+  no-op (checks `revoked_at` before calling `revoke_key`, never re-stamps). Returns `{tenant_id,
+  key_id, revoked_at}`, `200`.
+- **Two front doors, one shared implementation**: `scripts/provision_tenant.py`/
+  `scripts/revoke_api_key.py` (`GW-005`/`GW-010`) are unchanged by this ticket and still work -- they
+  and this router are two separate callers of the same underlying `provision()`/`revoke_key()`
+  functions, never two competing implementations. A third caller must reuse one of these two existing
+  functions too, never invent a third code path.
+- **Postgres RLS**: `list_tenants()`'s Postgres implementation is a fourth tenant-agnostic read
+  (alongside `get_by_hash`/`get_user_by_email`/`tenant_exists`) and deliberately does not call
+  `_set_tenant_scope`. Confirmed at implementation time (not assumed): migration
+  `0005_add_tenants_rls_read_fallback.py`'s existing `USING` clause fallback on `tenants` already
+  covers a multi-row `SELECT *`, not just `tenant_exists()`'s single-row `LIMIT 1` read -- a `USING`
+  clause applies row-by-row to every `SELECT` against the table regardless of how many rows the query
+  would otherwise return. **No new migration was needed for this ticket.**
+- Registered in `main.py` as `app.include_router(tenants.router)`, no `tags=` -- same `ARCH-007`
+  reasoning as `setup.router`/`system.router` above (this router doesn't proxy to a single downstream
+  service).
 
 **Fresh-install detection (SETUP-001) -- the one deliberate unauthenticated endpoint**: `GET
 /setup/status` (`src/app/routers/setup.py`) is the **only** route on this service with no auth
@@ -210,6 +263,19 @@ only one of the three below is actually built today.
   `ingestion-service` once that service exists) must carry `tags=["<service-name>"]` following this
   exact convention as part of that router's own ticket's acceptance criteria -- this is process
   guidance for ticket-writing, not something enforced in code.
+**Recent-errors ring buffer (SETUP-021)**: `GET /diagnostics/recent-errors`
+(operator-gated, `get_authenticated_operator`/`SETUP-010`, no `tags=` per
+ARCH-007 -- same reasoning as `setup.router`/`system.router`/`tenants.router`)
+returns `{"items": [...]}`, this process's own last 50 `WARNING`-and-above log
+records, most-recent first. Backed by one `naive_first_common.RecentErrorsHandler`
+(`SETUP-021`) instance, attached to the root logger in `src/app/main.py`
+*alongside* -- not replacing -- `OPS-006`'s existing JSON-formatter/
+correlation-id handler (Observer pattern: one additional observer of the
+`logging` module's event stream). No cross-restart persistence (an in-memory
+`deque`, reset on every process restart) and no cross-service search (still
+`OPS-007`'s declined log-aggregation scope) -- `dashboard-web`'s `/monitoring`
+page renders this endpoint's response alongside its own local buffer.
+
 **Load testing (GW-017)**: `loadtest/locustfile.py` + `loadtest/README.md` drive this service's
 key endpoints against a real running Compose stack -- observability tooling, not a CI gate (no
 hard SLA/threshold is asserted or gated on anywhere in it). See `loadtest/README.md` for how to run

@@ -13,6 +13,7 @@ via `httpx`, never another service's code or database schema directly.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import httpx
@@ -21,8 +22,16 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from app.dependencies.diagnostics import recent_errors_handler
 from app.dependencies.downstream import get_gateway_api_url
 from app.dependencies.http_client import GatewayApiClientDep
+
+# SETUP-021: one additional observer of the root logger's event stream (this
+# service has no OPS-006 JSON-formatter handler of its own yet -- unlike
+# gateway-api/validation-service, dashboard-web never called
+# `configure_structured_logging()` -- so this attaches without disturbing
+# anything, and does not add one here either, out of this ticket's scope).
+logging.getLogger().addHandler(recent_errors_handler)
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 STATIC_DIR = Path(__file__).parent / "static"
@@ -52,12 +61,27 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 # from that module (DASH-113's own DRY-reuse note, extended by DASH-112).
 # `setup` (SETUP-003) is imported last for the same reason -- it also
 # imports `_call_downstream`/`_render_error_for_status` from `runs`.
-from app.routers import auth, operator, runs, settings, setup  # noqa: E402
+# `settings_environment` (SETUP-015) has no such dependency on `runs` and
+# reuses only `get_gateway_api_url`/`OperatorTokenHeaderDep`, both already
+# imported above by the time this module loads. `settings_tenants`
+# (SETUP-012) also imports `_call_downstream`/`_render_error_for_status`
+# from `runs`, so it is imported alongside `settings`/`setup`.
+from app.routers import (  # noqa: E402
+    auth,
+    operator,
+    runs,
+    settings,
+    settings_environment,
+    settings_tenants,
+    setup,
+)
 
 app.include_router(auth.router)
 app.include_router(runs.router)
 app.include_router(operator.router)
 app.include_router(settings.router)
+app.include_router(settings_environment.router)
+app.include_router(settings_tenants.router)
 app.include_router(setup.router)
 
 

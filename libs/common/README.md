@@ -40,6 +40,9 @@ Implementation-plan.md section 8: "for libs, the public function signatures in t
 - `configure_structured_logging(level=logging.INFO)`
 - `CorrelationIdMiddleware` (class)
 
+### `diagnostics.py`
+- `RecentErrorsHandler` (class)
+
 `logging.py` also exports one module-level `contextvars.ContextVar` (not a
 function/class, so it is not part of the machine-checked list above):
 `correlation_id_var` -- holds the current request's correlation id (empty
@@ -69,6 +72,26 @@ logs can be joined across both services by that one id. This story does
 **not** stand up a log-aggregation backend (still `OPS-007`'s own declined
 scope) -- it ends at "logs are structured and correlatable," not "logs are
 centrally searchable."
+
+## Recent-errors ring buffer (SETUP-021)
+
+`naive_first_common.diagnostics.RecentErrorsHandler` is a `logging.Handler`
+(the standard library's own Observer-pattern hook into the `logging` module's
+event stream) that both `gateway-api` and `dashboard-web` attach to the root
+logger *alongside* -- not replacing -- OPS-006's existing JSON-formatter/
+correlation-id handler. It keeps a bounded, in-process `collections.deque`
+(default `maxlen=50`) of `WARNING`-and-above records only (via the handler's
+own `setLevel(logging.WARNING)`, the standard library's own filtering
+mechanism -- no manual level check in `emit()`). Each buffered entry is a
+plain dict: `timestamp`, `level`, `logger`, `message` (the already-formatted
+string, `record.getMessage()`), `correlation_id`. It never captures
+`record.exc_info`/`record.exc_text` (a raw traceback), a request body, or any
+secret value. `.snapshot()` returns the buffer most-recent-first as a plain
+list copy (never a live reference to the internal deque). Each service
+exposes its own buffer via its own operator-authenticated
+`/diagnostics/recent-errors` endpoint -- see each service's own README for
+that wiring. This is not a log-aggregation backend: no cross-restart
+persistence, no cross-service search (still `OPS-007`'s declined scope).
 
 ## CI
 

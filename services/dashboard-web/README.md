@@ -5,8 +5,9 @@
 **check, a runs list view, and a Selenium E2E suite covering the full login -> submit -> view loop.**
 **`DASH-113` (Sprint 18) added a minimal `/monitoring` service-status page and a structurally-separate**
 **operator-token session gate (`require_operator_session`), the minimal slice of the sibling backlog's**
-**`SETUP-003`/`012`/`020` stories pulled into this sprint for `DASH-109`/`110`/`112`'s sake -- the full**
-**setup wizard and tenant-management UI remain that other backlog's own scope, not duplicated here**
+**`SETUP-003`/`012`/`020` stories pulled into this sprint for `DASH-109`/`110`/`112`'s sake -- as of**
+**this entry the full setup wizard (`SETUP-003`) and tenant-management UI (`SETUP-012`, Sprint 32) are**
+**both now built -- see "Settings: tenant management (SETUP-012)" below**
 **(65/65 unit tests passing + 5 e2e). `DASH-109` (Sprint 18) extended that same `/monitoring` page with**
 **a "last crawl status" panel, per-tenant, plus a new `GET /ingestion/connectors/{source}/status`**
 **proxy on `gateway-api` -- see "Last crawl status panel (DASH-109)" below. `DASH-112` (Sprint 18,**
@@ -87,12 +88,13 @@ Formerly `dashboard/`. See [../../docs/solution-design.md](../../docs/solution-d
 **Owns**: server-rendered UI only (FastAPI + Jinja2 + HTMX) -- login/session, run detail, submit-a-run
 form, runs list, an ingested-dataset browsing view (`DASH-111`), a minimal service-status monitoring
 page, an operator-token session gate reusable by any `/settings/*` route (`DASH-113`), a first
-`/settings/*` route itself: a per-tenant, read-only connector credential-status lookup (`DASH-112`), and
-two trigger actions on the monitoring page -- "run this tenant's crawl now" per source, and "generate a
-report" for an existing run (`DASH-110`), both plain authenticated HTTP calls through `gateway-api`'s
-own already-existing proxies, never any container-runtime or OS-process control of their own. (A report
-viewer, degradation-alerts view, and the full setup wizard/tenant-management UI are planned but not in
-scope yet -- see "Known gaps" below.)
+`/settings/*` route itself: a per-tenant, read-only connector credential-status lookup (`DASH-112`), an
+operator-only tenant/API-key management page (`SETUP-012`: list/create/revoke, backed by
+`gateway-api`'s `SETUP-011` tenant-admin endpoints), and two trigger actions on the monitoring page --
+"run this tenant's crawl now" per source, and "generate a report" for an existing run (`DASH-110`), both
+plain authenticated HTTP calls through `gateway-api`'s own already-existing proxies, never any
+container-runtime or OS-process control of their own. (A report viewer and degradation-alerts view are
+planned but not in scope yet -- see "Known gaps" below.)
 
 **Does not own**: any data access -- every page is rendered from calls to `gateway-api`'s public
 contract, same as an external client would use. This is deliberate: it keeps the UI honest to the same
@@ -239,11 +241,9 @@ either response.
   (`GW-006`) instead (backlog decision 3).
 - `DASH-113`'s `POST /operator-login` does not validate the submitted operator token against
   gateway-api at all (no gateway-api endpoint validates a bare token today) -- any non-empty token is
-  accepted and stored. `DASH-112`'s `/settings/connectors` is the first route that actually calls an
-  operator-gated gateway-api endpoint, so an invalid token now surfaces as that call's own `401`/`403`
-  (rendered as the generic `error.html`), not at login time. The full `SETUP-003` setup wizard and
-  `SETUP-012` tenant-management UI are not built -- `DASH-113` is only the minimal `/monitoring` page
-  and the reusable `require_operator_session` gate.
+  accepted and stored. `DASH-112`'s `/settings/connectors` (and now `SETUP-012`'s `/settings/tenants`)
+  are the routes that actually call an operator-gated gateway-api endpoint, so an invalid token surfaces
+  as that call's own `401`/`403` (rendered as the generic `error.html`), not at login time.
 - `DASH-112`'s `tenant_id` field is a plain manual-entry text input -- no tenant directory/dropdown
   exists yet to look one up or validate it against (an honest reflection of that gap, not a silently
   degraded feature). `SETUP-011` (tenant list/create/revoke admin endpoints, backlog
@@ -1457,6 +1457,56 @@ budget but past an accidental 5s one.
   modified.
 - See `docs/tickets/DASH-121.md` for the full writeup.
 
+## Fix: raw Pydantic error leak + silent out-of-range `days` (DASH-123)
+
+Two minor, fully-diagnosed defects found by a QA UAT sweep (Sprint 31), same file
+(`routers/runs.py`), same ticket per this session's own precedent for same-sweep/same-file fixes.
+
+- **Defect 1**: `run_new_submit`'s `except (ValueError, ValidationError) as exc` branch (a client-side
+  `RunRequest(...)` construction failure, e.g. `horizon=0`) rendered `str(exc)` verbatim -- Pydantic's
+  raw internal error text, including the `RunRequest` model class name and a `pydantic.dev` docs link
+  -- inconsistent with this same route's other two hand-written error strings. Fixed via a new
+  `_human_readable_run_request_error(exc)` helper, next to
+  `_MISSING_DATASET_REFERENCE_ERROR`/`_INVALID_INLINE_JSON_ERROR`, naming the offending field(s) from
+  `exc.errors()` for a `ValidationError`, with a generic fallback for a plain `ValueError`.
+- **Defect 2**: `GET /runs/horizon-summary?days=<value not in (7, 15, 30)>` used to render `200` with
+  no active day-tab and an empty `runs` list -- indistinguishable from "no completed runs at a valid
+  horizon." Now rejected with `HTTPException(422)` up front, before any downstream call.
+- **Tests**: the pre-existing failing regression test
+  (`test_run_new_submit_invalid_horizon_shows_human_readable_error`) now passes; new test
+  `test_horizon_summary_out_of_range_days_rejected_with_422` added. QA independently added one more
+  edge-case test (`days=0`/non-integer `days`, already correctly rejected, no code change needed).
+  Full suite: 267 passed, 7 deselected (e2e), 0 failed.
+- See `docs/tickets/DASH-123.md` for the full writeup.
+
+## Fix: `GET /runs` client-side callers silently truncated to the first 20 runs (DASH-122)
+
+Found live (DBA agent, performance review of the running stack): `GET /runs` (proxied through
+gateway-api's `GW-016`, itself proxying validation-service's `VS-022`) defaults to `limit=20` when
+no `limit` query param is supplied. `runs_horizon_summary` (`FHS-002`) and `runs_trend`
+(`RAV-009`/`RAV-010`) both called it with no explicit `limit` and then filtered/grouped the result
+client-side by `horizon`/`status`/`(dataset_id, horizon)` -- for a tenant with more than 20 runs,
+any matching run outside the 20 most recent silently never appeared on either page.
+
+- **The bug**: both routes' `GET /runs` calls omitted `limit` entirely, relying on the endpoint's
+  own default rather than requesting the tenant's full run history.
+- **Why not just pass a bigger `limit=100`**: validation-service's `GET /runs` (`VS-022`)
+  hard-caps `limit` at 100 (`Query(default=20, ge=1, le=100)`, a real `422` above it, never
+  clamped) -- a single request, even at the maximum allowed value, is still insufficient once a
+  tenant has more than 100 runs.
+- **The fix**: a new `_fetch_all_runs` helper in `routers/runs.py` pages through the existing
+  `GET /runs` `limit`/`offset` params (100 at a time) until the response envelope's own `total`
+  field is satisfied, then returns the full list. Both `runs_horizon_summary` and `runs_trend` now
+  call this helper instead of a bare, unparameterized `client.get(..., "/runs", ...)`. No new
+  backend endpoint, no new pagination UI. `runs_list` (`DASH-005-01`) is deliberately untouched --
+  it forwards a caller-supplied `limit`/`offset` unmodified by design, not this bug's territory.
+- **Tests**: `tests/test_runs_horizon_summary.py` and `tests/test_runs_trend.py` each gained two
+  regression tests -- a 25-run fixture (proving the simple >20 case, all on one page) and a
+  150-run fixture (proving real pagination across the `le=100` server-side ceiling, asserting runs
+  120-124 are only reachable via the second `offset=100` page). Full suite: 257 passed, 7
+  deselected (e2e), zero regressions.
+- See `docs/tickets/DASH-122.md` for the full writeup.
+
 ## Setup wizard (SETUP-003)
 
 `src/app/routers/setup.py` (new): `GET /setup` renders a tenant-name form, or redirects straight to
@@ -1507,3 +1557,95 @@ dependency).
   redirected to `/setup`, the form rendered, `POST /setup` returned `201` with the raw key shown
   exactly once, `/login` with that key succeeded, and a second visit to `/setup` redirected straight
   to `/login`.
+
+## Settings: environment panel (SETUP-015)
+
+`src/app/routers/settings_environment.py` (new, disjoint router module -- not added to `settings.py`,
+mirroring that file's own "one module per Settings concern" precedent) adds `GET /settings/environment`,
+gated by `OperatorTokenHeaderDep` (the same operator-only gate `/settings/connectors`/`/settings/tenants`
+already use):
+
+- **Shown**: which platform services exist (`gateway-api`, `validation-service`, `reporting-service`,
+  `ingestion-service`, `dashboard-web`), the configurable env var *names* (not values) for each, and
+  `GATEWAY_API_URL`'s actual current value -- reused via the existing `get_gateway_api_url()`
+  (`app.dependencies.downstream`, DASH-003), not reimplemented. A plain-paragraph link to `/monitoring`
+  for live service status, and to `/settings/connectors`/`/settings/tenants` -- no shared nav partial
+  introduced, same decision `SETUP-012` already made.
+- **Deliberately never shown, by construction**: `DATABASE_URL`, `OPERATOR_TOKEN`, any `*_API_KEY`/
+  password env var, or any per-service internal DB/Redis URL -- no `os.environ.get`/`os.getenv` call
+  for any of those names exists anywhere in `settings_environment.py` (the module doesn't even import
+  `os`); the per-service list is a literal list of env var *name* strings, never resolved against the
+  real environment. `GATEWAY_API_URL` is the one exception, since it is a hostname/port, not a
+  credential.
+- **Read-only by construction, not by omission**: no `@router.post`/`@router.put`/`@router.delete`
+  route exists anywhere in this file. The template states plainly: "Read-only -- change via
+  `infra/.env` and restart the stack, not this page."
+- **Positioning**: the template describes the shown facts as "connectivity"/"environment configuration"
+  only -- never "prediction," "forecast," "signal," or "recommendation" (CLAUDE.md's core positioning
+  constraint), proven by `tests/test_settings_environment.py`'s own banned-word test.
+- **Tests**: `tests/test_settings_environment.py` covers the operator gate (no session and a tenant's
+  own `session_id` cookie both redirect `303` to `/operator-login`), an authenticated render showing
+  the expected non-secret facts, a test proving no secret env var value ever appears in the rendered
+  HTML even when a realistic `DATABASE_URL`/`OPERATOR_TOKEN` is set in the test's own environment, a
+  source-level test that the module never reads `os.environ`/`os.getenv`, a source-level test that no
+  POST/PUT/DELETE route exists in the file, and the banned-word test. Full suite: 251 unit passed (up
+  from 244), zero regressions.
+
+## Settings: tenant management (SETUP-012)
+
+`src/app/routers/settings_tenants.py` (new, disjoint router module -- not added to `settings.py`,
+mirroring that file's own "one module per Settings concern" precedent, same as `settings_environment.py`)
+adds `GET /settings/tenants`, `POST /settings/tenants`, and
+`POST /settings/tenants/{tenant_id}/api-keys/{key_id}/revoke`, all gated by `OperatorTokenHeaderDep`
+(`app.dependencies.operator_session`, `DASH-113`) -- the same operator-only seam `/settings/connectors`
+(`DASH-112`) already uses. A tenant's own `session_id` cookie is never read by this gate, so it can never
+reach these routes (proven by test: `tests/test_settings_tenants.py`'s
+`test_tenants_own_session_cannot_reach_settings_tenants`/`test_post_tenants_own_session_cannot_reach_
+route`/`test_revoke_own_session_cannot_reach_route`).
+
+- **Calls `SETUP-011`'s new gateway-api tenant-admin contract directly** (`GET /tenants`, `POST
+  /tenants`, `POST /tenants/{tenant_id}/api-keys/{key_id}/revoke`, all operator-auth -- see
+  `services/gateway-api/src/app/routers/tenants.py`) -- no second tenant-admin surface invented. Reuses
+  `runs.py`'s `_call_downstream`/`_render_error_for_status` for the transport-failure/non-2xx path, the
+  same DRY-reuse `settings.py`'s `/settings/connectors` already established.
+- **`GET /settings/tenants`** renders `settings_tenants.html`: one row per tenant (`_tenant_row.html`,
+  a shared partial included both here and by the revoke route below), each with a nested table of that
+  tenant's API keys showing only `id`/`created_at`/`revoked_at` metadata -- never a raw or
+  partially-masked key once creation is past (`SETUP-011`'s `ApiKeySummary` never carries `key_hash`/a
+  raw key either, so there is nothing to leak even by accident).
+- **`POST /settings/tenants`** (form field `tenant_name`) calls `SETUP-011`'s `POST /tenants` and, on
+  success, renders `_settings_tenant_created.html` -- a thin wrapper (mirroring `SETUP-003`'s own
+  `setup_key_reveal.html`) around the new shared `_one_time_reveal.html` partial, showing the raw
+  `api_key` exactly once with a "Back to tenants" link. A blank/whitespace-only `tenant_name` redisplays
+  the tenant list with a `422` "Enter a tenant name." error, without calling gateway-api.
+- **One-time-reveal partial, genuinely shared (not copy-pasted)**: `_one_time_reveal.html` (new) is
+  extracted from `setup_key_reveal.html`'s (`SETUP-003`) original inline markup, parameterized by
+  `label`/`name`/`api_key`/`continue_url`/`continue_text` -- both `_setup_key_reveal.html` (now a thin
+  wrapper setting those five variables via `{% set %}` then `{% include "_one_time_reveal.html" with
+  context %}`) and this ticket's own `_settings_tenant_created.html` render the same partial file, one
+  component not two near-identical pages/blocks (ticket's own binding DRY requirement).
+  `tests/test_setup_wizard.py`'s existing `SETUP-003` tests pass unmodified after this extraction,
+  proving the refactor didn't change that ticket's own rendered output.
+- **Revoke re-renders via an HTMX fragment**: `POST /settings/tenants/{tenant_id}/api-keys/{key_id}/
+  revoke` calls `SETUP-011`'s revoke endpoint, then re-fetches `GET /tenants` and returns
+  `_tenant_row.html` for just that tenant -- the same `hx-post`/`hx-target`/`hx-swap="outerHTML"`
+  mechanism `operator.py`'s `DASH-110` trigger actions already established (per-key `<form
+  hx-post=".../revoke" hx-target="#tenant-row-{{ tenant.id }}" hx-swap="outerHTML">`), reused not
+  reinvented. A fresh full-page `GET /settings/tenants` afterward reflects the same `revoked_at`, since
+  both renders go through the same `_tenant_row.html` partial.
+- **No shared operator nav partial** (ticket Analysis section, avoids the file-overlap risk the sprint
+  plan flagged for a hypothetical shared Settings nav element): `settings_tenants.html` and
+  `settings_connectors.html` each carry one plain cross-link paragraph to the other page, no shared
+  template file.
+- **Positioning**: `settings_tenants.html`/`_one_time_reveal.html`/`_tenant_row.html` describe tenants/
+  keys as "validation-run access credentials" only -- never "prediction," "forecast," "signal," or
+  "recommendation" (CLAUDE.md's core positioning constraint), proven by
+  `tests/test_settings_tenants.py::test_settings_tenants_templates_have_no_banned_positioning_words`.
+- **Tests**: `tests/test_settings_tenants.py` (new) covers the operator gate on all three routes (no
+  session and a tenant's own `session_id` cookie both `303` to `/operator-login`), an authenticated list
+  render, create-tenant showing the raw key exactly once and its absence from a subsequent `GET`, a
+  blank-tenant-name `422` without a downstream call, revoke updating both the returned HTMX fragment and
+  a fresh follow-up `GET`'s own row, and the banned-word scan. `tests/test_setup_wizard.py`'s existing
+  `SETUP-003` tests re-run unmodified and pass. Full suite (`.venv\Scripts\python.exe -m pytest -q`):
+  267 unit passed (up from 257), 7 deselected (the Selenium E2E suite, not re-run this ticket, not
+  touched by this ticket's changes), zero regressions.

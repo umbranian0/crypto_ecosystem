@@ -8,6 +8,7 @@ OPS-006).
 from __future__ import annotations
 
 from naive_first_common.db import build_engine
+from naive_first_common.diagnostics import RecentErrorsHandler
 from naive_first_common.logging import CorrelationIdMiddleware, configure_structured_logging
 from naive_first_common.tenant_context import TenantContext, get_tenant_context
 
@@ -17,4 +18,5 @@ __all__ = [
     "get_tenant_context",
     "configure_structured_logging",
     "CorrelationIdMiddleware",
+    "RecentErrorsHandler",
 ]

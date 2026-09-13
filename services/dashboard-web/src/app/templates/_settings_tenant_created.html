@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Tenant created -- dashboard-web{% endblock %}
+{% block content %}
+<h2>Tenant created</h2>
+{% set label = "Tenant" %}
+{% set name = tenant_name %}
+{% set continue_url = "/settings/tenants" %}
+{% set continue_text = "Back to tenants" %}
+{% include "_one_time_reveal.html" with context %}
+{% endblock %}

@@ -9,20 +9,28 @@ follows. Mirrors validation-service's app.main precedent.
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from naive_first_common import CorrelationIdMiddleware, configure_structured_logging
 
+from app.dependencies.diagnostics import recent_errors_handler
 from app.dependencies.repositories import HealthCheckEngineDep
-from app.routers import ingestion, operator, reports, runs, setup, system
+from app.routers import diagnostics, ingestion, operator, reports, runs, setup, system, tenants
 
 # OPS-006: configure the shared JSON logging convention before the app is
 # constructed, so every log line emitted from import time onward (including
 # uvicorn's own startup lines that go through the standard `logging` module)
 # uses the same JSON formatter/correlation-id filter as validation-service.
 configure_structured_logging()
+
+# SETUP-021: one additional observer of the root logger's event stream,
+# alongside -- not replacing -- the JSON-formatter/correlation-id handler
+# configure_structured_logging() just attached.
+logging.getLogger().addHandler(recent_errors_handler)
 
 app = FastAPI(
     title="gateway-api",
@@ -55,6 +63,13 @@ app.include_router(system.router)
 # tags= per ARCH-007, same reasoning as system.router above -- this router
 # doesn't proxy to a single downstream service).
 app.include_router(setup.router)
+# SETUP-011: operator-only tenant admin surface, no tags= per ARCH-007, same
+# reasoning as setup.router/system.router above -- this router doesn't proxy
+# to a single downstream service.
+app.include_router(tenants.router)
+# SETUP-021: operator-only recent-errors ring-buffer surface, no tags= per
+# ARCH-007, same reasoning as setup.router/system.router/tenants.router above.
+app.include_router(diagnostics.router)
 
 
 @app.get("/health", response_model=None)

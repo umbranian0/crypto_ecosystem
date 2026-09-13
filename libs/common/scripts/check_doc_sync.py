@@ -48,6 +48,7 @@ MODULE_NAMES = [
     "contracts.py",
     "testing.py",
     "logging.py",
+    "diagnostics.py",
 ]
 
 LIB_ROOT = Path(__file__).resolve().parent.parent

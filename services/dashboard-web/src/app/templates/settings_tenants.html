@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Tenant management -- dashboard-web{% endblock %}
+{% block content %}
+<h2>Tenants</h2>
+<p>Tenants and their validation-run access credentials (API keys). Key values are never shown again
+after creation -- only metadata (id, created, revoked) is listed here.</p>
+{% if error %}
+<p class="error">{{ error }}</p>
+{% endif %}
+<div class="table-scroll">
+<table>
+    <thead>
+        <tr>
+            <th>Name</th>
+            <th>Id</th>
+            <th>Created</th>
+            <th>API keys</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for tenant in items %}
+        {% include "_tenant_row.html" %}
+        {% endfor %}
+    </tbody>
+</table>
+</div>
+{% if not items %}
+<p>No tenants yet.</p>
+{% endif %}
+<h3>Create tenant</h3>
+<form method="post" action="/settings/tenants">
+    <label for="tenant_name">Tenant name</label>
+    <input type="text" id="tenant_name" name="tenant_name">
+    <button type="submit">Create tenant</button>
+</form>
+<p>See also: <a href="/settings/connectors">Connector credential status</a>.</p>
+{% endblock %}

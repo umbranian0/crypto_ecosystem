@@ -1,12 +1,15 @@
 {# SETUP-003: one-time API-key-reveal fragment, parameterized on
    `tenant_name`/`api_key` -- no /setup-specific literal copy baked in, so
-   SETUP-012 (Settings -> Tenants "create tenant" flow, next sprint) can
-   include this same fragment rather than a second near-identical page
-   (ticket's own DRY check note). Never echoes the raw key into a URL,
-   redirect Location header, or log line -- rendered exactly once, here. #}
-<div class="key-reveal">
-    <p>Tenant <strong>{{ tenant_name }}</strong> created.</p>
-    <p class="warning">Copy this API key for validation runs now -- it cannot be recovered:</p>
-    <pre class="api-key">{{ api_key }}</pre>
-    <p><a href="/login">Continue to log in</a></p>
-</div>
+   SETUP-012 (Settings -> Tenants "create tenant" flow) can include the same
+   underlying markup rather than a second near-identical page (ticket's own
+   DRY check note). `SETUP-012` extracted that shared markup into
+   `_one_time_reveal.html`; this fragment is now a thin wrapper mapping this
+   call site's own `tenant_name`/`api_key` context variables onto that
+   partial's `label`/`name`/`api_key`/`continue_url`/`continue_text`
+   parameters, so this file's own rendered output (and this ticket's
+   existing tests) are unchanged. #}
+{% set label = "Tenant" %}
+{% set name = tenant_name %}
+{% set continue_url = "/login" %}
+{% set continue_text = "Continue to log in" %}
+{% include "_one_time_reveal.html" with context %}

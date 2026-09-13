@@ -1,0 +1,15 @@
+{# SETUP-012: shared one-time-reveal partial, extracted from
+   `_setup_key_reveal.html`'s (SETUP-003) original markup -- both that
+   fragment and this ticket's own "create tenant" confirmation render this
+   same partial, parameterized by `label` (the noun describing what was
+   created, e.g. "Tenant"), `name`/`api_key`, and `continue_url`/
+   `continue_text` (the follow-up link, different per call site) -- one
+   component, not two near-identical pages/blocks (ticket's own binding DRY
+   requirement). Never echoes the raw key into a URL, redirect Location
+   header, or log line -- rendered exactly once, here. #}
+<div class="key-reveal">
+    <p>{{ label }} <strong>{{ name }}</strong> created.</p>
+    <p class="warning">Copy this API key for validation runs now -- it cannot be recovered:</p>
+    <pre class="api-key">{{ api_key }}</pre>
+    <p><a href="{{ continue_url }}">{{ continue_text }}</a></p>
+</div>
