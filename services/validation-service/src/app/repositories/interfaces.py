@@ -77,6 +77,11 @@ class RunRecord:
     # pre-DH-001 direct `RunRecord(...)` construction across this codebase's
     # own test suite keeps working unmodified.
     warnings: list[str] = field(default_factory=list)
+    # VS-030: {"source", "field", "lag_hours"} per feature reference that
+    # composed this run's assembled feature table -- `[]` (default) for a
+    # single-series run, mirroring `warnings`'s own default-empty-list
+    # precedent exactly.
+    feature_lineage: list[dict] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -136,6 +141,7 @@ class ValidationRunRepository(typing.Protocol):
         split_config: dict,
         *,
         warnings: list[str] | None = None,
+        feature_lineage: list[dict] | None = None,
     ) -> RunRecord: ...
 
     def get_run(self, tenant_id: str, run_id: str) -> RunRecord | None: ...

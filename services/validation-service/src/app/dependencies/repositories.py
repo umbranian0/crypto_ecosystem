@@ -70,6 +70,11 @@ from app.dataset_source import (
     ObjectStorageDatasetSource,
 )
 from app.events import EventPublisher, InProcessLogEventPublisher, RedisStreamsEventPublisher
+from app.feature_dataset import (
+    ConnectorStatusChecker,
+    FeatureDatasetAssembler,
+    IngestionServiceConnectorStatusChecker,
+)
 from app.models import Base
 from app.repositories.interfaces import SplitResultRepository, ValidationRunRepository
 from app.repositories.postgres_repository import (
@@ -259,8 +264,45 @@ def get_event_publisher() -> EventPublisher:
     return _event_publisher
 
 
+def get_feature_dataset_assembler() -> FeatureDatasetAssembler:
+    # VS-030: same DI-seam convention as every other provider in this
+    # module -- a fresh, stateless FeatureDatasetAssembler per resolution
+    # (it holds no per-request state of its own, same rationale
+    # get_dataset_source's non-memoized ingestion_service_source has).
+    return FeatureDatasetAssembler()
+
+
+def get_connector_status_checker(
+    tenant: TenantContext = Depends(get_tenant_context),
+) -> ConnectorStatusChecker:
+    # VS-030: reuses the same INGESTION_SERVICE_URL/timeout env vars and
+    # httpx.Client/X-Tenant-Id header convention get_dataset_source's
+    # IngestionServiceDatasetSource construction already establishes -- no
+    # new env var, no second HTTP client convention. Built fresh per
+    # request (same non-memoized rationale as ingestion_service_source
+    # above): safe only for the one tenant it was built for.
+    ingestion_service_base_url = os.environ.get(
+        _INGESTION_SERVICE_URL_ENV_VAR, _DEFAULT_INGESTION_SERVICE_URL
+    )
+    ingestion_service_timeout = float(
+        os.environ.get(_DOWNSTREAM_TIMEOUT_ENV_VAR, _DEFAULT_DOWNSTREAM_TIMEOUT_SECONDS)
+    )
+    ingestion_service_http_client = httpx.Client(
+        base_url=ingestion_service_base_url, timeout=ingestion_service_timeout
+    )
+    return IngestionServiceConnectorStatusChecker(
+        ingestion_service_http_client, ingestion_service_base_url, tenant.tenant_id
+    )
+
+
 ValidationRunRepositoryDep = Annotated[ValidationRunRepository, Depends(get_validation_run_repository)]
 SplitResultRepositoryDep = Annotated[SplitResultRepository, Depends(get_split_result_repository)]
 DatasetSourceDep = Annotated[DatasetSource, Depends(get_dataset_source)]
+FeatureDatasetAssemblerDep = Annotated[
+    FeatureDatasetAssembler, Depends(get_feature_dataset_assembler)
+]
+ConnectorStatusCheckerDep = Annotated[
+    ConnectorStatusChecker, Depends(get_connector_status_checker)
+]
 EventPublisherDep = Annotated[EventPublisher, Depends(get_event_publisher)]
 HealthCheckEngineDep = Annotated[Engine, Depends(get_health_check_engine)]

@@ -148,8 +148,9 @@ Acceptance criteria:
 
 ### MDF-003 — `validation-service` dataset assembly for a multi-source feature set [Must]
 
-**Status: unblocked, next.** MDF-001 and MDF-002 are both done (Sprint 31) — this story is now the
-sequencing priority for the following MDF sprint, per the backlog's own dependency chain.
+**Status: done (Sprint 36, VS-030).** MDF-001 and MDF-002 (Sprint 31) unblocked this story; implemented in full
+by `docs/tickets/VS-030.md` — see that ticket and `services/validation-service/README.md`'s "Multi-source
+feature assembly" section for the shipped shape.
 
 As a tenant, I want to specify multiple `{source, field}` references when submitting a validation run so my
 candidate model can be scored using a combined feature set instead of a single series, while the run is still
@@ -158,23 +159,33 @@ validated against the same naive-first baselines on the same target return serie
 Depends on: MDF-001, MDF-002.
 
 Acceptance criteria:
-- `POST /runs` (or a new endpoint, per MDF-001's decision) accepts a list of `{source, field}` feature
-  references in addition to the existing single target-series reference; the **target** being validated remains
-  exactly one return series — this story does not change what is being predicted, only what a candidate model is
-  allowed to see as input.
-- The assembled multi-column feature table is what gets handed to the candidate model's `predict`/inference path;
-  `Naive0`/`NaiveLast` continue to operate on the target Series alone, unchanged from today — this story does not
-  modify `naive_first_engine`'s `Baseline` protocol or `dm_test.py` (see MDF-004 for the one place engine changes
-  might be needed, and only if MDF-004 finds it necessary).
-- Preprocessing applied to feature columns (scaling, imputation) is fit on the training fold only, per split,
-  per CLAUDE.md's leakage rule — verified by a test that a fold's fitted preprocessing parameters differ from
-  another fold's and that no global fit path exists.
-- The persisted run record stores which sources/fields composed its feature set (dataset lineage), so a run
-  using multimodal features is distinguishable from a single-series run in the API response and in any dashboard
-  view built later.
-- A run submitted with feature references from a connector still mid-crawl or with `data-quality gate` (per
-  `ingestion-service`'s README, still "not yet built") concerns is rejected with an explicit error rather than
-  silently validating on partial data — same fail-closed posture as the existing single-series path.
+- [x] `POST /runs` accepts a list of `{source, field}` feature references (`feature_references`) in addition to
+  the existing single target-series reference; the **target** being validated remains exactly one return series
+  — VS-030 does not change what is being predicted, only what a candidate model is allowed to see as input.
+- [x] The assembled multi-column feature table (`app.feature_dataset.FeatureDatasetAssembler.assemble`) is what
+  would be handed to a candidate model's `predict`/inference path; `Naive0`/`NaiveLast`/`dm_test.py` continue to
+  operate on the target Series alone, unchanged — `run_validation_protocol`'s call site is unmodified, and
+  `libs/naive_first_engine` is untouched by VS-030's diff (see MDF-004 for the still-deferred question of
+  whether a new consumer interface is needed for the candidate-model side).
+- [x] Preprocessing applied to feature columns (`FeatureFoldScaler`) is fit on the training fold only, per
+  split, per CLAUDE.md's leakage rule — verified by `tests/test_feature_dataset.py`'s hard-gate tests: a
+  behavioral test that a fold's fitted parameters differ from another fold's, and a structural (AST-scan) test
+  that no function in `feature_dataset.py` computes a mean/std over anything other than the `train_df` argument
+  passed to `fit`.
+- [x] The persisted run record stores which sources/fields (and each one's applied lag) composed its feature
+  set (`runs.feature_lineage`, migration `0009_add_runs_feature_lineage_column.py`), surfaced via
+  `RunDetailResponse.feature_lineage`/`has_multimodal_features` so a multimodal run is distinguishable from a
+  single-series run in the API response.
+- [x] A run submitted with feature references naming a connector still `"running"`/`"queued"`/`"failed"` is
+  rejected with an explicit `FeatureDatasetError` before any alignment is attempted
+  (`IngestionServiceConnectorStatusChecker`, `GET /connectors/{source}/status`) — same fail-closed posture as
+  the existing single-series path. **Disclosed gap, not fixed by VS-030**: `ingestion-service`'s
+  `GET /datasets/{source}/series` does not currently expose each row's `fetched_at`, so any feature reference
+  that resolves to `IngestionServiceDatasetSource` fails closed with a disclosed error rather than aligning at
+  all (ADR-0009's "never use a nominal timestamp as a stand-in for fetched_at" rule) — real per-row `fetched_at`
+  alignment is implemented and tested for inline/object-storage-CSV-backed references only; extending
+  `ingestion-service`'s endpoint to expose `fetched_at` is flagged as a follow-up, not filed as a numbered
+  ticket by VS-030 itself (out of that ticket's file scope).
 
 ### MDF-004 — Confirm (or extend) `naive_first_engine`'s interfaces for multi-column model input [Must, high scrutiny]
 

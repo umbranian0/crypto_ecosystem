@@ -84,6 +84,7 @@ class PostgresValidationRunRepository:
         split_config: dict,
         *,
         warnings: list[str] | None = None,
+        feature_lineage: list[dict] | None = None,
     ) -> RunRecord:
         run = Run(
             id=uuid4().hex,
@@ -97,6 +98,7 @@ class PostgresValidationRunRepository:
             completed_at=None,
             failure_reason=None,
             warnings=warnings if warnings is not None else [],
+            feature_lineage=feature_lineage if feature_lineage is not None else [],
         )
         with _tenant_scoped_session(self._engine, tenant_id) as session:
             session.add(run)

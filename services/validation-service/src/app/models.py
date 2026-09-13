@@ -83,6 +83,11 @@ class Run(Base):
     # nullable=False/server_default='[]' (migrations/versions/
     # 0008_add_runs_warnings_column.py) so existing rows backfill cleanly.
     warnings: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    # VS-030: {"source", "field", "lag_hours"} per feature reference that
+    # composed this run's assembled feature table -- JSON column, same
+    # nullable=False/server_default='[]' precedent as `warnings` above
+    # (migrations/versions/0009_add_runs_feature_lineage_column.py).
+    feature_lineage: Mapped[list[dict]] = mapped_column(JSON, nullable=False, default=list)
 
 
 class SplitResult(Base):

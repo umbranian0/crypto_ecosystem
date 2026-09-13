@@ -72,6 +72,14 @@ class LoadedSeries:
 
     series: pd.Series
     warnings: list[str]
+    # VS-030: optional per-row `fetched_at` timestamps, same length/order as
+    # `series` -- the "when did we actually learn this row's value" clock
+    # ADR-0009's alignment rule requires, distinct from `series.index` (the
+    # row's own *nominal* timestamp). `None` (default) whenever the source
+    # cannot supply it -- see this file's `IngestionServiceDatasetSource`
+    # docstring for the one implementation that always leaves this `None`,
+    # a disclosed gap, not an oversight.
+    fetched_at: pd.DatetimeIndex | None = None
 
 
 @typing.runtime_checkable
@@ -97,31 +105,48 @@ class InlineOrLocalFileDatasetSource:
             )
 
         if "inline" in reference:
-            timestamps, values = self._parse_inline(reference["inline"])
+            timestamps, values, fetched_at = self._parse_inline(reference["inline"])
         elif "path" in reference:
-            timestamps, values = self._read_csv(reference["path"])
+            timestamps, values, fetched_at = self._read_csv(reference["path"])
         else:
             raise DatasetSourceError("reference must contain either an 'inline' or a 'path' key")
 
-        return self._build_series(timestamps, values)
+        return self._build_series(timestamps, values, fetched_at)
 
     @staticmethod
-    def _parse_inline(inline: object) -> tuple[list, list]:
+    def _parse_inline(inline: object) -> tuple[list, list, list | None]:
         if isinstance(inline, dict):
             if "timestamps" not in inline or "values" not in inline:
                 raise DatasetSourceError(
                     "'inline' dict must have 'timestamps' and 'values' keys"
                 )
-            return list(inline["timestamps"]), list(inline["values"])
+            # VS-030: optional third "fetched_at" key -- absent (the
+            # existing 2-key shape) leaves fetched_at as None, byte-identical
+            # to pre-ticket behavior for every existing caller.
+            fetched_at = list(inline["fetched_at"]) if "fetched_at" in inline else None
+            return list(inline["timestamps"]), list(inline["values"]), fetched_at
 
         if isinstance(inline, list):
-            timestamps, values = [], []
+            timestamps, values, fetched_at = [], [], []
+            has_fetched_at = False
             for row in inline:
-                if len(row) != 2:
-                    raise DatasetSourceError(f"inline row must be [timestamp, value], got {row!r}")
+                if len(row) == 3:
+                    has_fetched_at = True
+                elif len(row) != 2:
+                    raise DatasetSourceError(
+                        f"inline row must be [timestamp, value] or "
+                        f"[timestamp, value, fetched_at], got {row!r}"
+                    )
                 timestamps.append(row[0])
                 values.append(row[1])
-            return timestamps, values
+                fetched_at.append(row[2] if len(row) == 3 else None)
+            if not has_fetched_at:
+                return timestamps, values, None
+            if any(v is None for v in fetched_at):
+                raise DatasetSourceError(
+                    "inline rows must all carry a 3rd fetched_at element, or none of them"
+                )
+            return timestamps, values, fetched_at
 
         raise DatasetSourceError(
             f"'inline' must be a list of [timestamp, value] pairs or a "
@@ -129,20 +154,39 @@ class InlineOrLocalFileDatasetSource:
         )
 
     @staticmethod
-    def _read_csv(path: object) -> tuple[list, list]:
-        timestamps, values = [], []
+    def _parse_csv_rows(reader: typing.Iterable) -> tuple[list, list, list | None]:
+        """Shared 2-or-3-column CSV row parser (VS-030): both the local-file
+        path below and `ObjectStorageDatasetSource._read_csv` call this on
+        their own `csv.reader(...)` iterator (a file handle and an in-memory
+        `io.StringIO`, respectively) -- one parsing implementation, not two.
+        """
+        timestamps, values, fetched_at = [], [], []
+        has_fetched_at = False
+        for row in reader:
+            if not row:
+                continue
+            if len(row) == 3:
+                has_fetched_at = True
+            elif len(row) != 2:
+                raise DatasetSourceError(f"CSV row must have 2 or 3 columns, got {row!r}")
+            timestamps.append(row[0])
+            values.append(row[1])
+            fetched_at.append(row[2] if len(row) == 3 else None)
+        if not has_fetched_at:
+            return timestamps, values, None
+        if any(v is None for v in fetched_at):
+            raise DatasetSourceError(
+                "CSV rows must all carry a 3rd fetched_at column, or none of them"
+            )
+        return timestamps, values, fetched_at
+
+    @staticmethod
+    def _read_csv(path: object) -> tuple[list, list, list | None]:
         try:
             with open(path, newline="", encoding="utf-8") as f:
-                for row in csv.reader(f):
-                    if not row:
-                        continue
-                    if len(row) != 2:
-                        raise DatasetSourceError(f"CSV row must have 2 columns, got {row!r}")
-                    timestamps.append(row[0])
-                    values.append(row[1])
+                return InlineOrLocalFileDatasetSource._parse_csv_rows(csv.reader(f))
         except OSError as exc:
             raise DatasetSourceError(f"could not read CSV at path {path!r}: {exc}") from exc
-        return timestamps, values
 
     #: DH-001: the exact disclosure sentence for a reordered-on-load dataset --
     #: a single shared constant so the string is byte-identical wherever it is
@@ -152,7 +196,9 @@ class InlineOrLocalFileDatasetSource:
     )
 
     @staticmethod
-    def _build_series(timestamps: list, values: list) -> LoadedSeries:
+    def _build_series(
+        timestamps: list, values: list, fetched_at: list | None = None
+    ) -> LoadedSeries:
         if not timestamps or not values:
             raise DatasetSourceError("dataset is empty")
 
@@ -166,6 +212,20 @@ class InlineOrLocalFileDatasetSource:
         except (TypeError, ValueError) as exc:
             raise DatasetSourceError(f"non-numeric value in dataset: {exc}") from exc
 
+        # VS-030: optional third fetched_at column/key, parsed the same way
+        # as `timestamps` -- kept as a plain DatetimeIndex-shaped array that
+        # travels alongside `series` through the sort/dedup steps below, so
+        # each surviving row's fetched_at stays paired with its own
+        # timestamp/value. `None` end to end (the pre-ticket path) is
+        # byte-identical to before this ticket -- nothing below this branch
+        # touches `warnings`/`series` differently when fetched_at is None.
+        fetched_at_index: pd.DatetimeIndex | None = None
+        if fetched_at is not None:
+            try:
+                fetched_at_index = pd.DatetimeIndex(pd.to_datetime(fetched_at, errors="raise"))
+            except (ValueError, TypeError) as exc:
+                raise DatasetSourceError(f"unparseable fetched_at in dataset: {exc}") from exc
+
         # DH-001: checked *before* the pre-existing .sort_index() call below,
         # which itself is byte-unchanged -- disclosure-only, no change to
         # whether/how sorting happens (ticket Analysis section).
@@ -173,7 +233,10 @@ class InlineOrLocalFileDatasetSource:
         if not index.is_monotonic_increasing:
             warnings.append(InlineOrLocalFileDatasetSource.REORDERED_ON_LOAD_WARNING)
 
-        series = pd.Series(float_values, index=index, dtype="float64").sort_index()
+        sort_order = index.argsort(kind="stable")
+        series = pd.Series(float_values, index=index, dtype="float64").iloc[sort_order]
+        if fetched_at_index is not None:
+            fetched_at_index = fetched_at_index[sort_order]
 
         if series.empty:
             raise DatasetSourceError("dataset is empty")
@@ -191,6 +254,8 @@ class InlineOrLocalFileDatasetSource:
         if dropped_count > 0:
             warnings.append(f"dropped {dropped_count} exact-duplicate rows before validation")
             series = series[~duplicate_mask]
+            if fetched_at_index is not None:
+                fetched_at_index = fetched_at_index[~duplicate_mask]
 
         # DH-003: runs strictly after DH-002's dedup, on the already-deduped
         # series -- by construction, any timestamp still repeated here must
@@ -211,7 +276,7 @@ class InlineOrLocalFileDatasetSource:
                 + " vs ".join(str(v) for v in distinct_values)
             )
 
-        return LoadedSeries(series=series, warnings=warnings)
+        return LoadedSeries(series=series, warnings=warnings, fetched_at=fetched_at_index)
 
 
 class ObjectStorageDatasetSource:
@@ -241,10 +306,10 @@ class ObjectStorageDatasetSource:
             )
 
         object_key = reference["object_key"]
-        timestamps, values = self._read_csv(object_key)
-        return InlineOrLocalFileDatasetSource._build_series(timestamps, values)
+        timestamps, values, fetched_at = self._read_csv(object_key)
+        return InlineOrLocalFileDatasetSource._build_series(timestamps, values, fetched_at)
 
-    def _read_csv(self, object_key: str) -> tuple[list, list]:
+    def _read_csv(self, object_key: str) -> tuple[list, list, list | None]:
         try:
             response = self._s3_client.get_object(Bucket=self._bucket, Key=object_key)
         except Exception as exc:  # noqa: BLE001 - boto3 raises its own botocore.exceptions.ClientError
@@ -255,15 +320,11 @@ class ObjectStorageDatasetSource:
         body = response["Body"].read()
         text_stream = io.StringIO(body.decode("utf-8"))
 
-        timestamps, values = [], []
-        for row in csv.reader(text_stream):
-            if not row:
-                continue
-            if len(row) != 2:
-                raise DatasetSourceError(f"CSV row must have 2 columns, got {row!r}")
-            timestamps.append(row[0])
-            values.append(row[1])
-        return timestamps, values
+        # VS-030: delegates row parsing to InlineOrLocalFileDatasetSource's
+        # shared `_parse_csv_rows` helper (no second parsing implementation)
+        # -- this method keeps only its own S3-fetch step, genuinely specific
+        # to this class.
+        return InlineOrLocalFileDatasetSource._parse_csv_rows(csv.reader(text_stream))
 
 
 class IngestionServiceDatasetSource:
@@ -353,6 +414,17 @@ class IngestionServiceDatasetSource:
                 f"malformed response from ingestion-service for dataset {source!r}: {exc}"
             ) from exc
 
+        # VS-030: deliberately NOT extended to parse a per-row fetched_at --
+        # ingestion-service's own `GET /datasets/{source}/series` response
+        # only returns `timestamps`/`values` (it does not expose the
+        # per-row `fetched_at` it stores internally; see this ticket's
+        # Analysis section / services/validation-service/README.md's VS-030
+        # section for the disclosed gap and the follow-up-ticket note). This
+        # `LoadedSeries.fetched_at` therefore always stays `None` for this
+        # class, which is exactly the signal `feature_dataset.py`'s
+        # `FeatureDatasetAssembler` fails closed on for a `{"source": ...}`
+        # feature reference, rather than silently approximating alignment
+        # using the nominal timestamp.
         return InlineOrLocalFileDatasetSource._build_series(timestamps, values)
 
 

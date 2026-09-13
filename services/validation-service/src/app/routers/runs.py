@@ -134,11 +134,14 @@ from naive_first_engine.splitting import generate_splits
 
 from app.client_baseline import ClientPredictionBaseline
 from app.dependencies.repositories import (
+    ConnectorStatusCheckerDep,
     DatasetSourceDep,
     EventPublisherDep,
+    FeatureDatasetAssemblerDep,
     SplitResultRepositoryDep,
     ValidationRunRepositoryDep,
 )
+from app.feature_dataset import FeatureDatasetError
 from app.level_detection import (
     LAG1_AUTOCORR_THRESHOLD,
     MEAN_OVER_STD_THRESHOLD,
@@ -159,7 +162,11 @@ MAX_SPLIT_COUNT = 500
 
 
 def _persist_new_run(
-    run_repository, tenant: TenantContext, request: RunRequest, warnings: list[str]
+    run_repository,
+    tenant: TenantContext,
+    request: RunRequest,
+    warnings: list[str],
+    feature_lineage: list[dict] | None = None,
 ):
     return run_repository.create_run(
         tenant_id=tenant.tenant_id,
@@ -172,6 +179,7 @@ def _persist_new_run(
             "step": request.step,
         },
         warnings=warnings,
+        feature_lineage=feature_lineage if feature_lineage is not None else [],
     )
 
 
@@ -221,6 +229,8 @@ def create_run(
     run_repository: ValidationRunRepositoryDep,
     split_repository: SplitResultRepositoryDep,
     event_publisher: EventPublisherDep,
+    feature_dataset_assembler: FeatureDatasetAssemblerDep,
+    connector_status_checker: ConnectorStatusCheckerDep,
     tenant: TenantContext = Depends(get_tenant_context),
 ) -> RunResponse:
     # VS-017: config.extra_baselines only ever gains a third, optional entry
@@ -260,6 +270,42 @@ def create_run(
 
     series = loaded.series
     warnings = loaded.warnings
+
+    # VS-030/ADR-0009: alignment must run to completion -- producing the
+    # final index/feature_dataframe -- strictly before generate_splits/
+    # RSS-004's guardrail below is invoked, and the reassigned `series` used
+    # for every downstream guardrail and for run_validation_protocol is the
+    # post-alignment series (never a superset of the original target index).
+    # A defense-in-depth re-check of missing_timestamp_policy's presence --
+    # RunRequest's own model_validator (naive_first_common.contracts) is the
+    # primary enforcement point and already rejected this with 422 before
+    # this handler body ever ran if it were missing.
+    feature_lineage: list[dict] = []
+    if request.feature_references:
+        if request.missing_timestamp_policy is None:
+            raise HTTPException(
+                status_code=422,
+                detail="missing_timestamp_policy is required whenever feature_references "
+                "is non-empty",
+            )
+        try:
+            assembled = feature_dataset_assembler.assemble(
+                target_index=series.index,
+                feature_references=request.feature_references,
+                missing_timestamp_policy=request.missing_timestamp_policy,
+                dataset_source=dataset_source,
+                connector_status_checker=connector_status_checker,
+            )
+        except Exception as exc:
+            run = _persist_new_run(run_repository, tenant, request, warnings=warnings)
+            run_repository.update_run_status(
+                tenant.tenant_id, run.id, status="failed", failure_reason=str(exc)
+            )
+            return RunResponse(id=run.id, status="failed")
+
+        series = series.loc[assembled.index]
+        warnings = warnings + assembled.warnings
+        feature_lineage = assembled.lineage
 
     # RSS-004 guardrail: call generate_splits directly (the same function
     # run_validation_protocol calls internally, same arguments) so this
@@ -334,7 +380,9 @@ def create_run(
     # attach a "failed" status to, even if something inside the try raises.
     # DH-001: the primary dataset load's own disclosed warnings (e.g. a
     # reordering-on-load notice) are persisted on the run row itself.
-    run = _persist_new_run(run_repository, tenant, request, warnings=warnings)
+    run = _persist_new_run(
+        run_repository, tenant, request, warnings=warnings, feature_lineage=feature_lineage
+    )
 
     try:
         # VS-017: an optional third baseline, loaded the same way as the
@@ -510,4 +558,8 @@ def get_run(
         failure_reason=run.failure_reason,
         warnings=run.warnings,
         has_client_model=has_client_model,
+        feature_lineage=run.feature_lineage,
+        # VS-030: derived, single source of truth (run.feature_lineage) --
+        # same precedent VS-029 established for has_client_model.
+        has_multimodal_features=bool(run.feature_lineage),
     )

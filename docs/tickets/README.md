@@ -92,6 +92,42 @@ passed, 7 deselected (e2e). DASH-124's diff (`operator.py`'s `has_tenant_session
 `monitoring.html`'s `{% if not has_tenant_session %}`/`{% elif crawl_statuses is none %}` branches) was
 also read directly and matches its ticket exactly — marked done alongside VS-029/GW-029.
 
+## Sprint 36 (docs/sprints/sprint-36.md, backlog: docs/product/backlog-multimodal-dataset-fusion.md)
+
+MDF-003 (Must): `validation-service` dataset assembly for a multi-source feature set, unblocked by MDF-001/
+MDF-002 (Sprint 31, ADR-0008/ADR-0009, both `status: accepted`). One ticket, one module (`services/
+validation-service`, plus the shared `feature_references`/`missing_timestamp_policy`/`feature_lineage`
+additions to `libs/common/src/naive_first_common/contracts.py`, same ARCH-003 precedent VS-029 used).
+MDF-004 (`libs/naive_first_engine` multi-column interface) and MDF-005 (positioning copy) remain explicitly
+deferred, not touched this sprint.
+
+| Ticket | Story | Module | Depends on | Status |
+|---|---|---|---|---|
+| [VS-030](VS-030.md) | MDF-003: multi-source feature-set assembly (`feature_dataset.py`) | validation-service | none | done |
+
+**Outcome**: `services/validation-service/src/app/feature_dataset.py` (new) assembles `feature_references`
+into a lag-aware, `fetched_at`-keyed, `merge_asof(direction="backward")`-aligned feature table strictly
+before `generate_splits`/RSS-004/DH-005/MR-001 run in `routers/runs.py` -- `run_validation_protocol` still
+receives only the target `series`, unchanged in kind, `libs/naive_first_engine` untouched by this ticket's
+diff. `dataset_source.py`'s `InlineOrLocalFileDatasetSource` (and, by reuse, `ObjectStorageDatasetSource`)
+gained an optional third `fetched_at` column/key, byte-identical for every existing 2-column caller;
+`IngestionServiceDatasetSource` was deliberately **not** extended (`ingestion-service`'s `GET /datasets/
+{source}/series` does not expose per-row `fetched_at` today, a disclosed gap out of this ticket's module
+scope) -- a `{"source": ...}` feature reference fails closed with a disclosed `FeatureDatasetError` rather
+than approximating alignment with a nominal timestamp. `runs.feature_lineage` (migration `0009_add_runs_
+feature_lineage_column.py`) persists which sources/fields/lags composed a run, surfaced via
+`RunDetailResponse.feature_lineage`/`has_multimodal_features` (same one-source-of-truth precedent VS-029
+established for `has_client_model`). `FeatureFoldScaler` (`fit`/`transform`) is the per-fold-fit
+preprocessing surface CLAUDE.md's leakage rule requires -- proven both behaviorally (fold-to-fold parameter
+divergence) and structurally (an AST scan proving no function in the module aggregates over the full,
+unsplit `feature_dataframe`) -- not yet wired into any candidate-model inference call (MDF-004's deferred
+scope). Full `services/validation-service` suite: 202 passed (174 pre-existing + 28 new, zero regressions).
+Full `libs/naive_first_engine` suite independently re-run: 95 passed (confirms untouched, not just "no
+diff" per this ticket's own Review acceptance criteria). A follow-up ticket to extend `ingestion-service`'s
+`GET /datasets/{source}/series` with `fetched_at` is flagged for the requester/PM to number and file --
+not filed by this ticket itself, per this repo's own "a ticket spanning two modules should be two tickets"
+rule.
+
 **Sprint 32 Outcome**: all six in-scope tickets (SETUP-011/012/015/020/021/022) are done, each verified
 against real diffs (not just dev-agent self-reports) and re-run test suites.
 

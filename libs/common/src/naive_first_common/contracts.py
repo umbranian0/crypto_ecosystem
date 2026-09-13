@@ -14,7 +14,16 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+# VS-030/ADR-0009: the three literal missing_timestamp_policy values -- a
+# single shared constant so RunRequest's validator and
+# validation-service's app.feature_dataset (which cannot import this
+# libs/common module's private literal back, so it re-declares the same
+# three strings as its own MISSING_TIMESTAMP_POLICIES set) never drift.
+MISSING_TIMESTAMP_POLICIES = frozenset(
+    {"drop_row", "forward_fill_exhausted_as_null_then_drop", "exclude_source"}
+)
 
 
 class RunRequest(BaseModel):
@@ -36,6 +45,35 @@ class RunRequest(BaseModel):
     # default) is byte-identical to pre-VS-017 behavior -- naive baselines
     # remain structurally mandatory regardless of this field.
     client_prediction_reference: dict | None = None
+    # VS-030/ADR-0008/ADR-0009: optional list of {"source", "field"}
+    # references assembled into the candidate model's feature DataFrame --
+    # never what run_validation_protocol/Naive0/NaiveLast see (those still
+    # take the target series alone). None/empty (the default) is
+    # byte-identical to pre-VS-030 behavior.
+    feature_references: list[dict] | None = None
+    # VS-030/ADR-0009: required (no default) whenever feature_references is
+    # non-empty -- the model_validator below is the primary enforcement
+    # point for the "no silent default" hard AC (runs.py's own check is
+    # defense in depth, not the primary gate).
+    missing_timestamp_policy: str | None = None
+
+    @model_validator(mode="after")
+    def _require_missing_timestamp_policy_when_features_requested(self) -> "RunRequest":
+        if self.feature_references:
+            if self.missing_timestamp_policy is None:
+                raise ValueError(
+                    "missing_timestamp_policy is required whenever feature_references "
+                    "is non-empty -- no default is applied (one of: "
+                    + ", ".join(sorted(MISSING_TIMESTAMP_POLICIES))
+                    + ")"
+                )
+            if self.missing_timestamp_policy not in MISSING_TIMESTAMP_POLICIES:
+                raise ValueError(
+                    f"missing_timestamp_policy must be one of "
+                    f"{sorted(MISSING_TIMESTAMP_POLICIES)}, got "
+                    f"{self.missing_timestamp_policy!r}"
+                )
+        return self
 
 
 class RunResponse(BaseModel):
@@ -69,6 +107,14 @@ class RunDetailResponse(BaseModel):
     # signal, single source of truth). `GET /runs/{id}`'s handler computes
     # this via `any()` over the run's splits before constructing this model.
     has_client_model: bool = False
+    # VS-030: {"source", "field", "lag_hours"} per feature reference that
+    # composed this run's assembled feature table, `[]` for a single-series
+    # run (byte-identical default to pre-VS-030 responses).
+    feature_lineage: list[dict] = Field(default_factory=list)
+    # VS-030: derived, not a second independent flag -- bool(feature_lineage),
+    # same one-source-of-truth precedent VS-029 established for
+    # has_client_model (runs.py::get_run computes this, not a stored column).
+    has_multimodal_features: bool = False
 
 
 class RunSummaryResponse(BaseModel):
