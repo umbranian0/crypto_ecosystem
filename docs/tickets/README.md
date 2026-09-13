@@ -58,8 +58,22 @@ against real diffs (not just dev-agent self-reports) and re-run test suites.
   206 passed, 1 warning (unrelated pre-existing deprecation notice); `services/dashboard-web` 276
   passed, 7 deselected (Selenium E2E, environment-gated, unaffected). Zero regressions across all three
   suites at every stage of this sprint.
-- **QA verdict**: see the `qa` subagent's independent validation pass below (raised after all six
-  tickets were Tech-Lead-verified done, per this platform's standing QA-gate process).
+- **QA verdict (independent `qa` subagent pass, raised after all six tickets were Tech-Lead-verified
+  done)**: **go for the code** — re-ran all three suites independently with matching counts
+  (`libs/common` 37, `services/gateway-api` 206, `services/dashboard-web` 276/7-deselected), confirmed
+  the SETUP-021 auth-bug fix genuinely holds (spot-checked `operator.py`/`operator_session.py`/
+  `system.py`/`diagnostics.py` directly), confirmed no positioning-rule violation in the new copy,
+  confirmed `GET /system/runs-summary` exposes counts only (no per-tenant/run detail), confirmed
+  `services/validation-service/src/` untouched, and confirmed the tenant/operator session stores are
+  structurally separate. QA additionally found the running Docker containers were stale (built before
+  this sprint's final commits landed) and rebuilt/redeployed them itself to prove the fix live against
+  a real stack with a real operator token — confirmed via a fresh `docker ps` check after QA's pass that
+  `naive-first-gateway-api`/`naive-first-dashboard-web` are now running the current images. This was a
+  deploy-freshness gap in this session's own process, not a code defect; noted here so a future session
+  doesn't assume "tests pass" implies "the running stack reflects it" without an explicit rebuild step.
+  No code-level blockers found. Minor cosmetic doc drift flagged (a stale note elsewhere implying
+  dashboard-web runs bare rather than in Compose) — not corrected in this pass, left as a known small
+  cleanup item for a future docs pass.
 
 # infra (INF-*) — urgent fix, outside sprint numbering
 
