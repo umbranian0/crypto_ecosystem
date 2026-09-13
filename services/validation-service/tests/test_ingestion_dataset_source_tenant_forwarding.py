@@ -28,6 +28,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 import httpx
+import numpy as np
 import pandas as pd
 from fastapi.testclient import TestClient
 
@@ -52,7 +53,13 @@ _TIMESTAMPS = [(datetime(2024, 1, 1) + timedelta(hours=i)).isoformat() for i in 
 # unrelated pre-existing data-quality edge case, not a tenant-forwarding
 # concern) -- two genuinely different, non-periodic value patterns behind the
 # same source name.
-_TENANT_A_VALUES = [float(i) for i in range(_N)]
+#
+# MR-001 fixture fix: tenant A's series was previously `[float(i) for i in
+# range(_N)]`, a monotonic ramp -- unrelated to this test's actual intent
+# (tenant-forwarding correctness) but which incidentally matched MR-001's
+# price-level heuristic. Deterministic, zero-centered, low-autocorrelation
+# noise instead -- still genuinely distinct from tenant B's values below.
+_TENANT_A_VALUES = np.random.default_rng(11).normal(0.0, 0.01, size=_N).tolist()
 _TENANT_B_VALUES = [
     63.94, 2.5, 27.5, 22.32, 73.65, 67.67, 89.22, 8.69, 42.19, 2.98,
     21.86, 50.54, 2.65, 19.88, 64.99, 54.49, 22.04, 58.93, 80.94, 0.65,

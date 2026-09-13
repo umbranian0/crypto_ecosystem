@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
+import numpy as np
 from fastapi.testclient import TestClient
 
 from app.client_baseline import CLIENT_PREDICTION_AUDIT_DISCLAIMER
@@ -25,9 +26,15 @@ VALID_CONFIG = {
 
 
 def _inline_dataset(n: int = 40, offset: float = 0.0) -> dict:
+    # MR-001 fixture fix: was a monotonic `[float(i) + offset for i in
+    # range(n)]` ramp, which incidentally matches MR-001's price-level
+    # heuristic -- unrelated to this file's actual intent (client-supplied
+    # prediction baseline wiring). Deterministic, zero-centered,
+    # low-autocorrelation values instead (`offset` still shifts the mean for
+    # callers that pass it, none currently do).
     start = datetime(2024, 1, 1)
     timestamps = [(start + timedelta(hours=i)).isoformat() for i in range(n)]
-    values = [float(i) + offset for i in range(n)]
+    values = (np.random.default_rng(7).normal(0.0, 0.01, size=n) + offset).tolist()
     return {"inline": {"timestamps": timestamps, "values": values}}
 
 

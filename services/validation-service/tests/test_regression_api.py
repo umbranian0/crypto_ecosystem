@@ -221,8 +221,24 @@ def _dm_scenario_series(pattern: list[str]) -> pd.Series:
     for k, verdict in enumerate(pattern):
         base = k * step
 
+        # MR-001 fixture fix: the train segment previously centered on
+        # `_DM_L` for its *entire* length (`normal(_DM_L, _DM_TRAIN_STD,
+        # ...)`), not just the one element NaiveLast.predict actually reads
+        # (`train.iloc[-1]`). Across all 4 segments that made roughly half
+        # the full series (train + half the test blocks) sit near `_DM_L`,
+        # which is what pushed the *global* series (this guardrail runs on
+        # the whole submitted series, before any split) over MR-001's
+        # `abs(mean)/std > 1.0` threshold -- not this test's intent (it only
+        # needs ONE pinned point for NaiveLast's forecast; the rest of train
+        # is free). Now zero-centered except that one required point, which
+        # is enough on its own to drop the global mean/std back under 1.0
+        # (verified empirically) without touching the per-split DM
+        # construction (NaiveLast's forecast, MASE's in-sample denominator,
+        # and every existing assertion below are unaffected -- none depend
+        # on the *rest* of the train segment's level, only on its last
+        # element and its diffs' scale).
         train_vals = np.random.default_rng(1000 + k).normal(
-            _DM_L, _DM_TRAIN_STD, size=_DM_TRAIN_WINDOW
+            0.0, _DM_TRAIN_STD, size=_DM_TRAIN_WINDOW
         )
         train_vals[-1] = _DM_L  # NaiveLast.predict reads exactly this element
         values[base : base + _DM_TRAIN_WINDOW] = train_vals

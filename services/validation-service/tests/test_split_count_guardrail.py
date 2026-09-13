@@ -19,6 +19,7 @@ existing convention (`test_runs_endpoint.py`'s own module docstring) and
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
@@ -44,7 +45,14 @@ class _FakeDatasetSource:
 
     def __init__(self, row_count: int):
         index = pd.date_range("2020-01-01", periods=row_count, freq="h")
-        self.series = pd.Series(range(row_count), index=index, dtype=float)
+        # MR-001 fixture fix: was `pd.Series(range(row_count), ...)`, a
+        # monotonic ramp -- unrelated to this file's actual intent (the
+        # guardrail here only ever reads `series.index`, per this class's
+        # own docstring), but which incidentally matched MR-001's
+        # price-level heuristic. Deterministic, zero-centered,
+        # low-autocorrelation values instead.
+        values = np.random.default_rng(7).normal(0.0, 0.01, size=row_count)
+        self.series = pd.Series(values, index=index, dtype=float)
 
     def load(self, reference: object) -> LoadedSeries:
         return LoadedSeries(series=self.series, warnings=[])

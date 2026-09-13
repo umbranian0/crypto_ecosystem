@@ -2037,3 +2037,50 @@ QA: raised synchronously per this ticket's explicit instruction — **GO**. QA i
 both fixes, added one further edge-case regression test (`days=0`/non-integer `days`, already
 correctly rejected, no code change needed), and confirmed no leakage/lifecycle/positioning code was
 touched. See `docs/tickets/DASH-123.md` for the full ticket.
+
+# Sprint 33 — Returns-vs-levels methodology audit (MR-001 only)
+
+Source: `docs/sprints/sprint-33.md`, `docs/product/backlog-model-research.md` (MR-001 only; MR-002–006
+explicitly deferred, not opened this sprint).
+
+| Ticket | Story | Module | Depends on | Status |
+|---|---|---|---|---|
+| [MR-001](MR-001.md) | Price-level-vs-returns detection guardrail on `POST /runs`, enforcing the existing `run_new.html` tooltip caveat instead of leaving it advisory-only | validation-service | none | done |
+
+One ticket only, per the sprint's explicit hard scope boundary (MR-001 only — no MR-002/003/004/005/006
+work of any kind in this sprint's diff). See `docs/tickets/MR-001.md` for the full Analysis/Design/
+Implementation/Test/Review/Documentation breakdown, including the documented placement decision
+(`validation-service` input validation, not `naive_first_engine`).
+
+**Tech Lead decision on the dev agent's disclosed test-suite conflict**: the dev agent's own Outcome
+section correctly declined to unilaterally retune MR-001's locked-in thresholds. Personally
+investigating the 19 failures found they were option (c)/(b) from that agent's own framing, not (a):
+every failure was pre-existing test fixture filler data (`[float(i) for i in range(n)]` monotonic
+ramps, or `pd.Series(range(n))`) built for unrelated concerns (tenant isolation, split-count math,
+event publishing, DM-verdict wiring) that incidentally matched the price-level heuristic — not a
+reflection of what those tests actually needed to prove. Fixed by replacing the filler with
+deterministic, zero-centered, low-autocorrelation synthetic values (seeded `numpy` noise) in the 6
+affected fixture files (`test_runs_endpoint.py`, `test_events.py`, `test_client_baseline_endpoint.py`,
+`test_split_count_guardrail.py`, `test_ingestion_dataset_source_tenant_forwarding.py`,
+`test_splits_endpoint.py`), plus a scoped fix to `test_regression_api.py`'s DM-verdict construction
+(only its train segment's *last* point needs to pin to `_DM_L` for `NaiveLast.predict`, not the whole
+segment — zero-centering the rest drops the global series' `abs(mean)/std` back under threshold
+without touching the per-split DM-verdict math any assertion depends on). No threshold in
+`level_detection.py` was retuned. Full suite re-run clean: **169 passed, 0 failed**
+(`services/validation-service`), **95 passed** (`libs/naive_first_engine`), doc-sync clean, signature
+grep unchanged.
+
+**QA verdict (independent `qa` subagent pass, raised after Tech Lead verification)**: **GO** for
+production-readiness. Independently re-ran both suites with matching counts (169/169
+`services/validation-service`, 95/95 `libs/naive_first_engine`), scrutinized the fixture fix
+specifically for corner-cutting (the risk flagged for it) and found none — including a detailed,
+independent re-derivation confirming `test_regression_api.py`'s DM-verdict fix (zero-centering the
+non-pinned majority of a synthetic train segment) does not affect `NaiveLast.predict`'s forecast or the
+DM-verdict pattern any assertion depends on. Confirmed the guardrail's structural "no run row, zero
+engine calls on rejection" property directly from the handler code (not just trusting the test),
+confirmed no positioning-rule violation in the new `422`/README copy, confirmed `run_new.html` byte-
+unchanged, confirmed zero `libs/naive_first_engine`/MR-002–006 files in the diff. One disclosed,
+non-code gap: QA found the running `naive-first-validation-service` Docker container predates this
+sprint's changes (`level_detection.py` absent inside it) — the guardrail is code-complete and
+test-verified but not yet live-enforced against the running stack; a rebuild/redeploy is needed before
+it protects real traffic, flagged here so it isn't silently missed.

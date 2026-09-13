@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
+import numpy as np
 from fastapi.testclient import TestClient
 
 VALID_CONFIG = {
@@ -21,9 +22,13 @@ VALID_CONFIG = {
 
 
 def _inline_dataset(n: int = 40) -> dict:
+    # MR-001 fixture fix: was a monotonic `[float(i) for i in range(n)]`
+    # ramp, which incidentally matches MR-001's price-level heuristic
+    # (unrelated to this file's actual intent -- event-publishing wiring).
+    # Deterministic, zero-centered, low-autocorrelation values instead.
     start = datetime(2024, 1, 1)
     timestamps = [(start + timedelta(hours=i)).isoformat() for i in range(n)]
-    values = [float(i) for i in range(n)]
+    values = np.random.default_rng(7).normal(0.0, 0.01, size=n).tolist()
     return {"inline": {"timestamps": timestamps, "values": values}}
 
 

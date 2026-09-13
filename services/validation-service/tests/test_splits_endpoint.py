@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
+import numpy as np
 import pandas as pd
 from fastapi.testclient import TestClient
 
@@ -27,17 +28,30 @@ from naive_first_engine.protocol import (
 )
 
 
+def _returns_like_values(n: int, seed: int = 7) -> list[float]:
+    """MR-001 fixture fix: was `[float(i) for i in range(n)]`, a monotonic
+    ramp -- unrelated to this file's actual intent (round-trip parity between
+    the endpoint's persisted output and directly calling
+    `run_validation_protocol`), but which incidentally matched MR-001's
+    price-level heuristic. Deterministic, zero-centered,
+    low-autocorrelation values instead. Shared by `_inline_dataset`/`_series`
+    (same seed) so both encode the identical underlying series -- required
+    for this file's own round-trip comparison to be meaningful.
+    """
+    return np.random.default_rng(seed).normal(0.0, 0.01, size=n).tolist()
+
+
 def _inline_dataset(n: int = 40) -> dict:
     start = datetime(2024, 1, 1)
     timestamps = [(start + timedelta(hours=i)).isoformat() for i in range(n)]
-    values = [float(i) for i in range(n)]
+    values = _returns_like_values(n)
     return {"inline": {"timestamps": timestamps, "values": values}}
 
 
 def _series(n: int = 40) -> pd.Series:
     start = pd.Timestamp("2024-01-01")
     index = pd.DatetimeIndex([start + pd.Timedelta(hours=i) for i in range(n)])
-    return pd.Series([float(i) for i in range(n)], index=index, dtype="float64")
+    return pd.Series(_returns_like_values(n), index=index, dtype="float64")
 
 
 # train_window=10, test_window=5, step=5 over 40 points produces >= 2 splits.

@@ -139,6 +139,11 @@ from app.dependencies.repositories import (
     SplitResultRepositoryDep,
     ValidationRunRepositoryDep,
 )
+from app.level_detection import (
+    LAG1_AUTOCORR_THRESHOLD,
+    MEAN_OVER_STD_THRESHOLD,
+    detect_price_level_series,
+)
 from app.repositories.interfaces import SplitResultRecord
 
 router = APIRouter()
@@ -298,6 +303,30 @@ def create_run(
                 "Reduce the split count by increasing 'step', narrowing the "
                 "dataset's date range, and/or reducing 'train_window'/"
                 "'test_window'."
+            ),
+        )
+
+    # MR-001: price-level guardrail -- reuses the already-loaded `series`
+    # (no second dataset load), runs after the DH-005 zero-split check and
+    # before any run row is created / run_validation_protocol is invoked,
+    # same "no run row, zero engine calls on rejection" property RSS-004/
+    # DH-005 already have. See app.level_detection's module docstring for
+    # the heuristic and thresholds; no auto-transform is performed -- a
+    # flagged series is rejected, not silently differenced into returns.
+    level_result = detect_price_level_series(series)
+    if level_result.is_price_level:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "This series looks like a raw price/metric level, not a "
+                "returns series (lag-1 autocorrelation "
+                f"{level_result.lag1_autocorr:.4f} exceeds "
+                f"{LAG1_AUTOCORR_THRESHOLD}, and abs(mean)/std "
+                f"{level_result.mean_over_std:.4f} exceeds "
+                f"{MEAN_OVER_STD_THRESHOLD}). Naive0 is nonsensically wrong "
+                "by construction on a raw level, producing a misleadingly "
+                "favorable verdict. Resubmit a returns-based series -- e.g. "
+                "a different 'field', or a pre-differenced dataset."
             ),
         )
 

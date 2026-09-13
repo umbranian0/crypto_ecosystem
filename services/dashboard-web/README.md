@@ -399,7 +399,10 @@ fields (`row_count`/`earliest_timestamp`/`latest_timestamp`) `run_new_form` alre
 
 Selecting a source reads these attributes client-side (inline `<script>` in `run_new.html`, the same
 block `checkReference()` lives in) and renders a summary line into `#dataset-source-summary` below the
-dropdown -- no page reload, no new server call. If `dataset_reference_start`/`dataset_reference_end`
+dropdown -- no page reload, no new server call. `run_new.html`'s `dataset_reference_field` tooltip (which
+warns that ingested fields are raw levels, not returns) is now backed by a real, enforced
+`validation-service` check rather than advisory text alone (`POST /runs`' price-level guardrail --
+`docs/tickets/MR-001.md`), not just this client-side hint. If `dataset_reference_start`/`dataset_reference_end`
 already have a value when a source is selected (or are edited afterward), the summary line explicitly
 labels the row count as the *full source's*, not a value recomputed for the narrowed range -- RSS-003's
 territory (a real narrowed-range row count) is not built here. RSS-002 (a live run-size estimate) depends

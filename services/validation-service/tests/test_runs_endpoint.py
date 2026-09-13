@@ -18,16 +18,32 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from unittest.mock import patch
 
+import numpy as np
 import pandas as pd
 from fastapi.testclient import TestClient
 
 from naive_first_engine.splitting import generate_splits
 
 
+def _returns_like_values(n: int, seed: int = 7) -> list[float]:
+    """MR-001 fixture fix: this file's original filler (`[float(i) for i in
+    range(n)]`, a monotonic ramp) is not this file's actual test intent --
+    these tests exercise split-count math, tenant isolation, dedup/reorder
+    warnings, none of which care what the values *are*, only that they're a
+    valid numeric series. That ramp incidentally matched MR-001's
+    price-level heuristic (lag-1 autocorrelation ~1, mean far from 0 relative
+    to spread), which post-MR-001 now correctly rejects it. Replaced with a
+    deterministic (fixed seed), zero-centered, low-autocorrelation synthetic
+    series -- genuinely returns-shaped, passing the guardrail without
+    changing what any of these tests are actually verifying.
+    """
+    return np.random.default_rng(seed).normal(0.0, 0.01, size=n).tolist()
+
+
 def _inline_dataset(n: int = 40) -> dict:
     start = datetime(2024, 1, 1)
     timestamps = [(start + timedelta(hours=i)).isoformat() for i in range(n)]
-    values = [float(i) for i in range(n)]
+    values = _returns_like_values(n)
     return {"inline": {"timestamps": timestamps, "values": values}}
 
 
@@ -181,7 +197,7 @@ def _inline_dataset_with_one_exact_duplicate(n: int = 40) -> dict:
     """
     start = datetime(2024, 1, 1)
     timestamps = [(start + timedelta(hours=i)).isoformat() for i in range(n)]
-    values = [float(i) for i in range(n)]
+    values = _returns_like_values(n)
     # Duplicate row index 3 exactly (same timestamp, same value), inserted
     # immediately after its original position so the input stays monotonic
     # -- isolates the dedup warning from DH-001's reordering warning.
@@ -237,7 +253,7 @@ def _unsorted_inline_dataset(n: int = 40) -> dict:
     """
     start = datetime(2024, 1, 1)
     timestamps = [(start + timedelta(hours=i)).isoformat() for i in range(n)]
-    values = [float(i) for i in range(n)]
+    values = _returns_like_values(n)
     # Reverse order -- deterministic, genuinely non-monotonic.
     reversed_pairs = list(zip(timestamps, values))[::-1]
     return {"inline": {"timestamps": [t for t, _ in reversed_pairs], "values": [v for _, v in reversed_pairs]}}
