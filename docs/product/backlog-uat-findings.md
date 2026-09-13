@@ -27,30 +27,48 @@ that** a reader never mistakes an artifact of the placeholder mapping for a genu
 Naive0.
 
 Acceptance criteria:
-- [ ] `validation-service`'s run-creation path already knows (from the presence/absence of the
+- [x] `validation-service`'s run-creation path already knows (from the presence/absence of the
       `client_baseline`/VS-017 mechanism) whether a real candidate model was submitted; this fact is
       surfaced on `RunDetailResponse`/`SplitResultResponse` (a new boolean field, e.g.
       `has_client_model: bool`, or equivalent — exact field name is the Tech Lead's implementation
-      call) rather than requiring the caller to infer it.
-- [ ] `run_detail.html`'s "Model" column header/legend renders as "Model (NaiveLast placeholder — no
+      call) rather than requiring the caller to infer it. **Done by `docs/tickets/VS-029.md`** (backend
+      half): `has_client_model: bool` added to both `naive_first_common.contracts.RunDetailResponse`
+      and `SplitResultResponse`, derived from `client_baseline_results is not None` (no new column, no
+      new computation). Frontend consumption (`run_detail.html`'s label rendering, below) is `DASH-125`,
+      not yet done.
+- [x] `run_detail.html`'s "Model" column header/legend renders as "Model (NaiveLast placeholder — no
       client model submitted)" (or equivalent wording matching this platform's existing honesty-caveat
       style, e.g. the DH-001 warnings convention) whenever that field is `false`; renders as plain
-      "Model" only when a real `client_baseline` was submitted.
-- [ ] RAV-002/003's chart legends and FHS-003's summary panel inherit the same labeling — no chart or
-      panel independently re-derives or contradicts this label.
-- [ ] `FHS-004`'s "copy summary" plain-text export includes the same placeholder disclosure verbatim
+      "Model" only when a real `client_baseline` was submitted. **Done by `docs/tickets/DASH-125.md`**
+      (frontend half, alongside `VS-029`'s backend half above): `app/charting.py`'s
+      `model_column_label(run)` (the one shared computation) drives a second header `<tr>` above the
+      per-split table's existing model-column headers.
+- [x] RAV-002/003's chart legends and FHS-003's summary panel inherit the same labeling — no chart or
+      panel independently re-derives or contradicts this label. **Done by `DASH-125`**: `_error_chart.html`'s
+      title/legend/aria-label and `_forecast_horizon_summary_panel.html`'s per-metric column headers
+      both consume the same `model_column_label` value passed through `run_detail`'s context.
+      `_dm_verdict_chart.html` was confirmed at implementation time to carry no per-series "Model"
+      label at all (its bars are the platform's own DM-verdict categories, not a model-attributed
+      value) — nothing to change there, not a gap.
+- [x] `FHS-004`'s "copy summary" plain-text export includes the same placeholder disclosure verbatim
       when applicable — a shared/exported artifact must not silently drop the caveat the live page
-      shows.
-- [ ] A unit test asserts the placeholder label renders for a fixture run with no `client_baseline`,
-      and does not render for a fixture run with one.
-- [ ] No computation changes — this is a labeling/response-field fix only; `run_validation_protocol`
-      (`libs/naive_first_engine`) is untouched.
+      shows. **Done by `DASH-125`**: `build_shareable_summary_text` prepends a `"Note: {model_column_label(run)}."`
+      line via the same function when `run.has_client_model` is `False`; nothing added otherwise.
+- [x] A unit test asserts the placeholder label renders for a fixture run with no `client_baseline`,
+      and does not render for a fixture run with one. **Done by `DASH-125`**:
+      `tests/test_charting.py::test_model_column_label_placeholder_when_no_client_model`/
+      `test_model_column_label_plain_when_client_model_present`, plus route-level and
+      `build_shareable_summary_text` tests in `tests/test_runs_detail.py`.
+- [x] No computation changes — this is a labeling/response-field fix only; `run_validation_protocol`
+      (`libs/naive_first_engine`) is untouched. **Confirmed by `DASH-125`**: only `services/dashboard-web`
+      files were touched.
 
 Rationale for priority: three independent personas (quant researcher, compliance auditor, academic
 reviewer) hit this same misleading-result issue independently — the strongest corroboration signal in
 this review, and it goes directly to the product's non-negotiable "never imply we beat naive without
 real evidence" positioning (CLAUDE.md). Must-fix before any further UAT round.
 Depends on: none
+**Status: done — `VS-029` (backend half) + `DASH-125` (frontend half), both merged.**
 
 ### UAT-002 — Surface the raw-levels-vs-returns warning on every submission path, not just one field's tooltip [Must]
 
@@ -59,17 +77,17 @@ want** the existing "Naive0 is nonsensically wrong by construction on raw price 
 visible regardless of which `dataset_reference` mode I use, **so that** I don't get a misleadingly
 favorable verdict without ever seeing the caveat that explains it.
 
-Acceptance criteria:
-- [ ] The warning text already present on `run_new.html`'s `dataset_reference_field` tooltip (verbatim
+Acceptance criteria (closed by `DASH-126`, `docs/tickets/DASH-126.md`):
+- [x] The warning text already present on `run_new.html`'s `dataset_reference_field` tooltip (verbatim
       or lightly adapted) is also rendered as a static, always-visible notice on `run_new.html`
       (e.g. above the form, or beside the `dataset_reference_inline`/`dataset_reference_path` fields),
       not gated behind hover-only tooltip discovery on one field.
-- [ ] The same warning text is included in `run_detail.html`'s existing per-run disclaimer block (the
+- [x] The same warning text is included in `run_detail.html`'s existing per-run disclaimer block (the
       "Benchmark comparison... validation/audit metrics only" paragraph RAV-002/003 already share) so
       it survives to the result-viewing side too, not just the submission side.
-- [ ] A unit test scans `run_new.html`/`run_detail.html` and asserts the raw-levels warning text is
+- [x] A unit test scans `run_new.html`/`run_detail.html` and asserts the raw-levels warning text is
       present unconditionally (not only inside a `data-tooltip` attribute).
-- [ ] No new computation, no new field — presentation only.
+- [x] No new computation, no new field — presentation only.
 
 Rationale for priority: same three-persona corroboration as UAT-001; this is the second half of the
 same disclosure gap (the warning already exists but is invisible on the paths all three personas
@@ -136,17 +154,23 @@ documented auth header for `/runs` to match what actually works, **so that** my 
 call doesn't fail against a spec the service itself publishes incorrectly.
 
 Acceptance criteria:
-- [ ] `GET /runs`/`POST /runs`/etc. (the `get_authenticated_tenant`/GW-006-gated routes) document
+- [x] `GET /runs`/`POST /runs`/etc. (the `get_authenticated_tenant`/GW-006-gated routes) document
       `Authorization: Bearer <key>` and `X-Api-Key: <key>` as their security schemes in the generated
       OpenAPI schema (via `ARCH-008`'s existing `Security()` + `APIKeyHeader` convention, `auth.py`'s
       `_authorization_scheme`/`_x_api_key_scheme` — confirm these are actually wired to the routes'
       `Security()` dependencies, not just defined but unused).
-- [ ] `X-Operator-Token` appears in the schema's `securitySchemes` only on the routes actually gated by
+- [x] `X-Operator-Token` appears in the schema's `securitySchemes` only on the routes actually gated by
       `get_authenticated_operator` (`operator_auth.py`) — `/runs` and other tenant routes must not list
       it at all.
-- [ ] A test fetches `GET /openapi.json` from the running app and asserts `/runs`'s path item's
+- [x] A test fetches `GET /openapi.json` from the running app and asserts `/runs`'s path item's
       `security` list references only the tenant auth schemes, and that `X-Operator-Token`'s
       `securityScheme` object exists but is referenced only by operator-gated paths.
+
+Fixed by `docs/tickets/GW-029.md`: the three `APIKeyHeader` instances (`auth.py`'s
+`_authorization_scheme`/`_x_api_key_scheme`, `operator_auth.py`'s `_operator_token_scheme`) now each pass
+an explicit, distinct `scheme_name=` (`AuthorizationBearer`/`XApiKey`/`XOperatorToken`) — previously all
+three defaulted to the class name `"APIKeyHeader"` and collapsed into one shared, wrongly-labeled
+`securityScheme`. See `services/gateway-api/tests/test_openapi_security_schemes.py`.
 
 Rationale for priority: a real, confirmed bug in the published contract that blocks any spec-following
 integration at the very first call — Must, since this platform's stated audience (external pilot
@@ -286,12 +310,14 @@ CSS-hover `data-tooltip` (e.g. the raw-levels-vs-returns warning, the horizon-un
 announced, **so that** I don't silently miss safety-relevant disclosures a sighted user sees on hover.
 
 Acceptance criteria:
-- [ ] Every existing `data-tooltip` element gains an `aria-label` (or equivalent — `aria-describedby`
+- [x] Every existing `data-tooltip` element gains an `aria-label` (or equivalent — `aria-describedby`
       pointing at a visually-hidden element with the same text) carrying the same tooltip text, so a
-      screen reader announces it without requiring a mouse hover.
-- [ ] A test scans the rendered templates and asserts every `data-tooltip` attribute has a
-      corresponding `aria-label`/`aria-describedby` on the same element.
-- [ ] No visual change for sighted users — this is additive markup only.
+      screen reader announces it without requiring a mouse hover. (`DASH-127`)
+- [x] A test scans the rendered templates and asserts every `data-tooltip` attribute has a
+      corresponding `aria-label`/`aria-describedby` on the same element. (`DASH-127`,
+      `tests/test_tooltip_accessibility.py`)
+- [x] No visual change for sighted users — this is additive markup only. (`DASH-127`; no `style.css`
+      change, `aria-label` attributes only)
 
 Rationale for priority: this is not merely a polish item — several of these tooltips carry
 CLAUDE.md-mandated honesty disclosures (the raw-levels warning UAT-002 also addresses); an

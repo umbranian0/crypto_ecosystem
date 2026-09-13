@@ -478,6 +478,7 @@ def list_runs(
 def get_run(
     run_id: str,
     run_repository: ValidationRunRepositoryDep,
+    split_repository: SplitResultRepositoryDep,
     tenant: TenantContext = Depends(get_tenant_context),
 ) -> RunDetailResponse:
     # `get_run` already returns None for both "doesn't exist" and "wrong
@@ -486,6 +487,15 @@ def get_run(
     run = run_repository.get_run(tenant.tenant_id, run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="run not found")
+
+    # VS-029: has_client_model is derived from the same per-split
+    # client_baseline_results signal VS-017 already established (splits.py's
+    # _client_baseline_response condition) -- any(), not "check the first
+    # split only", the honest non-assumption-dependent way to derive a
+    # run-level fact from per-split data. A run with zero splits (pending/
+    # failed status) is False -- no splits to derive True from.
+    splits = split_repository.get_splits(tenant.tenant_id, run_id)
+    has_client_model = any(split.client_baseline_results is not None for split in splits)
 
     return RunDetailResponse(
         id=run.id,
@@ -499,4 +509,5 @@ def get_run(
         completed_at=run.completed_at,
         failure_reason=run.failure_reason,
         warnings=run.warnings,
+        has_client_model=has_client_model,
     )

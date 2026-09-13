@@ -383,6 +383,16 @@ def monitoring(
     `/monitoring`'s otherwise-unauthenticated audience) sees `None`, rendered
     as a login-to-view-as-operator prompt, same convention as the crawl-status
     panel's own login prompt.
+
+    DASH-124: `crawl_statuses is None` by itself is ambiguous -- true both for
+    an anonymous visitor (never fetched) and for a logged-in tenant whose
+    `_fetch_crawl_statuses` call failed. The context below also passes
+    `has_tenant_session` (`headers is not None`, a plain boolean -- never the
+    raw `headers` dict itself) so `monitoring.html` can gate the crawl-status
+    panel's and the report form's login-prompt branches on real session
+    presence, with a separate `{% elif crawl_statuses is none %}` branch for
+    the authenticated-but-fetch-failed case. `_fetch_crawl_statuses`'s own
+    failure-collapsing behavior is unchanged -- only the template's branching.
     """
     with httpx.Client(base_url=base_url, timeout=DOWNSTREAM_HTTP_TIMEOUT_SECONDS) as client:
         response, transport_status = _call_downstream(client.get, "/system/health")
@@ -416,6 +426,7 @@ def monitoring(
             "crawl_statuses": crawl_statuses,
             "recent_errors": recent_errors,
             "runs_summary": runs_summary,
+            "has_tenant_session": headers is not None,
         },
     )
 

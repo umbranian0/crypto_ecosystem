@@ -64,6 +64,11 @@ class RunDetailResponse(BaseModel):
     # field during a rolling deploy (same defensive-default precedent as
     # `client_baseline` on `SplitResultResponse` below).
     warnings: list[str] = Field(default_factory=list)
+    # VS-029: derived, not a new persisted fact -- True iff any of this run's
+    # splits has a non-None `client_baseline_results` (VS-017's own existing
+    # signal, single source of truth). `GET /runs/{id}`'s handler computes
+    # this via `any()` over the run's splits before constructing this model.
+    has_client_model: bool = False
 
 
 class RunSummaryResponse(BaseModel):
@@ -194,3 +199,7 @@ class SplitResultResponse(BaseModel):
     # for this run's POST /runs call; None otherwise (byte-identical to
     # pre-ticket responses).
     client_baseline: ClientBaselineResult | None = None
+    # VS-029: same derivation as RunDetailResponse.has_client_model above,
+    # but per-split -- `client_baseline_results is not None` for this split,
+    # the same condition `_client_baseline_response` already branches on.
+    has_client_model: bool = False

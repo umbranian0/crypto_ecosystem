@@ -27,6 +27,71 @@ Source: docs/sprints/sprint-29.md, docs/product/backlog-first-run-setup-and-ops.
 | [SETUP-021](SETUP-021.md) | Recent-errors ring buffer + `/monitoring` panel | libs/common, gateway-api, dashboard-web | SETUP-010, OPS-006 | done |
 | [SETUP-022](SETUP-022.md) | Validation-run throughput on `/monitoring` | gateway-api, dashboard-web | SETUP-020 (satisfied) | done |
 
+## Sprint 35 (docs/sprints/sprint-35.md, backlog: docs/product/backlog-uat-findings.md)
+
+UAT-001/002/005/011 (Must-tier) + one confirmed small bug, closing the disclosure-honesty and accessibility
+gaps found in the 10-persona dashboard-web/gateway-api review. Track A (`VS-029` → `DASH-125` → `DASH-126` →
+`DASH-127`) is strictly sequential (same-file overlap in `run_detail.html`/`run_new.html`). Track B
+(`GW-029`, `DASH-124`) is independent and ran in parallel with Track A.
+
+| Ticket | Story | Module | Depends on | Status |
+|---|---|---|---|---|
+| [VS-029](VS-029.md) | UAT-001 backend: `has_client_model` field | validation-service | none | done |
+| [DASH-125](DASH-125.md) | UAT-001 frontend: honest "Model" column label | dashboard-web | VS-029 | done |
+| [DASH-126](DASH-126.md) | UAT-002: raw-levels-vs-returns warning always visible | dashboard-web | DASH-125 (file-ordering only) | done |
+| [DASH-127](DASH-127.md) | UAT-011: accessible `data-tooltip` markup | dashboard-web | DASH-126 (file-ordering only) | done |
+| [GW-029](GW-029.md) | UAT-005: fix collapsed/incorrect `openapi.json` security schemes | gateway-api | none | done |
+| [DASH-124](DASH-124.md) | Confirmed bug: `/monitoring` login-prompt vs. transient-fetch-failure | dashboard-web | none | done |
+
+**Sprint 35 QA verdict (independent `qa` subagent pass, raised after all six tickets Tech-Lead-verified
+done)**: **GO** for all six tickets, no defects filed. Independently re-confirmed VS-029/GW-029's
+corrective passes are test-file-only (own `git diff` check), independently re-ran all three suites with
+matching counts (`services/validation-service` 174, `services/gateway-api` 209,
+`services/dashboard-web` 289/7-deselected), confirmed DASH-125/126/127's sequential chain layers
+cleanly with no clobbering and no duplicated/independently-re-derived copy, confirmed no CLAUDE.md
+positioning-rule violation, confirmed `libs/naive_first_engine` untouched across the whole sprint, and
+confirmed no cross-service DB-schema reads. One disclosed live-deploy gap flagged (not a code defect):
+`naive-first-dashboard-web`'s running container predates this sprint's still-uncommitted working-tree
+changes, so DASH-124's fix had not yet been proven against a real running instance — flagged as the
+one remaining step before full production sign-off, addressed immediately after (see rebuild/redeploy
+note below).
+
+**Post-QA live rebuild/redeploy (Tech Lead)**: `docker compose build dashboard-web gateway-api` +
+`docker compose up -d --force-recreate dashboard-web gateway-api` run against `infra/docker-compose.yml`;
+both containers recreated and confirmed `Up` on fresh images (`naive-first-gateway-api` ->
+`infra-gateway-api`, `naive-first-dashboard-web` -> `infra-dashboard-web`). Verified with real requests
+against the live stack: `GET http://localhost:8000/openapi.json` now shows the three distinctly-named
+security schemes (`AuthorizationBearer`/`XApiKey`/`XOperatorToken`, GW-029's fix live, not collapsed);
+`GET http://localhost:8004/monitoring` (anonymous) returns `200` and correctly renders the
+`has_tenant_session`-gated login prompt (DASH-124's fix live, confirmed by the exact string match, not
+the stale pre-fix branch QA had flagged). All six tickets are now fully closed: Tech-Lead-verified,
+QA-signed-off, and live-deploy-verified.
+
+**Sprint 35 Track A (VS-029 -> DASH-125 -> DASH-126 -> DASH-127) — all done, verified sequentially**
+by the Tech Lead, one dev agent at a time, same-file discipline honored throughout (`run_detail.html`/
+`run_new.html`): DASH-125 added the single `model_column_label()` (`app/charting.py`) consumed verbatim
+by `run_detail.html`, `_forecast_horizon_summary_panel.html`, `_error_chart.html`, and
+`build_shareable_summary_text` — 285 passed/7 deselected. DASH-126 layered the raw-levels-vs-returns
+warning (byte-identical text in `run_new.html`'s new static notice, its pre-existing
+`dataset_reference_field` tooltip, and `run_detail.html`'s disclaimer) on top of DASH-125's layout without
+conflict — 287 passed/7 deselected. DASH-127 added matching `aria-label`s to all 12 `data-tooltip`
+elements in `run_new.html` (all confirmed by grep; DASH-126's new notices are plain always-visible `<p>`
+text, correctly left unmodified), zero CSS changes — 289 passed/7 deselected. Every diff was read
+directly by the Tech Lead before starting the next ticket in the chain.
+
+**Sprint 35 corrective-pass verification (Tech Lead)**: VS-029 and GW-029 each received a corrective
+background dev-agent pass (VS-029: missing unit tests; GW-029: `test_runs_routing.py` fixture regression
+caused by VS-029's new `has_client_model` field landing in the shared `contracts.py`). Both passes
+verified test-file-only, zero production-code changes: VS-029's corrective added only
+`services/validation-service/tests/test_has_client_model.py` (new file, `git status --porcelain` shows no
+other change under `src/`); GW-029's corrective added exactly two lines to the existing
+`services/gateway-api/tests/test_runs_routing.py` (`has_client_model` added to `_SPLIT_RECORD` and to the
+expected-fields set), confirmed via `git diff`. All three real suites personally re-run by the Tech Lead:
+`services/validation-service` 174 passed; `services/gateway-api` 209 passed; `services/dashboard-web` 279
+passed, 7 deselected (e2e). DASH-124's diff (`operator.py`'s `has_tenant_session` context flag +
+`monitoring.html`'s `{% if not has_tenant_session %}`/`{% elif crawl_statuses is none %}` branches) was
+also read directly and matches its ticket exactly — marked done alongside VS-029/GW-029.
+
 **Sprint 32 Outcome**: all six in-scope tickets (SETUP-011/012/015/020/021/022) are done, each verified
 against real diffs (not just dev-agent self-reports) and re-run test suites.
 

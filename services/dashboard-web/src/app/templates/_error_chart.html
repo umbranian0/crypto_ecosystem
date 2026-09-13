@@ -36,12 +36,12 @@
         </select>
         <noscript><button type="submit">Update chart</button></noscript>
     </form>
-    <p class="chart-title">Model vs. Naive0 error by split ({{ error_chart.metric_label }})</p>
+    <p class="chart-title">{{ model_column_label }} vs. Naive0 error by split ({{ error_chart.metric_label }})</p>
     <svg
         class="error-chart-svg"
         viewBox="0 0 {{ error_chart.width }} {{ error_chart.height }}"
         role="img"
-        aria-label="Model versus Naive0 {{ error_chart.metric_label }} by split"
+        aria-label="{{ model_column_label }} versus Naive0 {{ error_chart.metric_label }} by split"
     >
         <line
             class="chart-axis"
@@ -78,7 +78,7 @@
         {% endfor %}
     </svg>
     <div class="chart-legend">
-        <span><span class="chart-legend-swatch model"></span>Model {{ error_chart.metric_label }}</span>
+        <span><span class="chart-legend-swatch model"></span>{{ model_column_label }} {{ error_chart.metric_label }}</span>
         <span><span class="chart-legend-swatch naive0"></span>Naive0 {{ error_chart.metric_label }}</span>
         {% if error_chart.has_client_baseline %}
         <span><span class="chart-legend-swatch client"></span>Client baseline {{ error_chart.metric_label }}</span>

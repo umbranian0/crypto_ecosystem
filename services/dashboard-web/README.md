@@ -82,6 +82,26 @@
 **instead of requiring a bare local process outside Compose -- see `infra/README.md`'s**
 **"dashboard-web (SETUP-030)" section for the full wiring. This is packaging only: the full**
 **`SETUP-003` setup wizard this service will eventually gain is not built here.**
+**`DASH-124` (small bug fix) fixed `/monitoring`'s login-prompt-vs-transient-fetch-failure**
+**conflation -- an authenticated tenant hitting a transient `_fetch_crawl_statuses` failure now sees**
+**a generic "results currently unavailable" message instead of the misleading "Log in..." prompt --**
+**see "Operator login and monitoring (DASH-113)" below (279 unit tests passing, up from 276, plus**
+**the same 5 e2e).** `DASH-125` (Sprint 31, UAT-001 frontend half, depends on `VS-029`'s real
+**`has_client_model` field) adds the honest "Model" column/legend/export label -- a placeholder
+**disclosure ("Model (NaiveLast placeholder -- no client model submitted)") on `GET /runs/{run_id}`'s
+**per-split table, RAV-002's error chart, FHS-003's summary panel, and FHS-004's copy-summary export
+**whenever a run was submitted with no client model, plain "Model" otherwise -- see "Honest 'Model'
+**label -- placeholder disclosure when no client model submitted (DASH-125)" below (285 unit tests
+**passing, up from 279, plus the same 7 e2e). `DASH-126` (Sprint 31, UAT-002) makes the
+raw-levels-vs-returns warning always-visible on both the submission and viewing paths -- previously it
+existed only inside `run_new.html`'s `dataset_reference_field` tooltip, invisible unless a sighted user
+hovered that one field -- see "Raw-levels-vs-returns warning: always-visible notice (DASH-126)" below
+(287 unit tests passing, up from 285, plus the same 7 e2e). `DASH-127` (Sprint 31, UAT-011, last of
+the Track A trio, run after `DASH-126` so accessible markup covers its final tooltip text) adds a
+matching `aria-label` to every `data-tooltip` element found by grepping `src/app/templates/` (all
+eleven live in `run_new.html`'s `field-tooltip` spans, including the raw-levels-vs-returns
+`dataset_reference_field` tooltip UAT-011's rationale calls out by name) -- see "Tooltip accessibility
+convention (DASH-127)" below (289 unit tests passing, up from 287, plus the same 7 e2e).
 
 Formerly `dashboard/`. See [../../docs/solution-design.md](../../docs/solution-design.md) section 3.6.
 
@@ -312,6 +332,39 @@ two trigger actions on `/monitoring` -- see "Trigger actions on /monitoring (DAS
   missing session is redirected to `/login` by that existing dependency before the handler body runs),
   calls `SessionStore.delete` (DASH-002's existing method, not a second one), and clears the cookie via
   `Response.delete_cookie`.
+
+## Tooltip accessibility convention (DASH-127)
+
+**Standing convention, not a one-time fix**: every `data-tooltip` element added to any template in this
+service must also carry a matching `aria-label` (with identical text) on the same element -- the
+`class="field-tooltip"` CSS-hover pattern (`style.css`'s `.field-tooltip`/`.field-tooltip::after`,
+first introduced by `DASH-006`/`run_new.html`) is invisible to a screen reader without it, and several
+of these tooltips carry CLAUDE.md-mandated honesty disclosures (e.g. the raw-levels-vs-returns warning
+on `dataset_reference_field`), not just cosmetic help text. `DASH-127` (Sprint 31, UAT-011) added this
+markup to all eleven `data-tooltip` elements found by grepping `src/app/templates/` for
+`data-tooltip=` -- as of this ticket, all eleven live in `run_new.html`'s `field-tooltip` spans; no
+other template uses this pattern (confirmed by the same grep, not assumed).
+
+- **Choice made for all eleven**: plain `aria-label="{{ same text as data-tooltip }}"` on the same
+  `<span>`, the ticket's own "simplest option" default -- including the longest one
+  (`dataset_reference_field`'s raw-levels-vs-returns tooltip, ~480 characters). The alternative
+  (`aria-describedby` + a visually-hidden sibling element) was deliberately not used anywhere: this
+  codebase's `style.css` has no existing visually-hidden/`sr-only` utility class, and this ticket's own
+  scope forbids any CSS change -- inventing one just for this ticket would be scope creep for a
+  cosmetic-only technique choice when `aria-label` already satisfies the acceptance criteria without a
+  new class. Revisit only if a future tooltip's text is long enough that `aria-label`'s own
+  practical/browser-support limits (very long strings) become a real problem, at which point adding a
+  `.visually-hidden` class to `style.css` would be in scope for that ticket, not this one.
+- **Test**: `tests/test_tooltip_accessibility.py` renders `GET /runs/new` and asserts every
+  `data-tooltip="..."` attribute has a paired `aria-label="..."` on the same element with identical
+  text, plus a targeted assertion for the `dataset_reference_field` tooltip specifically (UAT-011's
+  rationale calls it out by name). Any future `data-tooltip` element added anywhere in this service
+  should extend this same test (or add an equivalent one for its own template) rather than relying on
+  manual review.
+- `DASH-126`'s new always-visible raw-levels-vs-returns `<p class="form-status form-status-warn">`
+  notices (`run_new.html`/`run_detail.html`) are plain static text, not `data-tooltip` elements --
+  they need no ARIA markup here since they're already always-visible and announced by default, per
+  `DASH-126`'s own design (the whole point of that ticket).
 
 ## Run detail (DASH-004)
 
@@ -727,6 +780,95 @@ per the backlog's own explicit scope limit):
   raw-value-only test; a route-level test confirming the `<textarea>` and caveat render in
   `GET /runs/{run_id}`; and the extended banned-word scan for the new partial.
 
+## Honest "Model" label -- placeholder disclosure when no client model submitted (DASH-125)
+
+`GET /runs/{run_id}`'s "Model MAE"/"Model RMSE"/etc. column headers, RAV-002's error chart legend/
+title, FHS-003's summary panel column headers, and FHS-004's copy-summary export all previously
+labeled every "Model ..." metric with the plain word "Model" even for a run submitted with no
+client model at all -- in that case every "Model" metric is actually `NaiveLast`'s own placeholder
+output (VS-017's existing behavior for a run with no `client_prediction_reference`), and the plain
+label silently implied a real model was evaluated (`docs/product/backlog-uat-findings.md`'s
+UAT-001, frontend half; the backend half, `VS-029`, added the real `has_client_model` field to
+`RunDetailResponse`/`SplitResultResponse` this ticket depends on):
+
+- **`app/charting.py`** gained `MODEL_COLUMN_LABEL`/`MODEL_COLUMN_PLACEHOLDER_LABEL` (two string
+  constants) and `model_column_label(run: RunDetailResponse) -> str` -- the **one** function that
+  decides between them (`run.has_client_model` -> plain `"Model"`; otherwise `"Model (NaiveLast
+  placeholder -- no client model submitted)"`). Put here rather than `app/routers/runs.py`, matching
+  this module's existing convention of housing every pure, no-I/O, run/split-derived presentation
+  value (`verdict_category_and_css_slug`, `build_error_chart`, `build_dm_verdict_chart`) -- the
+  template layer never re-derives the label from `has_client_model` itself.
+- **`app/routers/runs.py`**: `run_detail` computes `model_column_label(run)` once and adds it to the
+  `TemplateResponse` context as `"model_column_label"`, consumed verbatim by `run_detail.html`
+  (`{% include %}`-ed partials inherit the same Jinja2 context, so no partial needs it passed
+  explicitly) -- not a second computation per template. `build_shareable_summary_text(run, splits)`
+  prepends a `"Note: {model_column_label(run)}."` line (via the same function, not a hand-typed
+  literal) immediately after the header block when `run.has_client_model` is `False`; nothing is
+  added when `True`, so the export's shape is byte-identical to its pre-DASH-125 output for the
+  common (real-client-model) case.
+- **`run_detail.html`**: the per-split table's four boundary columns (Split/Train/Purge/Test) and
+  three DM columns (DM statistic/p-value/verdict) keep their existing per-column headers unchanged;
+  the seven `Model *` metric columns are the model's own contiguous block, so a second header `<tr>`
+  above the existing one adds `<th colspan="4"></th><th colspan="7">{{ model_column_label }}</th>
+  <th colspan="7">Naive0</th><th colspan="3"></th>` -- the disclosure sits directly above the model
+  columns it describes, not buried in prose elsewhere on the page.
+- **`_forecast_horizon_summary_panel.html`**: this table's columns *alternate* per metric (`Model
+  MAE`, `Naive0 MAE`, `Model RMSE`, `Naive0 RMSE`, ...), so the same colspan-group approach does not
+  apply -- each of the seven `Model *` header cells' leading word is `{{ model_column_label }}`
+  instead (the ticket's own documented alternative), e.g. `"Model (NaiveLast placeholder -- no
+  client model submitted) MAE"` when applicable.
+- **`_error_chart.html`**: the `<p class="chart-title">`, the `<svg>`'s `aria-label`, and the
+  `chart-legend`'s model swatch label all use `{{ model_column_label }}` in place of the literal
+  `"Model"` prefix.
+- **`_dm_verdict_chart.html`**: confirmed at implementation time to carry no per-series "Model"
+  label at all -- its four bars are the platform's own DM-verdict categories ("better"/"worse"/"no
+  significant difference"/"undefined for this split"), not a model-attributed value, so nothing was
+  changed here (no label was invented to satisfy this ticket's file list where none was needed).
+- **Positioning**: the placeholder wording ("NaiveLast placeholder -- no client model submitted")
+  states plainly what happened, never "prediction"/"signal" language, matching DH-001's own
+  honesty-caveat precedent (CLAUDE.md's positioning constraint).
+- **Tests**: `tests/test_charting.py` adds two unit tests for `model_column_label` (placeholder vs.
+  plain, driven by `has_client_model`); `tests/test_runs_detail.py` adds a route-level test asserting
+  the placeholder string renders (at least twice -- table header group plus at least one of the
+  chart/panel) when `has_client_model=False`, a route-level test asserting the plain "Model" label
+  and the absence of the placeholder string when `has_client_model=True`, and two
+  `build_shareable_summary_text` tests (placeholder line present/absent) (285 unit tests passing as
+  of this ticket, up from 279, plus the same 7 e2e -- note: `pyproject.toml`'s own `addopts` already
+  excludes e2e tests from the default run; the e2e count is unchanged, not re-run by this ticket).
+
+## Raw-levels-vs-returns warning: always-visible notice (DASH-126)
+
+Covers `docs/product/backlog-uat-findings.md` UAT-002. Before this ticket, the raw-levels-vs-returns
+warning existed only inside `run_new.html`'s `dataset_reference_field` tooltip (`data-tooltip`
+attribute) -- invisible unless a sighted user hovered that one specific field. It is now
+**always-visible on both the submission path (`run_new.html`) and the viewing path (`run_detail.html`)**:
+
+- **`run_new.html`**: a static, always-visible `<p class="form-status form-status-warn">` notice near
+  the top of the page (alongside the existing intro paragraph, before the "Dataset reference"
+  fieldset) carries the exact same sentence as the `dataset_reference_field` tooltip's own
+  `data-tooltip` text -- reused verbatim, not a second independently-worded caveat. The tooltip itself
+  is untouched (still present, unchanged text) -- `DASH-127` (not this ticket) will make that tooltip
+  itself accessible, not remove it.
+- **`run_detail.html`**: the same sentence is appended to the existing per-run disclaimer paragraph
+  ("Benchmark comparison of the model against the Naive0 baseline... These are validation/audit
+  metrics only."), inside the same `{% if splits %}` block `DASH-125` established, so it is visible
+  whenever per-split results are shown -- no new field, no new computation, presentation only.
+- **Single source text**: all three occurrences (the pre-existing tooltip, the new `run_new.html`
+  static notice, and the extended `run_detail.html` disclaimer) carry byte-identical copy -- verified
+  by `tests/test_runs_submit.py`'s and `tests/test_runs_detail.py`'s shared
+  `RAW_LEVELS_WARNING_SENTENCE` constant, matched against each rendered page's own whitespace-normalized
+  body text.
+- **Positioning**: the sentence describes Naive0's own behavior on raw price levels (a known,
+  documented artifact of the field choice), not a prediction/signal claim -- no CLAUDE.md positioning
+  violation.
+- **Tests**: `tests/test_runs_submit.py::test_run_new_form_shows_raw_levels_warning_unconditionally_in_body`
+  asserts the sentence appears in `run_new.html`'s rendered body text with `data-tooltip` attribute
+  values stripped out first (proving it is real page copy, not just an attribute value) *and* that it
+  still appears inside the tooltip's own `data-tooltip` attribute (proving AC4: the tooltip itself is
+  untouched). `tests/test_runs_detail.py::test_run_detail_shows_raw_levels_warning_unconditionally_when_splits_present`
+  asserts the same sentence appears in `run_detail.html`'s rendered body whenever splits exist (287
+  unit tests passing as of this ticket, up from 285, plus the same 7 e2e).
+
 ## Operator login and monitoring (DASH-113)
 
 Minimal slice of the sibling backlog's `SETUP-003` (setup wizard)/`SETUP-012` (tenant-management
@@ -766,6 +908,12 @@ setup wizard and tenant-management UI remain that other backlog's own scope, not
 - **Positioning**: `operator_login.html`/`monitoring.html`'s copy describes this as operational status
   of the platform's own services only -- never "prediction," "forecast," "signal," or "recommendation"
   (CLAUDE.md's core positioning constraint).
+- **`DASH-124`**: the crawl-status panel's and the report-generation form's login-prompt branches now
+  gate on a real session-presence flag (`has_tenant_session`, `operator.py::monitoring`'s new
+  `"headers is not None"` context value, a plain boolean -- never the raw `headers` dict) instead of
+  `crawl_statuses is none`, so an authenticated tenant hitting a transient `_fetch_crawl_statuses`
+  failure now sees a generic "results currently unavailable" message rather than the misleading "Log
+  in..." prompt -- see "Last crawl status panel (DASH-109)" below for the panel itself.
 
 ### Last crawl status panel (DASH-109)
 

@@ -7,18 +7,35 @@ from __future__ import annotations
 import pytest
 from naive_first_common.contracts import (
     ClientBaselineResult,
+    RunDetailResponse,
     RunSummaryResponse,
     SplitResultResponse,
 )
 
 from app.charting import (
     METRIC_REGISTRY,
+    MODEL_COLUMN_LABEL,
+    MODEL_COLUMN_PLACEHOLDER_LABEL,
     UNDEFINED_VERDICT_CATEGORY,
     build_dm_verdict_chart,
     build_error_chart,
     build_trend_chart,
     compute_consistency_indicator,
+    model_column_label,
 )
+
+_RUN_DETAIL_BODY = {
+    "id": "11111111-1111-1111-1111-111111111111",
+    "tenant_id": "tenant-a",
+    "dataset_id": "dataset-1",
+    "horizon": 24,
+    "purge_gap_hours": 6,
+    "split_config": {"train_window": 100, "test_window": 10, "step": 10},
+    "status": "completed",
+    "created_at": "2026-08-01T00:00:00Z",
+    "completed_at": "2026-08-01T01:00:00Z",
+    "failure_reason": None,
+}
 
 _DISCLAIMER = (
     "This client-supplied baseline is shown for reference only and is not "
@@ -532,3 +549,19 @@ def test_compute_consistency_indicator_all_runs_undefined_has_no_data() -> None:
     assert indicator.has_data is False
     assert indicator.beat_count == 0
     assert indicator.total_count == 0
+
+
+# DASH-125 (UAT-001 frontend half): `model_column_label` -- the one shared
+# computation of the honest "Model" column/legend/export label.
+
+
+def test_model_column_label_placeholder_when_no_client_model() -> None:
+    run = RunDetailResponse(**{**_RUN_DETAIL_BODY, "has_client_model": False})
+
+    assert model_column_label(run) == MODEL_COLUMN_PLACEHOLDER_LABEL
+
+
+def test_model_column_label_plain_when_client_model_present() -> None:
+    run = RunDetailResponse(**{**_RUN_DETAIL_BODY, "has_client_model": True})
+
+    assert model_column_label(run) == MODEL_COLUMN_LABEL

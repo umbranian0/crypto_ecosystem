@@ -549,6 +549,115 @@ def test_monitoring_runs_summary_populated_for_logged_in_operator(monkeypatch) -
     assert "10.0%" in response.text
 
 
+# DASH-124: login-prompt vs. transient-fetch-failure conflation
+
+
+def test_monitoring_anonymous_visitor_sees_login_prompt_not_generic_failure(monkeypatch) -> None:
+    """(a) No session -- both the crawl-status panel and the report form must
+    show the "Log in..." prompt, byte-identical wording to before this
+    ticket, never the generic downstream-failure message.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/system/health"
+        return _health_response()
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    response = client.get("/monitoring")
+
+    assert response.status_code == 200
+    assert "Log in to view your own ingestion status." in response.text
+    assert "Log in to generate a report." in response.text
+    assert "results currently unavailable" not in response.text
+
+
+def test_monitoring_authenticated_tenant_failed_fetch_sees_generic_failure_not_login_prompt(
+    monkeypatch,
+) -> None:
+    """(b) Session present but `_fetch_crawl_statuses` collapses to `None`
+    (e.g. `/ingestion/datasets` itself returns non-200) -- must show the
+    generic downstream-failure message, never the login prompt.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/system/health":
+            return _health_response()
+        if request.url.path == "/ingestion/datasets":
+            return httpx.Response(500, json={"detail": "internal error"})
+        if request.url.path == "/diagnostics/recent-errors":
+            return httpx.Response(200, json={"items": []})
+        raise AssertionError(f"unexpected request: {request.url.path}")  # pragma: no cover
+
+    _patch_transport(monkeypatch, handler)
+
+    session_id = get_session_store().create(RAW_KEY)
+    client = TestClient(app)
+    client.cookies.set("session_id", session_id)
+
+    response = client.get("/monitoring")
+
+    assert response.status_code == 200
+    assert response.text.count("results currently unavailable") == 2
+    assert "Log in to view your own ingestion status." not in response.text
+    assert "Log in to generate a report." not in response.text
+
+
+def test_monitoring_authenticated_tenant_successful_fetch_renders_panel_and_form_unaffected(
+    monkeypatch,
+) -> None:
+    """(c) Session present and fetch succeeds -- existing panel/form render
+    exactly as before this ticket, unaffected.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/system/health":
+            return _health_response()
+        if request.url.path == "/ingestion/datasets":
+            return httpx.Response(
+                200,
+                json={
+                    "items": [
+                        {
+                            "source": "binance_price_btcusdt_1h",
+                            "earliest_timestamp": "2026-01-01T00:00:00",
+                            "latest_timestamp": "2026-01-02T00:00:00",
+                            "row_count": 24,
+                        }
+                    ]
+                },
+            )
+        if request.url.path == "/ingestion/connectors/binance_price_btcusdt_1h/status":
+            return httpx.Response(
+                200,
+                json={
+                    "status": "completed",
+                    "timestamp": "2026-01-02T00:00:00",
+                    "row_count": 24,
+                },
+            )
+        if request.url.path == "/diagnostics/recent-errors":
+            return httpx.Response(200, json={"items": []})
+        raise AssertionError(f"unexpected request: {request.url.path}")  # pragma: no cover
+
+    _patch_transport(monkeypatch, handler)
+
+    session_id = get_session_store().create(RAW_KEY)
+    client = TestClient(app)
+    client.cookies.set("session_id", session_id)
+
+    response = client.get("/monitoring")
+
+    assert response.status_code == 200
+    assert "binance_price_btcusdt_1h" in response.text
+    assert "completed" in response.text
+    assert 'name="run_id"' in response.text
+    assert "Log in to view your own ingestion status." not in response.text
+    assert "Log in to generate a report." not in response.text
+    assert "results currently unavailable" not in response.text
+
+
 def test_crawl_status_fragment_downstream_failure_renders_small_error_fragment(
     monkeypatch,
 ) -> None:

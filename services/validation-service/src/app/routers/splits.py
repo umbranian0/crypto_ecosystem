@@ -116,6 +116,7 @@ def get_splits(
             dm_pvalue=split.dm_pvalue,
             dm_verdict=split.dm_verdict,
             client_baseline=_client_baseline_response(split.client_baseline_results),
+            has_client_model=split.client_baseline_results is not None,
         )
         for split in splits
     ]

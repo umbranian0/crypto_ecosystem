@@ -269,6 +269,7 @@ from app.charting import (
     build_error_chart,
     build_trend_chart,
     compute_consistency_indicator,
+    model_column_label,
     verdict_category_and_css_slug,
 )
 from app.dependencies.downstream import DownstreamHeadersDep, GatewayApiUrlDep
@@ -371,6 +372,12 @@ def build_shareable_summary_text(
     split, and `CAVEAT_SENTENCE` verbatim appended at the end. Reuses the same
     already-fetched `run`/`splits` data FHS-003's panel renders -- no new
     downstream call.
+
+    DASH-125: when `run.has_client_model` is `False`, prefixes the returned
+    text with the same placeholder disclosure `model_column_label` renders
+    everywhere else on this run's page -- every "Model ..." metric line below
+    is actually NaiveLast's own output, so an exported/shared copy must carry
+    that same disclosure, not just the page itself.
     """
     horizon_label = _HORIZON_TO_DAY_LABEL.get(run.horizon, str(run.horizon))
 
@@ -380,6 +387,10 @@ def build_shareable_summary_text(
         f"Horizon: {horizon_label}",
         "",
     ]
+
+    if not run.has_client_model:
+        lines.append(f"Note: {model_column_label(run)}.")
+        lines.append("")
 
     for split in splits:
         lines.append(f"Split {split.split_index}:")
@@ -949,5 +960,6 @@ def run_detail(
             "splits_truncated": splits_truncated,
             "total_splits_count": total_splits_count,
             "rendered_splits_count": len(rendered_splits),
+            "model_column_label": model_column_label(run),
         },
     )

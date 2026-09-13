@@ -54,7 +54,9 @@ _OPERATOR_TOKEN_ENV_VAR = "OPERATOR_TOKEN"
 _UNAUTHORIZED = HTTPException(status_code=401, detail="missing or invalid operator token")
 _FORBIDDEN = HTTPException(status_code=403, detail="valid credential, wrong credential type for this gate")
 
-_operator_token_scheme = APIKeyHeader(name="X-Operator-Token", auto_error=False)
+_operator_token_scheme = APIKeyHeader(
+    name="X-Operator-Token", scheme_name="XOperatorToken", auto_error=False
+)
 
 
 def get_authenticated_operator(

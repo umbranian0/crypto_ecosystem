@@ -6,6 +6,11 @@
 <p>This runs the leakage-free, purged walk-forward validation protocol against the
 mandatory naive baselines -- it does not generate a prediction, forecast, or trading
 signal.</p>
+<p class="form-status form-status-warn">Note: ingested fields today are raw levels (e.g. price, on-chain
+metric value), not returns -- naive-first validation is designed to compare return forecasts. Naive0
+(predicts 0) is nonsensically wrong by construction on raw price levels, so a run against a raw level
+will produce a misleadingly favorable verdict that is an artifact of the field choice, not a real
+finding. Compute a returns series before validating if you want a meaningful audit.</p>
 {% if error %}
 <p class="error">{{ error }}</p>
 {% endif %}
@@ -13,7 +18,8 @@ signal.</p>
     <label for="dataset_id">
         Dataset id
         <span class="field-tooltip" tabindex="0"
-              data-tooltip="Any label you choose to identify this dataset, e.g. uat-dataset. It doesn't need to match a file name.">?</span>
+              data-tooltip="Any label you choose to identify this dataset, e.g. uat-dataset. It doesn't need to match a file name."
+              aria-label="Any label you choose to identify this dataset, e.g. uat-dataset. It doesn't need to match a file name.">?</span>
     </label>
     <input type="text" id="dataset_id" name="dataset_id" required
            placeholder="uat-dataset"
@@ -25,7 +31,8 @@ signal.</p>
         <label for="dataset_reference_path">
             Local file path
             <span class="field-tooltip" tabindex="0"
-                  data-tooltip="Path to a two-column CSV (timestamp, value) inside validation-service's own container filesystem -- not a path on your host machine, and not another service's data directory (ingestion-service's data/ isn't shared with this container). Most users want the Stored dataset option below instead. Leave blank if using inline payload or stored dataset.">?</span>
+                  data-tooltip="Path to a two-column CSV (timestamp, value) inside validation-service's own container filesystem -- not a path on your host machine, and not another service's data directory (ingestion-service's data/ isn't shared with this container). Most users want the Stored dataset option below instead. Leave blank if using inline payload or stored dataset."
+                  aria-label="Path to a two-column CSV (timestamp, value) inside validation-service's own container filesystem -- not a path on your host machine, and not another service's data directory (ingestion-service's data/ isn't shared with this container). Most users want the Stored dataset option below instead. Leave blank if using inline payload or stored dataset.">?</span>
         </label>
         <input type="text" id="dataset_reference_path" name="dataset_reference_path"
                placeholder="/repo/services/validation-service/seed.csv"
@@ -34,7 +41,8 @@ signal.</p>
         <label for="dataset_reference_inline">
             Inline payload (JSON)
             <span class="field-tooltip" tabindex="0"
-                  data-tooltip='Either {"timestamps": [...], "values": [...]} or a list of [timestamp, value] pairs. Needs enough rows to cover train_window + test_window at least once.'>?</span>
+                  data-tooltip='Either {"timestamps": [...], "values": [...]} or a list of [timestamp, value] pairs. Needs enough rows to cover train_window + test_window at least once.'
+                  aria-label='Either {"timestamps": [...], "values": [...]} or a list of [timestamp, value] pairs. Needs enough rows to cover train_window + test_window at least once.'>?</span>
         </label>
         <textarea id="dataset_reference_inline" name="dataset_reference_inline"
                   rows="4"
@@ -49,7 +57,8 @@ signal.</p>
         <label for="dataset_reference_source">
             Source
             <span class="field-tooltip" tabindex="0"
-                  data-tooltip="Pick from your ingested data. Leave on the placeholder option if using a local file path or inline payload above instead.">?</span>
+                  data-tooltip="Pick from your ingested data. Leave on the placeholder option if using a local file path or inline payload above instead."
+                  aria-label="Pick from your ingested data. Leave on the placeholder option if using a local file path or inline payload above instead.">?</span>
         </label>
         <select id="dataset_reference_source" name="dataset_reference_source">
             <option value="">-- select one of your ingested datasets --</option>
@@ -68,7 +77,8 @@ signal.</p>
         <label for="dataset_reference_start">
             Start (optional)
             <span class="field-tooltip" tabindex="0"
-                  data-tooltip="Leave blank to use the earliest available row for this source.">?</span>
+                  data-tooltip="Leave blank to use the earliest available row for this source."
+                  aria-label="Leave blank to use the earliest available row for this source.">?</span>
         </label>
         <input type="date" id="dataset_reference_start" name="dataset_reference_start"
                value="{{ values.dataset_reference_start if values else '' }}">
@@ -76,7 +86,8 @@ signal.</p>
         <label for="dataset_reference_end">
             End (optional)
             <span class="field-tooltip" tabindex="0"
-                  data-tooltip="Leave blank to use the latest available row for this source.">?</span>
+                  data-tooltip="Leave blank to use the latest available row for this source."
+                  aria-label="Leave blank to use the latest available row for this source.">?</span>
         </label>
         <input type="date" id="dataset_reference_end" name="dataset_reference_end"
                value="{{ values.dataset_reference_end if values else '' }}">
@@ -84,7 +95,8 @@ signal.</p>
         <label for="dataset_reference_field">
             Field (optional)
             <span class="field-tooltip" tabindex="0"
-                  data-tooltip="Which field/column of this source to use, if it has more than one. Leave blank to use the source's default field. Note: ingested fields today are raw levels (e.g. price, on-chain metric value), not returns -- naive-first validation is designed to compare return forecasts. Naive0 (predicts 0) is nonsensically wrong by construction on raw price levels, so a run against a raw level will produce a misleadingly favorable verdict that is an artifact of the field choice, not a real finding. Compute a returns series before validating if you want a meaningful audit.">?</span>
+                  data-tooltip="Which field/column of this source to use, if it has more than one. Leave blank to use the source's default field. Note: ingested fields today are raw levels (e.g. price, on-chain metric value), not returns -- naive-first validation is designed to compare return forecasts. Naive0 (predicts 0) is nonsensically wrong by construction on raw price levels, so a run against a raw level will produce a misleadingly favorable verdict that is an artifact of the field choice, not a real finding. Compute a returns series before validating if you want a meaningful audit."
+                  aria-label="Which field/column of this source to use, if it has more than one. Leave blank to use the source's default field. Note: ingested fields today are raw levels (e.g. price, on-chain metric value), not returns -- naive-first validation is designed to compare return forecasts. Naive0 (predicts 0) is nonsensically wrong by construction on raw price levels, so a run against a raw level will produce a misleadingly favorable verdict that is an artifact of the field choice, not a real finding. Compute a returns series before validating if you want a meaningful audit.">?</span>
         </label>
         <input type="text" id="dataset_reference_field" name="dataset_reference_field"
                placeholder="close"
@@ -97,7 +109,8 @@ signal.</p>
     <label for="horizon">
         Horizon
         <span class="field-tooltip" tabindex="0"
-              data-tooltip="A count of the selected dataset's own sampling steps, not a fixed hour/day unit -- e.g. horizon: 1 means one step ahead in whatever spacing that dataset's rows use. Must be at least 1. See the hint below once you pick a dataset reference for that dataset's specific unit.">?</span>
+              data-tooltip="A count of the selected dataset's own sampling steps, not a fixed hour/day unit -- e.g. horizon: 1 means one step ahead in whatever spacing that dataset's rows use. Must be at least 1. See the hint below once you pick a dataset reference for that dataset's specific unit."
+              aria-label="A count of the selected dataset's own sampling steps, not a fixed hour/day unit -- e.g. horizon: 1 means one step ahead in whatever spacing that dataset's rows use. Must be at least 1. See the hint below once you pick a dataset reference for that dataset's specific unit.">?</span>
     </label>
     <input type="number" id="horizon" name="horizon" min="1" required
            placeholder="1"
@@ -107,7 +120,8 @@ signal.</p>
     <label for="purge_gap_hours">
         Purge gap (hours)
         <span class="field-tooltip" tabindex="0"
-              data-tooltip="Hours excluded between train and test folds to prevent leakage across the split boundary. 0 is valid for a toy dataset; use a real gap for production data.">?</span>
+              data-tooltip="Hours excluded between train and test folds to prevent leakage across the split boundary. 0 is valid for a toy dataset; use a real gap for production data."
+              aria-label="Hours excluded between train and test folds to prevent leakage across the split boundary. 0 is valid for a toy dataset; use a real gap for production data.">?</span>
     </label>
     <input type="number" id="purge_gap_hours" name="purge_gap_hours" min="0" required
            placeholder="0"
@@ -116,7 +130,8 @@ signal.</p>
     <label for="train_window">
         Train window
         <span class="field-tooltip" tabindex="0"
-              data-tooltip="Number of rows in each training fold. Needs to be small enough that at least one full split fits in your dataset.">?</span>
+              data-tooltip="Number of rows in each training fold. Needs to be small enough that at least one full split fits in your dataset."
+              aria-label="Number of rows in each training fold. Needs to be small enough that at least one full split fits in your dataset.">?</span>
     </label>
     <input type="number" id="train_window" name="train_window" min="1" required
            placeholder="6"
@@ -125,7 +140,8 @@ signal.</p>
     <label for="test_window">
         Test window
         <span class="field-tooltip" tabindex="0"
-              data-tooltip="Number of rows in each test fold, evaluated after the purge gap.">?</span>
+              data-tooltip="Number of rows in each test fold, evaluated after the purge gap."
+              aria-label="Number of rows in each test fold, evaluated after the purge gap.">?</span>
     </label>
     <input type="number" id="test_window" name="test_window" min="1" required
            placeholder="2"
@@ -134,7 +150,8 @@ signal.</p>
     <label for="step">
         Step
         <span class="field-tooltip" tabindex="0"
-              data-tooltip="How far the window rolls forward between splits. Smaller step = more splits from the same data.">?</span>
+              data-tooltip="How far the window rolls forward between splits. Smaller step = more splits from the same data."
+              aria-label="How far the window rolls forward between splits. Smaller step = more splits from the same data.">?</span>
     </label>
     <input type="number" id="step" name="step" min="1" required
            placeholder="2"

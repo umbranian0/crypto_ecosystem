@@ -27,6 +27,11 @@
 {% if splits %}
 <p>Benchmark comparison of the model against the Naive0 baseline for each walk-forward split.
 These are validation/audit metrics only.</p>
+<p>Note: ingested fields today are raw levels (e.g. price, on-chain metric value), not returns --
+naive-first validation is designed to compare return forecasts. Naive0 (predicts 0) is nonsensically
+wrong by construction on raw price levels, so a run against a raw level will produce a misleadingly
+favorable verdict that is an artifact of the field choice, not a real finding. Compute a returns series
+before validating if you want a meaningful audit.</p>
 {% if splits_truncated %}
 <p class="form-status">Showing the most recent {{ rendered_splits_count }} of {{ total_splits_count }}
 splits below -- full per-split detail for this run remains available via the API
@@ -39,6 +44,12 @@ splits below -- full per-split detail for this run remains available via the API
 <div class="table-scroll">
 <table>
     <thead>
+        <tr>
+            <th colspan="4"></th>
+            <th colspan="7">{{ model_column_label }}</th>
+            <th colspan="7">Naive0</th>
+            <th colspan="3"></th>
+        </tr>
         <tr>
             <th>Split</th>
             <th>Train</th>

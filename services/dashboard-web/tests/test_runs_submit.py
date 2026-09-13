@@ -9,6 +9,8 @@ itself.
 
 from __future__ import annotations
 
+import re
+
 import httpx
 import pytest
 from fastapi.testclient import TestClient
@@ -873,3 +875,59 @@ def test_run_new_template_has_no_banned_positioning_words() -> None:
 
     for banned in ("optimal", "recommended", "best"):
         assert banned not in text, f"banned positioning word {banned!r} found in run_new.html"
+
+
+# DASH-126 (UAT-002): raw-levels-vs-returns warning made always-visible on
+# `run_new.html`, not gated behind the `dataset_reference_field` tooltip's
+# hover-only discovery.
+
+RAW_LEVELS_WARNING_SENTENCE = (
+    "Note: ingested fields today are raw levels (e.g. price, on-chain metric value), not returns "
+    "-- naive-first validation is designed to compare return forecasts. Naive0 (predicts 0) is "
+    "nonsensically wrong by construction on raw price levels, so a run against a raw level will "
+    "produce a misleadingly favorable verdict that is an artifact of the field choice, not a real "
+    "finding. Compute a returns series before validating if you want a meaningful audit."
+)
+
+
+def test_run_new_form_shows_raw_levels_warning_unconditionally_in_body(monkeypatch) -> None:
+    """UAT-002 AC1/AC3: the warning renders as static page body text (not
+    only inside the `dataset_reference_field` tooltip's `data-tooltip`
+    attribute value), regardless of form state -- no hover needed.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/ingestion/datasets"
+        return httpx.Response(
+            200,
+            json={
+                "items": [
+                    {
+                        "source": "binance_btcusdt_1h",
+                        "earliest_timestamp": "2024-01-01T00:00:00Z",
+                        "latest_timestamp": "2026-01-01T00:00:00Z",
+                        "row_count": 1000,
+                    },
+                ]
+            },
+        )
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get("/runs/new")
+    html = response.text
+    normalized = re.sub(r"\s+", " ", html)
+
+    assert response.status_code == 200
+    assert RAW_LEVELS_WARNING_SENTENCE in normalized
+    # The pre-existing tooltip must still carry the sentence too (AC4: not
+    # removed/altered) -- so the body must contain it at least twice: once in
+    # the static notice, once inside the tooltip's data-tooltip attribute.
+    assert normalized.count(RAW_LEVELS_WARNING_SENTENCE) >= 2
+    # Confirm at least one occurrence is outside any data-tooltip attribute --
+    # i.e. present as plain visible text, not just inside an attribute value.
+    stripped = re.sub(r'data-tooltip=("[^"]*"|\'[^\']*\')', "", normalized)
+    assert RAW_LEVELS_WARNING_SENTENCE in stripped

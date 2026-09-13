@@ -83,7 +83,32 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from naive_first_common.contracts import RunSummaryResponse, SplitResultResponse
+from naive_first_common.contracts import (
+    RunDetailResponse,
+    RunSummaryResponse,
+    SplitResultResponse,
+)
+
+# DASH-125 (UAT-001 frontend half, VS-029's `has_client_model` field): the one
+# shared place the "Model" column/legend/export label is computed -- every
+# template/export this ticket touches (`run_detail.html`,
+# `_forecast_horizon_summary_panel.html`, `_error_chart.html`,
+# `build_shareable_summary_text` in `app/routers/runs.py`) consumes this same
+# value verbatim rather than independently re-deriving it (implementation-
+# plan.md section 9's DRY rule -- the exact failure mode this ticket's own
+# Design section warns against).
+MODEL_COLUMN_LABEL = "Model"
+MODEL_COLUMN_PLACEHOLDER_LABEL = "Model (NaiveLast placeholder -- no client model submitted)"
+
+
+def model_column_label(run: RunDetailResponse) -> str:
+    """Returns the honest "Model" column/legend/export label: the plain label
+    when `run.has_client_model` is `True`, or an explicit placeholder
+    disclosure when `False` (no client model was submitted, so every "Model"
+    metric on this run is actually NaiveLast's own output) -- never silently
+    labels NaiveLast's placeholder output as "Model" without disclosure.
+    """
+    return MODEL_COLUMN_LABEL if run.has_client_model else MODEL_COLUMN_PLACEHOLDER_LABEL
 
 _CHART_WIDTH = 640
 _CHART_HEIGHT = 220

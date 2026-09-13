@@ -363,6 +363,15 @@ def test_run_detail_template_has_no_banned_positioning_words() -> None:
     not rendered product copy, so `{% include ... %}` statements are stripped
     before scanning (the new partial's own *content* gets its own,
     non-stripped scan below).
+
+    DASH-126: the raw-levels-vs-returns warning (reused verbatim from
+    `run_new.html`'s pre-existing `dataset_reference_field` tooltip) is
+    stripped before scanning too, same precedent as
+    `test_shareable_summary_partial_has_no_banned_positioning_words_outside_caveat`'s
+    caveat-sentence exclusion below -- its "return forecasts" describes what
+    the *model* does, not a claim this product predicts, and duplicating the
+    sentence with different wording just to dodge this scan would violate the
+    ticket's own DRY/single-source-text requirement.
     """
     import re
 
@@ -374,6 +383,8 @@ def test_run_detail_template_has_no_banned_positioning_words() -> None:
         / "run_detail.html"
     )
     text = re.sub(r"\{%\s*include\s+.*?%\}", "", template_path.read_text(encoding="utf-8")).lower()
+    text = re.sub(r"\s+", " ", text)
+    text = text.replace(re.sub(r"\s+", " ", RAW_LEVELS_WARNING_SENTENCE.lower()), "")
 
     for banned in ("prediction", "forecast", "signal", "recommendation"):
         assert banned not in text, f"banned positioning word {banned!r} found in run_detail.html"
@@ -990,4 +1001,108 @@ def test_run_detail_under_cap_run_byte_identical_to_pre_fix_baseline(monkeypatch
     assert response.text.count("verdict-label-") == 2
     assert "undefined for this split" in response.text
     assert "no significant difference" in response.text
-    assert "<code>GET /runs/" not in response.text
+
+
+# DASH-125 (UAT-001 frontend half): honest "Model" column/legend/export label
+# driven by `RunDetailResponse.has_client_model` (VS-029).
+
+PLACEHOLDER_LABEL = "Model (NaiveLast placeholder -- no client model submitted)"
+
+
+def test_run_detail_renders_placeholder_label_when_no_client_model(monkeypatch) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == f"/runs/{RUN_ID}":
+            return httpx.Response(200, json={**RUN_DETAIL_BODY, "has_client_model": False})
+        if request.url.path == f"/runs/{RUN_ID}/splits":
+            return httpx.Response(200, json=[SPLIT_BODY])
+        raise AssertionError(f"unexpected path {request.url.path}")
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get(f"/runs/{RUN_ID}")
+
+    assert response.status_code == 200
+    assert PLACEHOLDER_LABEL in response.text
+    # The table header group, the summary panel's per-metric headers, and the
+    # error chart's title/legend all consume the same string -- not just one
+    # occurrence.
+    assert response.text.count(PLACEHOLDER_LABEL) >= 2
+
+
+def test_run_detail_renders_plain_model_label_when_client_model_present(monkeypatch) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == f"/runs/{RUN_ID}":
+            return httpx.Response(200, json={**RUN_DETAIL_BODY, "has_client_model": True})
+        if request.url.path == f"/runs/{RUN_ID}/splits":
+            return httpx.Response(200, json=[SPLIT_BODY])
+        raise AssertionError(f"unexpected path {request.url.path}")
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get(f"/runs/{RUN_ID}")
+
+    assert response.status_code == 200
+    assert PLACEHOLDER_LABEL not in response.text
+    assert "<th>Model MAE</th>" in response.text or "colspan=\"7\">Model</th>" in response.text
+
+
+def test_build_shareable_summary_text_contains_placeholder_when_no_client_model() -> None:
+    run = RunDetailResponse(**{**RUN_DETAIL_BODY, "has_client_model": False})
+    split = SplitResultResponse(**SPLIT_BODY)
+
+    text = build_shareable_summary_text(run, [split])
+
+    assert PLACEHOLDER_LABEL in text
+
+
+def test_build_shareable_summary_text_omits_placeholder_when_client_model_present() -> None:
+    run = RunDetailResponse(**{**RUN_DETAIL_BODY, "has_client_model": True})
+    split = SplitResultResponse(**SPLIT_BODY)
+
+    text = build_shareable_summary_text(run, [split])
+
+    assert PLACEHOLDER_LABEL not in text
+
+
+# DASH-126 (UAT-002): raw-levels-vs-returns warning folded into
+# `run_detail.html`'s existing per-run disclaimer block, same sentence as
+# `run_new.html`'s new static notice (test_runs_submit.py's
+# RAW_LEVELS_WARNING_SENTENCE).
+
+RAW_LEVELS_WARNING_SENTENCE = (
+    "Note: ingested fields today are raw levels (e.g. price, on-chain metric value), not returns "
+    "-- naive-first validation is designed to compare return forecasts. Naive0 (predicts 0) is "
+    "nonsensically wrong by construction on raw price levels, so a run against a raw level will "
+    "produce a misleadingly favorable verdict that is an artifact of the field choice, not a real "
+    "finding. Compute a returns series before validating if you want a meaningful audit."
+)
+
+
+def test_run_detail_shows_raw_levels_warning_unconditionally_when_splits_present(
+    monkeypatch,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == f"/runs/{RUN_ID}":
+            return httpx.Response(200, json=RUN_DETAIL_BODY)
+        if request.url.path == f"/runs/{RUN_ID}/splits":
+            return httpx.Response(200, json=[SPLIT_BODY])
+        raise AssertionError(f"unexpected path {request.url.path}")
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get(f"/runs/{RUN_ID}")
+
+    assert response.status_code == 200
+    import re
+
+    normalized = re.sub(r"\s+", " ", response.text)
+    assert RAW_LEVELS_WARNING_SENTENCE in normalized

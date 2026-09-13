@@ -96,6 +96,7 @@ _SPLIT_RECORD = {
     "dm_pvalue": 0.02,
     "dm_verdict": "model_better",
     "client_baseline": None,
+    "has_client_model": False,
 }
 
 _SEED_SPLITS: dict[str, list[dict]] = {RUN_OWNED_BY_A: [_SPLIT_RECORD]}
@@ -299,6 +300,7 @@ def test_get_run_forwards_and_returns_full_detail_shape(client: TestClient) -> N
         "completed_at",
         "failure_reason",
         "warnings",
+        "has_client_model",
     }
     assert body["id"] == RUN_OWNED_BY_A
     assert body["tenant_id"] == TENANT_A

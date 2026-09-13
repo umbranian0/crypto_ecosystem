@@ -64,8 +64,10 @@ logger = logging.getLogger(__name__)
 
 _UNAUTHORIZED = HTTPException(status_code=401, detail="missing or invalid API key")
 
-_authorization_scheme = APIKeyHeader(name="Authorization", auto_error=False)
-_x_api_key_scheme = APIKeyHeader(name="X-Api-Key", auto_error=False)
+_authorization_scheme = APIKeyHeader(
+    name="Authorization", scheme_name="AuthorizationBearer", auto_error=False
+)
+_x_api_key_scheme = APIKeyHeader(name="X-Api-Key", scheme_name="XApiKey", auto_error=False)
 
 
 def _log_auth_failed(tenant_id: str | None) -> None:
