@@ -82,6 +82,9 @@ class RunRecord:
     # single-series run, mirroring `warnings`'s own default-empty-list
     # precedent exactly.
     feature_lineage: list[dict] = field(default_factory=list)
+    # UAT-008: optional, freeform label a tenant attached at submission time.
+    # None (default) whenever no label was supplied.
+    label: str | None = None
 
 
 @dataclass(frozen=True)
@@ -142,6 +145,7 @@ class ValidationRunRepository(typing.Protocol):
         *,
         warnings: list[str] | None = None,
         feature_lineage: list[dict] | None = None,
+        label: str | None = None,
     ) -> RunRecord: ...
 
     def get_run(self, tenant_id: str, run_id: str) -> RunRecord | None: ...

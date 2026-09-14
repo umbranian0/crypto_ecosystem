@@ -119,6 +119,52 @@ def test_run_new_submit_success_redirects_to_run_detail(monkeypatch) -> None:
     assert response.headers["location"] == f"/runs/{RUN_ID}"
 
 
+def test_run_new_submit_with_label_forwards_it(monkeypatch) -> None:
+    """UAT-008: a non-blank `label` form field is included in the
+    `RunRequest` sent to gateway-api."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/runs"
+        import json
+
+        payload = json.loads(request.read())
+        assert payload["label"] == "weekly audit"
+        return httpx.Response(201, json={"id": RUN_ID, "status": "running"})
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.post(
+        "/runs/new", data={**VALID_FORM, "label": "weekly audit"}, follow_redirects=False
+    )
+
+    assert response.status_code == 303
+
+
+def test_run_new_submit_without_label_sends_none(monkeypatch) -> None:
+    """UAT-008: a blank `label` form field results in `RunRequest.label`
+    being `None`, not an empty string -- no fabricated default."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/runs"
+        import json
+
+        payload = json.loads(request.read())
+        assert payload["label"] is None
+        return httpx.Response(201, json={"id": RUN_ID, "status": "running"})
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.post("/runs/new", data=VALID_FORM, follow_redirects=False)
+
+    assert response.status_code == 303
+
+
 def test_run_new_submit_inline_reference(monkeypatch) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         import json

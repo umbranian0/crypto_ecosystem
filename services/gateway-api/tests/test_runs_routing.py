@@ -137,6 +137,7 @@ class FakeValidationService:
                 "created_at": "2026-01-03T00:00:00",
                 "completed_at": "2026-01-03T00:05:00",
                 "failure_reason": None,
+                "label": body.get("label"),
             }
             self.created_runs[new_id] = record
             return httpx.Response(201, json={"id": new_id, "status": "completed"})
@@ -181,6 +182,7 @@ class FakeValidationService:
                             "status": run["status"],
                             "created_at": run["created_at"],
                             "completed_at": run["completed_at"],
+                            "label": run.get("label"),
                         }
                         for run in page
                     ],
@@ -281,6 +283,41 @@ def test_post_runs_forwards_and_returns_response_shape(client: TestClient) -> No
     assert body["status"] == "completed"
 
 
+def test_post_runs_with_label_forwards_it_unmodified(
+    client: TestClient, fake_validation_service: FakeValidationService
+) -> None:
+    request_with_label = {**_VALID_RUN_REQUEST, "label": "weekly audit"}
+    response = client.post(
+        "/runs", json=request_with_label, headers={"Authorization": f"Bearer {RAW_KEY_A}"}
+    )
+
+    assert response.status_code == 201
+    outbound_body = json.loads(fake_validation_service.seen_requests[-1].content)
+    assert outbound_body["label"] == "weekly audit"
+
+    run_id = response.json()["id"]
+    detail = client.get(f"/runs/{run_id}", headers={"Authorization": f"Bearer {RAW_KEY_A}"})
+    assert detail.status_code == 200
+    assert detail.json()["label"] == "weekly audit"
+
+
+def test_post_runs_without_label_forwards_none(
+    client: TestClient, fake_validation_service: FakeValidationService
+) -> None:
+    response = client.post(
+        "/runs", json=_VALID_RUN_REQUEST, headers={"Authorization": f"Bearer {RAW_KEY_A}"}
+    )
+
+    assert response.status_code == 201
+    outbound_body = json.loads(fake_validation_service.seen_requests[-1].content)
+    assert outbound_body["label"] is None
+
+    run_id = response.json()["id"]
+    detail = client.get(f"/runs/{run_id}", headers={"Authorization": f"Bearer {RAW_KEY_A}"})
+    assert detail.status_code == 200
+    assert detail.json()["label"] is None
+
+
 def test_get_run_forwards_and_returns_full_detail_shape(client: TestClient) -> None:
     response = client.get(
         f"/runs/{RUN_OWNED_BY_A}", headers={"Authorization": f"Bearer {RAW_KEY_A}"}
@@ -303,6 +340,7 @@ def test_get_run_forwards_and_returns_full_detail_shape(client: TestClient) -> N
         "has_client_model",
         "feature_lineage",
         "has_multimodal_features",
+        "label",
     }
     assert body["id"] == RUN_OWNED_BY_A
     assert body["tenant_id"] == TENANT_A
@@ -393,6 +431,7 @@ def test_get_runs_forwards_and_returns_response_shape(client: TestClient) -> Non
         "status",
         "created_at",
         "completed_at",
+        "label",
     }
     assert body["items"][0]["id"] == RUN_OWNED_BY_A
 

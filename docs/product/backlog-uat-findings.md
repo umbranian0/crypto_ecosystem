@@ -103,25 +103,26 @@ want** a one-line, above-the-fold summary of the run's outcome, **so that** I do
 17-column table and manually count per-split verdicts to understand whether the model beat Naive0.
 
 Acceptance criteria:
-- [ ] `run_detail.html` renders a new, single-line summary (e.g. "Beat Naive0 on 4/7 splits, not
+- [x] `run_detail.html` renders a new, single-line summary (e.g. "Beat Naive0 on 4/7 splits, not
       statistically significant" or "Did not beat naive on any split — treat with caution") directly
       below the existing status table, above the existing per-split table/charts.
-- [ ] The summary is computed from the same already-fetched `GET /runs/{id}/splits` `dm_verdict`
+- [x] The summary is computed from the same already-fetched `GET /runs/{id}/splits` `dm_verdict`
       field per split (no recomputation of DM statistics) — a small, pure function in `app/charting.py`
       (reusing RAV-003's existing `build_dm_verdict_chart` categorization logic, not a second
       "how many splits are better/worse" tally) so the headline number and the existing DM-verdict
       chart can never disagree.
-- [ ] If `has_client_model` (UAT-001) is `false`, the headline text itself states the placeholder
+- [x] If `has_client_model` (UAT-001) is `false`, the headline text itself states the placeholder
       caveat inline (e.g. "Beat NaiveLast placeholder on 4/7 splits — no client model submitted") —
       this story must not create a second surface that repeats UAT-001's misleading-result problem.
-- [ ] The existing detailed tables, charts, and disclaimer paragraph are unchanged — this is additive
+- [x] The existing detailed tables, charts, and disclaimer paragraph are unchanged — this is additive
       only, proven by a test asserting all pre-existing elements still render byte-identical to before.
-- [ ] Zero-split runs show no headline (same "no per-split results yet" branch already in place).
+- [x] Zero-split runs show no headline (same "no per-split results yet" branch already in place).
 
 Rationale for priority: corroborated by the busy-executive persona and named as a real usability gap
 by others; Should not Must because the underlying data is already fully visible (just harder to read),
 so no reader is misled, only inconvenienced — unlike Epic 1's Must items.
 Depends on: UAT-001 (for the placeholder-caveat wording inside the headline)
+**Status: done — `docs/tickets/UAT-003.md`, Sprint 39.**
 
 ### UAT-004 — Round displayed metric values to a fixed precision [Should]
 
@@ -130,20 +131,21 @@ displayed with a fixed, sane number of decimal places (e.g. 4), **so that** the 
 show noise like "0.6460000000000008".
 
 Acceptance criteria:
-- [ ] `run_detail.html`'s per-split table, RAV-002/003's chart tooltips/labels (if they render raw
+- [x] `run_detail.html`'s per-split table, RAV-002/003's chart tooltips/labels (if they render raw
       numbers), and FHS-003's summary panel all render metric values through one shared Jinja2
       filter/macro (e.g. `{{ value | round(4) }}` or a small named filter), not per-template ad hoc
       formatting — extract-on-second-duplication per implementation-plan.md section 9.
-- [ ] FHS-004's "copy summary" plain-text export uses the same rounding, not the raw float.
-- [ ] The underlying `SplitResultResponse`/`RunDetailResponse` values themselves are unchanged (full
+- [x] FHS-004's "copy summary" plain-text export uses the same rounding, not the raw float.
+- [x] The underlying `SplitResultResponse`/`RunDetailResponse` values themselves are unchanged (full
       precision preserved in the API response) — this is a display-only rounding, not a data-truncation
       change to the contract.
-- [ ] A unit test renders a fixture with a value like `0.6460000000000008` and asserts the rendered
+- [x] A unit test renders a fixture with a value like `0.6460000000000008` and asserts the rendered
       HTML contains `0.6460`, not the raw float string.
 
 Rationale for priority: corroborated by 3 personas (compliance auditor, academic reviewer, busy
 executive) as unpolished for a "shareable" artifact — real but cosmetic, so Should not Must.
 Depends on: none
+**Status: done — `docs/tickets/UAT-004.md`, Sprint 39.**
 
 ## Epic 3 — API/backend correctness (gateway-api)
 
@@ -183,14 +185,14 @@ Depends on: none
 that** I can act on it instead of seeing an unhelpful `"0"`.
 
 Acceptance criteria:
-- [ ] Trace where `"0"` is being written (likely a stringified exit code or falsy-default bug in
+- [x] Trace where `"0"` is being written (likely a stringified exit code or falsy-default bug in
       `validation-service`'s failure-handling path, not `gateway-api`, which only forwards this field
       unmodified per its own README) and fix the actual source to write a real message (e.g. the
       caught exception's string, or a fixed category label like "validation protocol raised an
       unhandled exception" if the raw exception text is judged unsafe to expose).
-- [ ] A test creates a run that deterministically fails (e.g. RSS-004's zero-split guardrail, or an
+- [x] A test creates a run that deterministically fails (e.g. RSS-004's zero-split guardrail, or an
       unparseable dataset) and asserts `failure_reason` is a non-numeric, human-readable string.
-- [ ] No change to `gateway-api`'s own forwarding behavior — this is `validation-service`'s field to
+- [x] No change to `gateway-api`'s own forwarding behavior — this is `validation-service`'s field to
       fix, forwarded as-is per the existing architecture.
 
 Rationale for priority: real bug, but scoped to error-path UX rather than blocking correct-path usage
@@ -198,6 +200,7 @@ Rationale for priority: real bug, but scoped to error-path UX rather than blocki
 Depends on: none (routes to `validation-service`, not `gateway-api`'s own code, once traced — flag this
 during grooming if the Tech Lead confirms the actual source module differs from this story's
 assumption)
+**Status: done — `docs/tickets/UAT-006.md`, Sprint 39.**
 
 ### UAT-007 — Type and document `RunRequest.dataset_reference`'s shape in the OpenAPI schema [Should]
 
@@ -206,13 +209,13 @@ assumption)
 true`, **so that** I don't have to guess its shape from source code.
 
 Acceptance criteria:
-- [ ] `RunRequest.dataset_reference` gains a typed Pydantic model or `Union` (matching
+- [x] `RunRequest.dataset_reference` gains a typed Pydantic model or `Union` (matching
       `InlineOrLocalFileDatasetSource.load`'s two accepted shapes, the same source `dashboard-web`'s
       `run_new.html` already copies verbatim per its own README) with at least one `example` in the
       OpenAPI schema for each shape.
-- [ ] `GET /openapi.json`'s `RunRequest` schema no longer shows bare `additionalProperties: true` for
+- [x] `GET /openapi.json`'s `RunRequest` schema no longer shows bare `additionalProperties: true` for
       this field.
-- [ ] Existing `dashboard-web`/`validation-service` callers are unaffected — this is a schema-typing
+- [x] Existing `dashboard-web`/`validation-service` callers are unaffected — this is a schema-typing
       change only, not a runtime validation behavior change (unless the Tech Lead judges adding real
       validation here is in scope too, in which case note it as a separate, explicitly-scoped addition,
       not silently bundled).
@@ -221,6 +224,7 @@ Rationale for priority: real integration friction for a future SDK/pilot client,
 is blocked (dashboard-web already knows the shape from source) — Should, not Must, given no real pilot
 client exists yet (gateway-api's own README: "Do not read anything ... as 'a pilot client exists'").
 Depends on: none
+**Status: done — `docs/tickets/UAT-007.md`, Sprint 39.**
 
 ## Epic 4 — Power-user run management
 
@@ -231,26 +235,27 @@ a run when I submit it, **so that** I can identify it later by something more us
 32-char hex id.
 
 Acceptance criteria:
-- [ ] `RunRequest` (shared `naive_first_common.contracts`) gains an optional `label: str | None` field
+- [x] `RunRequest` (shared `naive_first_common.contracts`) gains an optional `label: str | None` field
       (reasonable max length, e.g. 200 chars, enforced by the Pydantic model) — version-sync note per
       `gateway-api`'s own README: `gateway-api`'s local copy of `RunRequest` and `validation-service`'s
       real model must be updated together, not independently.
   - Note: it is the Tech Lead's call whether `RunRequest` truly needs a new field here vs. this
     landing as a `PATCH`-style rename-after-creation endpoint instead — flag this design choice for
     Tech Lead review rather than presupposing it in this story.
-- [ ] `run_new.html` gains an optional "Label (optional)" text input, submitted as `label`.
-- [ ] `runs_list.html` and `run_detail.html` render the label (when present) alongside/instead of the
+- [x] `run_new.html` gains an optional "Label (optional)" text input, submitted as `label`.
+- [x] `runs_list.html` and `run_detail.html` render the label (when present) alongside/instead of the
       bare id — the raw id remains visible too (e.g. as a subtitle), never fully hidden, since it's
       still the canonical identifier for API calls.
-- [ ] A run with no label continues to render exactly as today (bare id) — no forced-default label is
+- [x] A run with no label continues to render exactly as today (bare id) — no forced-default label is
       fabricated.
-- [ ] This does not gate or alter `POST /runs`'s existing leakage-aware validation/split logic in any
+- [x] This does not gate or alter `POST /runs`'s existing leakage-aware validation/split logic in any
       way — purely a display/identification field.
 
 Rationale for priority: named as the single biggest gap by the power-user persona, real usability
 value for any tenant with more than a few runs — Should, since no one is currently blocked, only
 inconvenienced, and it's additive schema work across two services (proportionate scope, not urgent).
 Depends on: none
+**Status: done — `docs/tickets/UAT-008.md`, Sprint 39.**
 
 ### UAT-009 — Add pagination controls to the runs list page [Should]
 
@@ -258,21 +263,22 @@ Depends on: none
 that** I can browse beyond the first page without hand-editing the URL's `limit`/`offset`.
 
 Acceptance criteria:
-- [ ] `runs_list.html` renders "Previous"/"Next" links (or page-number links) computed from the
+- [x] `runs_list.html` renders "Previous"/"Next" links (or page-number links) computed from the
       already-returned `RunListResponse` envelope's `limit`/`offset`/`total` fields (already available
       per `gateway-api`'s `GW-016` README section — this story adds UI only, no backend change).
   - Note: confirm at implementation time whether DASH-122 (referenced in the finding as already
     shipped server-side pagination support) is the correct ticket id/state before starting — this
     story assumes that groundwork is done and adds only the missing UI controls.
-- [ ] "Previous" is absent/disabled on the first page; "Next" is absent/disabled when
+- [x] "Previous" is absent/disabled on the first page; "Next" is absent/disabled when
       `offset + limit >= total`.
-- [ ] No client-side re-sort or re-filter is introduced — this story is pagination controls only,
+- [x] No client-side re-sort or re-filter is introduced — this story is pagination controls only,
       matching `runs_list.html`'s existing README-documented "no client-side pagination/sorting"
       constraint being narrowly lifted for pagination only, not filtering/sorting (out of scope here).
 
 Rationale for priority: real gap, but a tenant can currently still reach any run via a direct URL or
 the run-detail page's own links — inconvenient, not blocking. Should, not Must.
 Depends on: none (verify DASH-122's actual shipped state before starting, per the finding's own note)
+**Status: done — `docs/tickets/UAT-009.md`, Sprint 39.**
 
 ### UAT-010 — Add hour-based buckets to `/runs/horizon-summary` alongside the existing day-based ones [Should]
 
@@ -282,17 +288,17 @@ that** I don't see "No completed runs matched" for runs that genuinely exist and
 horizon.
 
 Acceptance criteria:
-- [ ] `/runs/horizon-summary`'s selector adds three additional bucket options matching the real
+- [x] `/runs/horizon-summary`'s selector adds three additional bucket options matching the real
       hour-based horizons the finding names (1h/6h/24h), alongside the existing 7/15/30-day options —
       additive, not a replacement (the day-based buckets stay, since `ADR-0007` is still the platform's
       recorded decision for that unit).
-- [ ] Selecting an hour-based bucket filters the tenant's completed runs by that literal `horizon`
+- [x] Selecting an hour-based bucket filters the tenant's completed runs by that literal `horizon`
       value (no day-to-hour conversion needed for these three, since they're already the dataset's
       native unit per `ADR-0007` finding (a)) — reuses the existing filtering code path, just with a
       different bucket-to-value mapping table, not a second filtering implementation.
-- [ ] A test submits a fixture run with `horizon=1` and asserts it's returned when the 1h bucket is
+- [x] A test submits a fixture run with `horizon=1` and asserts it's returned when the 1h bucket is
       selected, matching the existing day-bucket tests' pattern.
-- [ ] This does not reopen or contradict `ADR-0007`'s finding — it's recorded there as an accepted,
+- [x] This does not reopen or contradict `ADR-0007`'s finding — it's recorded there as an accepted,
       known follow-up gap, not superseded.
 
 Rationale for priority: three independent personas (power user, academic reviewer, positioning
@@ -300,6 +306,7 @@ stress-test) independently hit real confusion from a real data-model mismatch �
 but the page still functions and a workaround exists (view via the runs list instead) — Should, not
 Must, given the scope is genuinely additive/small per this session's "don't over-engineer" instruction.
 Depends on: none
+**Status: done — `docs/tickets/UAT-010.md`, Sprint 39.**
 
 ## Epic 5 — Accessibility
 
@@ -333,13 +340,14 @@ screen readers even where hover-only is otherwise acceptable)
 that** I don't have to tab through the full navigation on every page load.
 
 Acceptance criteria:
-- [ ] `base.html` gains a visually-hidden-until-focused "Skip to main content" link as the first
+- [x] `base.html` gains a visually-hidden-until-focused "Skip to main content" link as the first
       focusable element, targeting the page's main content landmark.
-- [ ] A test asserts the link is present in rendered HTML for at least one representative page.
+- [x] A test asserts the link is present in rendered HTML for at least one representative page.
 
 Rationale for priority: standard accessibility hygiene, real but lower severity than UAT-011 (no
 disclosed information is lost without it, only navigation efficiency) — Could.
 Depends on: none
+**Status: done — `docs/tickets/UAT-012.md`, Sprint 39.**
 
 ### UAT-013 — Use real heading elements for chart section titles [Could]
 
@@ -348,16 +356,17 @@ class="chart-title">`) to be real `<h2>`/`<h3>` elements, **so that** heading-ba
 finds them.
 
 Acceptance criteria:
-- [ ] `_error_chart.html`/`_dm_verdict_chart.html`/`_forecast_horizon_summary_panel.html`'s title
+- [x] `_error_chart.html`/`_dm_verdict_chart.html`/`_forecast_horizon_summary_panel.html`'s title
       elements become real heading tags at a level consistent with the surrounding page structure
       (`run_detail.html`'s existing heading hierarchy) — styled via the existing `chart-title` CSS
       class unchanged, so no visual regression.
-- [ ] A test asserts these titles render as `<h2>`/`<h3>` (matching whichever level the Tech Lead
+- [x] A test asserts these titles render as `<h2>`/`<h3>` (matching whichever level the Tech Lead
       judges correct for the existing hierarchy), not `<p>`.
 
 Rationale for priority: real but narrow fix, three named templates, no functional/disclosure impact —
 Could.
 Depends on: none
+**Status: done — `docs/tickets/UAT-013.md`, Sprint 39.**
 
 ## Epic 6 — First-time operator onboarding
 
@@ -368,12 +377,12 @@ of core concepts (purge gap, walk-forward windows) reachable from inside the app
 have to read the 600+-line `infra/README.md` or rely on hover tooltips that assume prior knowledge.
 
 Acceptance criteria:
-- [ ] A new, short static page (e.g. `/help/concepts` or similar) explains purge gap and walk-forward
+- [x] A new, short static page (e.g. `/help/concepts` or similar) explains purge gap and walk-forward
       windows in plain language, linked from `run_new.html`'s form (near the relevant fields) and from
       `base.html`'s nav — a single new template, not a rewrite of existing tooltips.
-- [ ] Content is reviewed against CLAUDE.md's positioning constraint (no "prediction"/"signal"
+- [x] Content is reviewed against CLAUDE.md's positioning constraint (no "prediction"/"signal"
       language) the same way every other template in this service already is.
-- [ ] This does not replace or duplicate the existing inline `data-tooltip` hints (RSS-001/002,
+- [x] This does not replace or duplicate the existing inline `data-tooltip` hints (RSS-001/002,
       DH-008) — those stay as the in-context quick reference; this is the deeper, standalone
       explanation for someone starting from zero.
 
@@ -382,6 +391,7 @@ work with no functional blocker behind it (the tooltips already exist as a parti
 Could, consistent with "don't over-engineer" for a persona representing a not-yet-existing pilot
 client.
 Depends on: none
+**Status: done — `docs/tickets/UAT-014.md`, Sprint 39.**
 
 ## Confirmed small bug (recommend as an immediate Tech Lead fix, not a backlog item)
 

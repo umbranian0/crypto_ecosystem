@@ -13,8 +13,9 @@ not a standing description of where the field lists live now.)
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Annotated
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, WithJsonSchema, model_validator
 
 # VS-030/ADR-0009: the three literal missing_timestamp_policy values -- a
 # single shared constant so RunRequest's validator and
@@ -26,6 +27,84 @@ MISSING_TIMESTAMP_POLICIES = frozenset(
 )
 
 
+# UAT-007: schema-only typing for RunRequest.dataset_reference. Each class
+# below mirrors one of the reference shapes
+# services/validation-service/src/app/dataset_source.py's
+# CompositeDatasetSource already dispatches on at `load()` time (grepped and
+# cross-checked against dataset_source.py/dashboard-web's run_new_submit
+# before writing this -- these are not invented shapes).
+class PathDatasetReference(BaseModel):
+    """`InlineOrLocalFileDatasetSource`'s "path" mode -- a local filesystem
+    path to a two-column CSV (timestamp, value)."""
+
+    path: str = Field(examples=["/data/btc_1h.csv"])
+
+
+class InlineDatasetReference(BaseModel):
+    """`InlineOrLocalFileDatasetSource`'s "inline" mode. The inline payload's
+    own internal shape (a list of [timestamp, value] pairs, or a
+    {"timestamps": [...], "values": [...]} dict, optionally with a third
+    "fetched_at" element/key) is validated by dataset_source.py at load time,
+    not re-modeled here."""
+
+    inline: dict = Field(
+        examples=[{"timestamps": ["2026-01-01T00:00:00"], "values": [42000.0]}]
+    )
+
+
+class StoredDatasetReference(BaseModel):
+    """`IngestionServiceDatasetSource`'s "source" mode (ADR-0005, DASH-108) --
+    a tenant's continuously-growing per-source table exposed by
+    ingestion-service's `GET /datasets/{source}/series`."""
+
+    source: str = Field(examples=["binance_btcusdt_1h"])
+    start: str | None = Field(default=None, examples=["2026-01-01T00:00:00"])
+    end: str | None = Field(default=None, examples=["2026-02-01T00:00:00"])
+    field: str | None = Field(default=None, examples=["close"])
+
+
+class ObjectKeyDatasetReference(BaseModel):
+    """`ObjectStorageDatasetSource`'s "object_key" mode (VS-015). A fourth
+    shape not named in UAT-007's own Analysis/Design (which enumerated only
+    the three classes above) -- included anyway because `dataset_reference`
+    is validated against this exact field in both `gateway-api` and
+    `validation-service` (this is the single shared `RunRequest`, ARCH-003);
+    omitting it would misrepresent a shape `dataset_source.py` already
+    accepts today as unsupported in the published schema. Disclosed here as
+    a deliberate documentation-completeness addition -- see
+    `services/validation-service/README.md`'s VS-015 section for this mode's
+    own scope caveats."""
+
+    object_key: str = Field(examples=["processed/tenant-1/dataset-1.csv"])
+
+
+_DATASET_REFERENCE_SHAPES = (
+    PathDatasetReference,
+    InlineDatasetReference,
+    StoredDatasetReference,
+    ObjectKeyDatasetReference,
+)
+
+# The field's actual runtime/validation type stays `dict` -- unchanged from
+# before this ticket, so every existing call site (dataset_source.py's own
+# `isinstance(reference, dict)` checks, validation-service's runs.py,
+# dashboard-web's run_new_submit) keeps working with zero code change and
+# zero behavior change. `WithJsonSchema` only replaces the *published*
+# OpenAPI schema for this field with a real `anyOf` over the four named
+# shapes above (each self-contained, no `$ref`/`$defs` needed since none of
+# them nests another model), instead of pydantic's default bare
+# `additionalProperties: true` for a plain `dict` field.
+DatasetReferenceType = Annotated[
+    dict,
+    WithJsonSchema(
+        {
+            "title": "DatasetReference",
+            "anyOf": [shape.model_json_schema() for shape in _DATASET_REFERENCE_SHAPES],
+        }
+    ),
+]
+
+
 class RunRequest(BaseModel):
     """Request shape for `POST /runs`. Field constraints mirror the config
     `naive_first_engine.splitting.generate_splits` implicitly relies on (it
@@ -34,7 +113,7 @@ class RunRequest(BaseModel):
     """
 
     dataset_id: str
-    dataset_reference: dict
+    dataset_reference: DatasetReferenceType
     horizon: int = Field(ge=1)
     purge_gap_hours: int = Field(ge=0)
     train_window: int = Field(gt=0)
@@ -56,6 +135,11 @@ class RunRequest(BaseModel):
     # point for the "no silent default" hard AC (runs.py's own check is
     # defense in depth, not the primary gate).
     missing_timestamp_policy: str | None = None
+    # UAT-008: optional, freeform label a tenant may attach at submission
+    # time. Pass-through only -- never consulted by the leakage-aware
+    # validation/split logic above. None (the default) renders byte-identical
+    # to pre-UAT-008 behavior.
+    label: str | None = Field(default=None, max_length=200)
 
     @model_validator(mode="after")
     def _require_missing_timestamp_policy_when_features_requested(self) -> "RunRequest":
@@ -115,6 +199,9 @@ class RunDetailResponse(BaseModel):
     # same one-source-of-truth precedent VS-029 established for
     # has_client_model (runs.py::get_run computes this, not a stored column).
     has_multimodal_features: bool = False
+    # UAT-008: optional, freeform label a tenant attached at submission time.
+    # None whenever no label was supplied -- never a fabricated default.
+    label: str | None = None
 
 
 class RunSummaryResponse(BaseModel):
@@ -136,6 +223,8 @@ class RunSummaryResponse(BaseModel):
     status: str
     created_at: datetime
     completed_at: datetime | None
+    # UAT-008: optional, freeform label a tenant attached at submission time.
+    label: str | None = None
 
 
 class DatasetSummaryResponse(BaseModel):

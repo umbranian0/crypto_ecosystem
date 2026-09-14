@@ -22,6 +22,7 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from app.charting import round_display_value
 from app.dependencies.diagnostics import recent_errors_handler
 from app.dependencies.downstream import get_gateway_api_url
 from app.dependencies.http_client import GatewayApiClientDep
@@ -48,6 +49,13 @@ app = FastAPI(
 
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
+# UAT-004: one shared display-only rounding filter, wrapping
+# `app.charting.round_display_value` -- every template touched by this ticket
+# routes numeric values through this filter rather than an ad hoc per-template
+# format string. API response values stay full precision; this is
+# template-layer only.
+templates.env.filters["round4"] = round_display_value
+
 # Presentation-layer-only static assets (CSS); no route logic here, so this is
 # mounted directly rather than via a router module.
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
@@ -68,6 +76,7 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 # from `runs`, so it is imported alongside `settings`/`setup`.
 from app.routers import (  # noqa: E402
     auth,
+    help,
     operator,
     runs,
     settings,
@@ -83,6 +92,7 @@ app.include_router(settings.router)
 app.include_router(settings_environment.router)
 app.include_router(settings_tenants.router)
 app.include_router(setup.router)
+app.include_router(help.router)
 
 
 @app.get("/")

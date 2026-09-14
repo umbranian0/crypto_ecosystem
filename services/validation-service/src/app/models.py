@@ -88,6 +88,11 @@ class Run(Base):
     # nullable=False/server_default='[]' precedent as `warnings` above
     # (migrations/versions/0009_add_runs_feature_lineage_column.py).
     feature_lineage: Mapped[list[dict]] = mapped_column(JSON, nullable=False, default=list)
+    # UAT-008: optional, freeform label a tenant attached at submission time
+    # (RunRequest.label, libs/common's contracts.py, max 200 chars). Nullable
+    # -- None whenever no label was supplied, no fabricated default
+    # (migrations/versions/0010_add_runs_label_column.py).
+    label: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 class SplitResult(Base):

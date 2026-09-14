@@ -2,10 +2,16 @@
 {% block title %}Run {{ run.id }} -- dashboard-web{% endblock %}
 {% block content %}
 <h2>Validation run {{ run.id }}</h2>
+{% if run.label %}
+<p class="run-label">{{ run.label }}</p>
+{% endif %}
 
 <table>
     <tbody>
         <tr><th>Status</th><td><span class="status status-{{ run.status }}">{{ run.status }}</span></td></tr>
+        {% if run.label %}
+        <tr><th>Label</th><td>{{ run.label }}</td></tr>
+        {% endif %}
         <tr><th>Dataset</th><td>{{ run.dataset_id }}</td></tr>
         <tr><th>Horizon</th><td>{{ run.horizon }}</td></tr>
         <tr><th>Purge gap (hours)</th><td>{{ run.purge_gap_hours }}</td></tr>
@@ -21,6 +27,10 @@
     <li>{{ warning }}</li>
     {% endfor %}
 </ul>
+{% endif %}
+
+{% if headline_verdict_summary %}
+<p class="headline-verdict-summary">{{ headline_verdict_summary }}</p>
 {% endif %}
 
 <h3>Per-split validation results</h3>
@@ -82,22 +92,22 @@ splits below -- full per-split detail for this run remains available via the API
             <td>{{ split.train_start }} -- {{ split.train_end }}</td>
             <td>{{ split.purge_start }} -- {{ split.purge_end }}</td>
             <td>{{ split.test_start }} -- {{ split.test_end }}</td>
-            <td>{{ split.model_mae }}</td>
-            <td>{{ split.model_rmse }}</td>
-            <td>{{ split.model_smape }}</td>
-            <td>{{ split.model_mase }}</td>
-            <td>{{ split.model_da }}</td>
-            <td>{{ split.model_f1 }}</td>
-            <td>{{ split.model_oos_r2 }}</td>
-            <td>{{ split.naive0_mae }}</td>
-            <td>{{ split.naive0_rmse }}</td>
-            <td>{{ split.naive0_smape }}</td>
-            <td>{{ split.naive0_mase }}</td>
-            <td>{{ split.naive0_da }}</td>
-            <td>{{ split.naive0_f1 }}</td>
-            <td>{{ split.naive0_oos_r2 }}</td>
-            <td>{{ split.dm_statistic }}</td>
-            <td>{{ split.dm_pvalue }}</td>
+            <td>{{ split.model_mae|round4 }}</td>
+            <td>{{ split.model_rmse|round4 }}</td>
+            <td>{{ split.model_smape|round4 }}</td>
+            <td>{{ split.model_mase|round4 }}</td>
+            <td>{{ split.model_da|round4 }}</td>
+            <td>{{ split.model_f1|round4 }}</td>
+            <td>{{ split.model_oos_r2|round4 }}</td>
+            <td>{{ split.naive0_mae|round4 }}</td>
+            <td>{{ split.naive0_rmse|round4 }}</td>
+            <td>{{ split.naive0_smape|round4 }}</td>
+            <td>{{ split.naive0_mase|round4 }}</td>
+            <td>{{ split.naive0_da|round4 }}</td>
+            <td>{{ split.naive0_f1|round4 }}</td>
+            <td>{{ split.naive0_oos_r2|round4 }}</td>
+            <td>{{ split.dm_statistic|round4 }}</td>
+            <td>{{ split.dm_pvalue|round4 }}</td>
             <td>{{ split.dm_verdict }}</td>
         </tr>
         {% endfor %}

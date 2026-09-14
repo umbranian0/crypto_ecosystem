@@ -25,6 +25,10 @@ Implementation-plan.md section 8: "for libs, the public function signatures in t
 - `tenant_scope(session, tenant_id)`
 
 ### `contracts.py`
+- `PathDatasetReference` (class)
+- `InlineDatasetReference` (class)
+- `StoredDatasetReference` (class)
+- `ObjectKeyDatasetReference` (class)
 - `RunRequest` (class)
 - `RunResponse` (class)
 - `RunDetailResponse` (class)
@@ -92,6 +96,35 @@ exposes its own buffer via its own operator-authenticated
 `/diagnostics/recent-errors` endpoint -- see each service's own README for
 that wiring. This is not a log-aggregation backend: no cross-restart
 persistence, no cross-service search (still `OPS-007`'s declined scope).
+
+## Typed `dataset_reference` schema (UAT-007)
+
+`contracts.py`'s `RunRequest.dataset_reference` field was `dict` (published in `GET /openapi.json` as
+bare `additionalProperties: true`). It is now `DatasetReferenceType` (`Annotated[dict, WithJsonSchema(...)]`)
+-- the field's actual runtime/validation type is still plain `dict`, so no call site anywhere (`dataset_source.py`'s
+`isinstance(reference, dict)` checks, `validation-service`'s `runs.py`, `dashboard-web`'s `run_new_submit`)
+needed to change and no request previously accepted is now rejected. Only the *published* OpenAPI schema
+changed: `WithJsonSchema` replaces it with a real `anyOf` over four named, self-contained shapes, each with
+at least one example --`PathDatasetReference` (`{"path": str}`), `InlineDatasetReference` (`{"inline": dict}`),
+`StoredDatasetReference` (`{"source": str, start?, end?, field?}`, ADR-0005/DASH-108), and
+`ObjectKeyDatasetReference` (`{"object_key": str}`, VS-015) -- the fourth shape not named in UAT-007's own
+Analysis/Design but included because `dataset_source.py`'s `CompositeDatasetSource` already dispatches on it
+today; omitting it from the published schema would have misrepresented a currently-accepted request shape as
+unsupported. **Version-sync convention followed**: `RunRequest` has had exactly one canonical definition
+since ARCH-003 (this module) -- `gateway-api` imports it directly from `naive_first_common.contracts` rather
+than keeping a separate local copy, so this ticket required no second, hand-mirrored edit in `gateway-api`
+(the ticket's own Analysis section predates that unification and describes a mirror that no longer exists).
+
+## Optional run label (UAT-008)
+
+`RunRequest` gained an optional `label: str | None = Field(default=None, max_length=200)` field --
+a freeform, tenant-supplied name a run can be submitted with (e.g. "weekly audit"), never consulted
+by the leakage-aware validation/split logic (pass-through only). `RunDetailResponse`/
+`RunSummaryResponse` both gain a matching `label: str | None = None` so it round-trips back on
+`GET /runs`/`GET /runs/{id}` once `validation-service` persists it. **Version-sync convention**:
+same "one canonical definition" convention UAT-007 already established for `RunRequest` -- `gateway-api`
+imports these classes directly from `naive_first_common.contracts` (no local mirror to update in sync),
+so this field required no second, hand-mirrored edit in `gateway-api`.
 
 ## CI
 

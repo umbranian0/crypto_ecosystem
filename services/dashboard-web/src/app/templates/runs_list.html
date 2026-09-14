@@ -21,7 +21,7 @@ naive baselines. These are validation/audit records only.</p>
     <tbody>
         {% for run in runs %}
         <tr>
-            <td><a href="/runs/{{ run.id }}">{{ run.id }}</a></td>
+            <td><a href="/runs/{{ run.id }}">{{ run.id }}</a>{% if run.label %} -- {{ run.label }}{% endif %}</td>
             <td><span class="status status-{{ run.status }}">{{ run.status }}</span></td>
             <td>{{ run.dataset_id }}</td>
             <td>{{ run.horizon }}</td>
@@ -32,6 +32,14 @@ naive baselines. These are validation/audit records only.</p>
     </tbody>
 </table>
 </div>
+<nav class="runs-pagination" aria-label="Runs list pagination">
+    {% if page_offset and page_offset > 0 %}
+    <a href="/runs?limit={{ page_limit }}&offset={{ [page_offset - page_limit, 0] | max }}" class="pagination-prev">Previous</a>
+    {% endif %}
+    {% if page_offset is not none and page_limit is not none and page_total is not none and (page_offset + page_limit) < page_total %}
+    <a href="/runs?limit={{ page_limit }}&offset={{ page_offset + page_limit }}" class="pagination-next">Next</a>
+    {% endif %}
+</nav>
 {% else %}
 <p>No validation runs yet.</p>
 {% endif %}

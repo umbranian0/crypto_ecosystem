@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Concepts -- dashboard-web{% endblock %}
+{% block content %}
+<h2>Understanding purge gap and walk-forward windows</h2>
+
+<p>This page explains, in plain language, two of the settings you fill in when you submit a
+validation run. This is a validation/audit tool: it checks whether a model's output actually
+beats a naive statistical baseline on already-recorded data.</p>
+
+<h3>Walk-forward windows</h3>
+<p>Instead of training a model once on all the data and testing it once, this platform splits
+your dataset into a rolling sequence of folds. Each fold has a <strong>train window</strong> (the
+rows used to fit the model) followed by a <strong>test window</strong> (the rows used to check
+its output against the naive baseline). The <strong>step</strong> setting controls how far the
+whole window slides forward between one fold and the next, so you end up with several
+independent folds covering different stretches of your history rather than a single split.</p>
+
+<h3>Purge gap</h3>
+<p>The <strong>purge gap</strong> is a number of hours deliberately left out between the end of a
+fold's train window and the start of its test window. Without this gap, information from rows
+right at the boundary can leak between the two sides -- for example, if the training window's
+last row and the test window's first row are close enough in time to share overlapping
+information (such as a rolling-average feature computed across both), the model would get an
+unfairly easy look at data it's supposed to be evaluated against. Excluding a gap of rows at
+that boundary keeps the comparison honest.</p>
+
+<h3>Why this matters</h3>
+<p>Leakage across a train/test boundary is the single most common way a model can look like it
+beats a naive baseline when it actually doesn't. Every validation run this platform performs
+enforces a purge gap and compares against the mandatory naive baselines for exactly this reason
+-- see the run submission form for where these settings are entered.</p>
+{% endblock %}

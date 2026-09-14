@@ -398,6 +398,20 @@ legend {
   font-family: var(--font-mono);
 }
 
+.skip-link {
+  position: absolute;
+  top: -40px;
+  left: 0;
+  z-index: 100;
+  padding: var(--space-2) var(--space-5);
+  background: var(--color-accent);
+  color: var(--color-accent-contrast);
+}
+
+.skip-link:focus {
+  top: 0;
+}
+
 .form-status {
   margin-top: var(--space-2);
   font-size: 0.8rem;

@@ -110,6 +110,29 @@ def model_column_label(run: RunDetailResponse) -> str:
     """
     return MODEL_COLUMN_LABEL if run.has_client_model else MODEL_COLUMN_PLACEHOLDER_LABEL
 
+
+# UAT-004: fixed-precision rounding for *displayed* metric values only -- API
+# response values (`SplitResultResponse`/`RunDetailResponse`) stay full
+# precision; this is a display-layer concern. `round_display_value` is the
+# one underlying implementation both the Jinja2 `round4` filter (`app/main.py`)
+# and `build_shareable_summary_text`'s FHS-004 plain-text export call use, so
+# no second `round(x, 4)`/`"{:.4f}"` literal exists anywhere in this service.
+DISPLAY_ROUNDING_PRECISION = 4
+
+
+def round_display_value(value: float | int | None) -> str | None:
+    """Formats a numeric display value to a fixed `DISPLAY_ROUNDING_PRECISION`
+    decimal places (e.g. `0.6460000000000008` -> `"0.6460"`, trailing zeros
+    kept -- a bare `round()` would drop them), passing `None` through
+    unchanged (a missing/undefined metric, e.g. a split's null
+    `dm_statistic`/`dm_pvalue`, must still render as-is, never `"None"`
+    rounded/formatted).
+    """
+    if value is None:
+        return None
+    return f"{round(value, DISPLAY_ROUNDING_PRECISION):.{DISPLAY_ROUNDING_PRECISION}f}"
+
+
 _CHART_WIDTH = 640
 _CHART_HEIGHT = 220
 _PADDING_LEFT = 40
@@ -374,6 +397,43 @@ def _verdict_category(split: SplitResultResponse) -> str:
     if split.dm_statistic is None and split.dm_pvalue is None:
         return UNDEFINED_VERDICT_CATEGORY
     return split.dm_verdict
+
+
+def build_headline_verdict_summary(
+    run: RunDetailResponse, splits: list[SplitResultResponse]
+) -> str | None:
+    """UAT-003: a single-line headline summary for `run_detail.html`, rendered
+    below the status table, above the per-split table/charts.
+
+    Reuses `_verdict_category` -- the exact same per-split categorization
+    `build_dm_verdict_chart` buckets into its "better"/"worse"/"no
+    significant difference"/`UNDEFINED_VERDICT_CATEGORY` counts -- so the
+    headline's "N of M" count can never disagree with the DM-verdict chart's
+    own "better" bar count. No DM statistic is recomputed here.
+
+    Returns `None` for a zero-split run (the caller's existing "no per-split
+    results yet" branch already covers that case; this function stays total
+    but produces nothing to render).
+
+    When `run.has_client_model` is `False`, every "Model" metric on this run
+    is actually NaiveLast's own placeholder output (`model_column_label`'s own
+    docstring) -- the headline states that inline, reusing the same
+    "NaiveLast placeholder"/"no client model submitted" wording
+    `MODEL_COLUMN_PLACEHOLDER_LABEL` already uses, rather than a second,
+    independently-worded disclosure.
+    """
+    if not splits:
+        return None
+
+    better_count = sum(1 for split in splits if _verdict_category(split) == "better")
+    total = len(splits)
+
+    if run.has_client_model:
+        return f"Beat Naive0 on {better_count}/{total} splits."
+    return (
+        f"Beat NaiveLast placeholder on {better_count}/{total} splits -- "
+        "no client model submitted."
+    )
 
 
 def verdict_category_and_css_slug(split: SplitResultResponse) -> tuple[str, str]:

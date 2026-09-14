@@ -101,7 +101,16 @@ the Track A trio, run after `DASH-126` so accessible markup covers its final too
 matching `aria-label` to every `data-tooltip` element found by grepping `src/app/templates/` (all
 eleven live in `run_new.html`'s `field-tooltip` spans, including the raw-levels-vs-returns
 `dataset_reference_field` tooltip UAT-011's rationale calls out by name) -- see "Tooltip accessibility
-convention (DASH-127)" below (289 unit tests passing, up from 287, plus the same 7 e2e).
+convention (DASH-127)" below (289 unit tests passing, up from 287, plus the same 7 e2e). `UAT-012`
+(Sprint 31) adds a "Skip to main content" link to `base.html`, the very first focusable element in
+`<body>` (before both nav blocks), visually hidden until keyboard-focused via a new `.skip-link`
+rule in the existing `style.css` (no second stylesheet) -- targets a new `id="main-content"` on the
+existing `<main>` landmark (`base.html` had no `<main>` id before this ticket). See "Skip-to-content
+link (UAT-012)" below (320 unit tests passing, up from 289, plus the same 7 e2e). `UAT-009`/`UAT-010`/
+`UAT-014` (Sprint 39) add runs-list pagination controls, additive hour-based (1h/6h/24h) buckets on
+`/runs/horizon-summary`, and a new `/help/concepts` plain-language page respectively -- see "Runs list
+pagination (UAT-009)", "Horizon summary: hour-based buckets (UAT-010)", and "Plain-language concepts
+page (UAT-014)" below (341 unit tests passing, up from 320, plus the same 7 e2e).
 
 Formerly `dashboard/`. See [../../docs/solution-design.md](../../docs/solution-design.md) section 3.6.
 
@@ -340,6 +349,21 @@ new "multimodal mode" visual treatment -- reuses the existing `.chart-container`
   calls `SessionStore.delete` (DASH-002's existing method, not a second one), and clears the cookie via
   `Response.delete_cookie`.
 
+## Skip-to-content link (UAT-012)
+
+`src/app/templates/base.html` now opens `<body>` with `<a href="#main-content" class="skip-link">Skip
+to main content</a>`, before `<header>`/either nav block -- the first focusable element on every page
+that extends `base.html`. It targets `id="main-content"`, added to the existing `<main>` landmark
+(no duplicate wrapper element introduced; `base.html` had exactly one `<main>` before this ticket, per
+the ticket's own DRY check note). `style.css`'s new `.skip-link`/`.skip-link:focus` rules
+(`position: absolute; top: -40px` off-screen by default, `top: 0` on `:focus`) reuse the existing
+`--color-accent`/`--color-accent-contrast` variables -- no hardcoded color, no second stylesheet, no
+visible change for a sighted mouse user who never tabs to it. `tests/test_base_nav.py`'s new
+`test_skip_to_main_content_link_is_first_focusable_element` renders `GET /login` (unauthenticated,
+reachable regardless of cookie state, same precedent SETUP-034's other tests in that file use) and
+asserts the link's `href="#main-content"` appears in the HTML before the first `<nav`, plus that
+`id="main-content"` exists.
+
 ## Tooltip accessibility convention (DASH-127)
 
 **Standing convention, not a one-time fix**: every `data-tooltip` element added to any template in this
@@ -445,6 +469,26 @@ exact fields (`dataset_id`, `dataset_reference`, `horizon`, `purge_gap_hours`, `
   construction.
 - A transport-level `httpx.ConnectError`/`httpx.TimeoutException`, or a `502`/`504` forwarded from
   `gateway-api`, renders the same `error.html` DASH-004 uses -- no second, near-identical template.
+
+### Optional run label (UAT-008)
+
+`run_new.html` has a new optional "Label (optional)" text input (`maxlength="200"`, placed right after
+the `dataset_id` field) -- a freeform, tenant-chosen name for the run (e.g. "weekly audit"), never
+consulted by the leakage-aware validation/split logic; purely descriptive. `run_new_submit`
+(`src/app/routers/runs.py`) includes it in the same, single `RunRequest(...)` construction site DASH-006
+already established (`RunRequest`'s exact fields, extended -- not a second construction site), sending
+`label=None` (not an empty string) whenever the submitted field is blank/whitespace-only, matching
+`RunRequest.label`'s own honest-default convention (`libs/common`'s `naive_first_common.contracts`).
+`runs_list.html`/`run_detail.html` render the label when present (`runs_list.html`: appended after the id
+in the same table cell, e.g. `<id> -- <label>`; `run_detail.html`: a subtitle under the `<h2>` plus an
+extra `Label` table row) -- the run id is always rendered regardless, never replaced by the label. A run
+with no label renders exactly as it did before this ticket -- no fabricated default text, no empty
+`Label` row shown at all. See `tests/test_runs_submit.py`'s `test_run_new_submit_with_label_forwards_it`/
+`test_run_new_submit_without_label_sends_none`, `tests/test_runs_list.py`'s
+`test_runs_list_renders_label_when_present_and_id_stays_visible`/
+`test_runs_list_renders_bare_id_when_label_absent`, and `tests/test_runs_detail.py`'s
+`test_run_detail_renders_label_when_present_and_id_stays_visible`/
+`test_run_detail_renders_bare_id_when_label_absent`.
 
 ### Stored-dataset context summary (RSS-001)
 
@@ -1989,3 +2033,135 @@ the one piece that was genuinely missing: an operator-scoped nav block and a rea
   `test_login_page_links_to_operator_login` asserting the new link's presence. Full suite: 298
   unit passed (up from 289), 7 deselected (Selenium E2E, unaffected by this ticket), zero
   regressions.
+
+## Sprint 39 Track B: UAT-003/UAT-004/UAT-013 -- run-detail headline, fixed-precision display
+rounding, real heading elements
+
+`UAT-003` adds a one-line headline verdict summary to `GET /runs/{run_id}` (`run_detail.html`),
+rendered below the status table/warnings, above the per-split table/charts: `app.charting
+.build_headline_verdict_summary(run, splits)` (new, pure function) reuses the exact same per-split
+`dm_verdict` categorization `build_dm_verdict_chart`/`_verdict_category` already derive -- no second
+"count better/worse splits" tally, so the headline's "N of M" count can never disagree with the
+DM-verdict chart's own "better" bar count. Renders `"Beat Naive0 on {n}/{m} splits."`, or, when
+`run.has_client_model` is `False`, `"Beat NaiveLast placeholder on {n}/{m} splits -- no client model
+submitted."` (the same placeholder-disclosure vocabulary `MODEL_COLUMN_PLACEHOLDER_LABEL` already
+uses, not a second independently-worded caveat). Returns `None` for a zero-split run, so the template
+renders nothing (`{% if headline_verdict_summary %}`), matching the existing "no per-split results
+yet" branch.
+
+`UAT-004` adds one shared, display-only fixed-precision rounding filter: `app.charting
+.round_display_value` (formats to 4 decimal places, e.g. `0.6460000000000008` -> `"0.6460"`,
+trailing zeros kept; passes `None` through unchanged) is registered as the Jinja2 filter `round4`
+(`app/main.py`, `templates.env.filters["round4"]`) and applied to every raw numeric render in
+`run_detail.html`'s per-split table, `_error_chart.html`'s bar tooltips, and
+`_forecast_horizon_summary_panel.html`'s summary table. `app.routers.runs
+.build_shareable_summary_text` (FHS-004's "copy summary" export) calls the same
+`round_display_value` function directly -- one implementation, not a second `round(x, 4)` literal.
+API response values (`SplitResultResponse`/`RunDetailResponse`) are untouched -- this is
+template/export-layer-only, never applied before the response leaves `gateway-api`.
+
+`UAT-013` (accessibility) converts `_error_chart.html`, `_dm_verdict_chart.html`, and
+`_forecast_horizon_summary_panel.html`'s `<p class="chart-title">` section titles into real `<h4>`
+elements (same `chart-title` CSS class, no visual change) -- consistent with `run_detail.html`'s
+existing `<h2>` (page title) / `<h3>` ("Per-split validation results") hierarchy, since these three
+partials are all `{% include %}`-ed inside that `<h3>` section, so `<h4>` avoids a heading-level
+skip. `_shareable_summary.html`'s own `<p class="chart-title">` (FHS-004, out of this ticket's named
+file scope) is deliberately unchanged.
+
+Tests: `tests/test_charting.py` gained `build_headline_verdict_summary` unit tests (including one
+asserting its "better" count agrees with `build_dm_verdict_chart`'s own count for the same fixture,
+not just independently correct) and `round_display_value` unit tests (the `0.6460000000000008` ->
+`"0.6460"` fixture, plus `None`-passthrough). `tests/test_runs_detail.py` gained route-level tests
+for the headline (present with/without `has_client_model`, absent for a zero-split run, and a test
+asserting every pre-existing `run_detail.html` element still renders unaffected), a route-level
+fixed-precision test (the same `0.6460000000000008` fixture rendered across the per-split table, the
+error-chart tooltip, and the horizon-summary panel, plus a `build_shareable_summary_text`-level
+rounding test), and a heading-element test (`<h4 class="chart-title">` present, `<p
+class="chart-title">` no longer present for the three touched partials, `_shareable_summary.html`'s
+own `<p class="chart-title">` unaffected). Full suite: 319 unit passed (up from 307), 7 deselected
+(Selenium E2E, not re-run this sprint), zero regressions.
+
+## Runs list pagination (UAT-009)
+
+`GET /runs` (DASH-005-01's existing handler, `src/app/routers/runs.py`) now also passes
+`page_limit`/`page_offset`/`page_total` (read from the same `{items, limit, offset, total}` response
+envelope this route already parses -- `body["limit"]`/`body["offset"]`/`body["total"]`, the values
+gateway-api/validation-service actually applied, not the possibly-unset local `limit`/`offset` query
+params) through to `runs_list.html`. No new backend logic: `_fetch_all_runs`'s own `limit`/`offset`
+forwarding (DASH-005-01/DASH-122) is untouched, and this route still forwards a caller-supplied
+`limit`/`offset` unmodified -- the only change is that the envelope's `total` field, previously
+discarded, is now read and threaded through.
+
+`runs_list.html` renders a `<nav class="runs-pagination">` with a "Previous" link (present only when
+`page_offset > 0`, pointing at `offset = max(page_offset - page_limit, 0)`) and a "Next" link (present
+only when `page_offset + page_limit < page_total`, pointing at `offset = page_offset + page_limit`) --
+both preserve `page_limit` as the `limit` query param. No client-side re-sort/re-filter is introduced.
+A single-page result (`page_total <= page_limit`) renders neither link.
+
+**Tests** (`tests/test_runs_list.py`): `test_runs_list_pagination_next_link_present_when_more_pages_exist`
+(Next present with correct `offset`, Previous absent on page 1),
+`test_runs_list_pagination_previous_link_present_when_not_first_page`,
+`test_runs_list_pagination_next_absent_on_last_page`, and
+`test_runs_list_pagination_absent_for_single_page_total`.
+
+## Horizon summary: hour-based buckets (UAT-010)
+
+`GET /runs/horizon-summary` (FHS-002's existing handler, `src/app/routers/runs.py`) gains a new `unit`
+query param (`"days"`/`"hours"`, default `"days"` -- every existing caller/test that never sets it is
+unaffected) plus a new `hours` param and `HORIZON_SUMMARY_HOUR_OPTIONS = (1, 6, 24)`. When
+`unit="hours"`, the selected `hours` value maps *directly* to `run.horizon` -- no `_horizon_for_days`
+conversion, since an hour bucket already names the one real hourly source's own native `horizon` step
+(ADR-0007 finding (a)). Both the day and hour paths funnel into the exact same `matching_runs = [run
+for run in all_runs if run.horizon == horizon and run.status == "completed"]` filtering line the
+day-based path already used -- only the bucket-to-`horizon` mapping table differs per unit, not a
+second filtering implementation. An out-of-range `hours` value (not in `HORIZON_SUMMARY_HOUR_OPTIONS`)
+or an unsupported `unit` value is rejected with a `422`, mirroring the existing out-of-range-`days`
+guard (QA-found, Sprint 31 UAT sweep) rather than falling through to a silent empty state.
+`ADR-0007` stays authoritative for the day-based buckets -- this is additive only, and the day-bucket
+code path/behavior is unchanged.
+
+`horizon_summary.html` gains a second `<nav class="horizon-selector horizon-selector-hours">` with
+1h/6h/24h links (`/runs/horizon-summary?unit=hours&hours=<N>`) alongside the existing 7/15/30-day
+selector -- both selectors always render together; the "active" link is computed against `unit` plus
+the relevant value so the two selectors never both show an active link at once.
+
+**Tests** (`tests/test_runs_horizon_summary.py`):
+`test_horizon_summary_hour_bucket_filters_by_literal_horizon` (parametrized over 1h/6h/24h, asserts
+each selects only the run at that literal `horizon`, no conversion),
+`test_horizon_summary_hour_bucket_out_of_range_rejected_with_422`,
+`test_horizon_summary_unsupported_unit_rejected_with_422`,
+`test_horizon_summary_no_selection_shows_both_selectors`, and
+`test_horizon_summary_day_bucket_behavior_unchanged_when_unit_defaults` (byte-identical assertions to
+the pre-existing `test_horizon_summary_days_7_shows_only_horizon_168_run`, proving the day path is
+unaffected).
+
+## Plain-language concepts page (UAT-014)
+
+`GET /help/concepts` (new `src/app/routers/help.py`, a disjoint router module -- this repo's
+router-per-concern convention, `auth.py`/`settings.py`/`setup.py`/`operator.py` each already own their
+own concern, is followed here rather than appending a fifth unrelated route to `runs.py`, since this
+page has no relationship to a run/dataset request/response cycle) renders `help_concepts.html`, a pure
+static page (no downstream call, no session dependency) explaining purge gap and walk-forward windows
+in plain language for a tenant who isn't already familiar with the terms used on the run-submission
+form. Linked from `base.html`'s tenant nav ("Concepts") and from `run_new.html`, right above the
+`purge_gap_hours` field ("What are purge gap and walk-forward windows?").
+
+- **Positioning**: the page's copy is framed entirely around what the validation protocol's own
+  mechanics do (splitting, purging) -- it never uses "prediction"/"forecast"/"signal"/"recommendation"
+  language (CLAUDE.md's core constraint), proven by `tests/test_help_concepts.py`'s own banned-word
+  scan of the template file.
+- Existing inline `data-tooltip` hints (RSS-001/002, DH-008) are unchanged -- this ticket adds a
+  separate, longer-form page rather than rewriting any tooltip.
+- `app/main.py`'s router-import block imports `help` alongside the other router modules (no ordering
+  dependency on `runs`, since `help.py` imports nothing from it) and registers it via
+  `app.include_router(help.router)`.
+
+**Tests** (`tests/test_help_concepts.py`): `test_help_concepts_returns_200_and_expected_content_markers`,
+`test_base_html_nav_links_to_help_concepts`, `test_run_new_links_to_help_concepts`, and
+`test_help_concepts_page_has_no_banned_positioning_words`.
+
+## Sprint 39 (UAT-009/UAT-010/UAT-014)
+
+All three tickets landed additively on top of the existing UAT-003/004/006/007/008/012/013 work already
+shipped this sprint -- no changes to any of those tickets' own code. Full suite: 341 unit passed (up
+from 319), 7 deselected (Selenium E2E, not re-run this sprint), zero regressions.

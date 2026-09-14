@@ -184,4 +184,12 @@ def test_response_items_have_summary_fields_only(tmp_path, monkeypatch):
 
     assert response.status_code == 200, response.text
     item = response.json()["items"][0]
-    assert set(item.keys()) == {"id", "dataset_id", "horizon", "status", "created_at", "completed_at"}
+    assert set(item.keys()) == {
+        "id",
+        "dataset_id",
+        "horizon",
+        "status",
+        "created_at",
+        "completed_at",
+        "label",
+    }

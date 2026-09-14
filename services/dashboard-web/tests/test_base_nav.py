@@ -66,6 +66,20 @@ def test_both_cookies_render_both_nav_blocks_simultaneously() -> None:
     assert 'class="main-nav operator-nav"' in response.text
 
 
+def test_skip_to_main_content_link_is_first_focusable_element() -> None:
+    """UAT-012: skip link precedes any nav link and targets the main landmark."""
+    client = TestClient(app)
+
+    response = _get(client, tenant_session=True, operator_session=True)
+
+    assert response.status_code == 200
+    skip_link_index = response.text.index('href="#main-content"')
+    first_nav_link_index = response.text.index("<nav")
+    assert skip_link_index < first_nav_link_index
+    assert 'class="skip-link"' in response.text
+    assert 'id="main-content"' in response.text
+
+
 def test_operator_nav_links_present() -> None:
     client = TestClient(app)
 

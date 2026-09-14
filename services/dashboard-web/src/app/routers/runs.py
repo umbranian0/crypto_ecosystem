@@ -226,6 +226,33 @@ unaffected: `rendered_splits is splits` and `splits_truncated` is `False`,
 so every downstream builder/template branch receives the exact same input,
 and therefore renders byte-identical output, to before this ticket.
 
+UAT-010: `runs_horizon_summary` gains a new `unit` query param (`"days"`/
+`"hours"`, default `"days"` -- backward compatible with every existing caller/
+test that never sets it) selecting between `HORIZON_SUMMARY_DAY_OPTIONS`
+(unchanged, still converted via `_horizon_for_days`, ADR-0007 stays
+authoritative) and the new `HORIZON_SUMMARY_HOUR_OPTIONS = (1, 6, 24)`, whose
+values map *directly* to `run.horizon` -- no `_horizon_for_days` conversion,
+since an hour bucket already names the dataset's native `horizon` unit for
+the one real hourly source today (ADR-0007 finding (a)). Both branches funnel
+into the exact same `matching_runs = [run for run in all_runs if run.horizon
+== horizon and run.status == "completed"]` filtering line already used for
+the day-based path -- only the bucket-to-`horizon` mapping differs per unit,
+not a second filtering implementation.
+
+UAT-009: `runs_list` now also passes `limit`/`offset`/`total` (read from the
+same response envelope this route already parses -- `body["limit"]`,
+`body["offset"]`, `body["total"]`) through to `runs_list.html` as
+`page_limit`/`page_offset`/`page_total`, which renders Previous/Next links
+computed from those three values (`/runs?limit=<L>&offset=<prev/next>`). No
+new backend logic -- reuses DASH-005-01's existing caller-supplied
+`limit`/`offset` forwarding unmodified; this ticket only stops discarding the
+envelope's `total` field. Because the incoming request may supply no
+`limit`/`offset` at all, `body["limit"]`/`body["offset"]` (the values
+gateway-api/validation-service actually applied, including their own
+defaults) are what's threaded through -- not the possibly-`None` local
+`limit`/`offset` params -- so the rendered links are always correct even on
+an unparameterized first visit to `/runs`.
+
 DASH-122: fixes a real correctness bug found by the DBA agent during a
 performance review -- `GET /runs` (proxied through gateway-api's GW-016,
 itself proxying validation-service's VS-022) defaults to `limit=20` when no
@@ -267,9 +294,11 @@ from app.charting import (
     METRIC_REGISTRY,
     build_dm_verdict_chart,
     build_error_chart,
+    build_headline_verdict_summary,
     build_trend_chart,
     compute_consistency_indicator,
     model_column_label,
+    round_display_value,
     verdict_category_and_css_slug,
 )
 from app.dependencies.downstream import DownstreamHeadersDep, GatewayApiUrlDep
@@ -317,6 +346,12 @@ ASSUMED_SAMPLING_INTERVAL_HOURS = 1
 # The selector's only supported day values (ADR-0007 (b)) -> converted
 # `horizon` values, for the one real hourly source today.
 HORIZON_SUMMARY_DAY_OPTIONS = (7, 15, 30)
+
+# UAT-010: hour-based buckets, additive to the day-based ones above. These map
+# directly to `run.horizon` (no `_horizon_for_days` conversion) -- an hour
+# value already names the one real hourly source's own native `horizon` unit
+# (ADR-0007 finding (a)).
+HORIZON_SUMMARY_HOUR_OPTIONS = (1, 6, 24)
 
 # FHS-004: ADR-0007's forward conversion (`_horizon_for_days`) reversed --
 # only the three `horizon` values that conversion can actually produce
@@ -393,19 +428,40 @@ def build_shareable_summary_text(
         lines.append("")
 
     for split in splits:
+        # UAT-004: same `round_display_value` the `round4` Jinja2 filter
+        # (`app/main.py`) wraps -- one shared implementation, not a second
+        # `round(x, 4)` literal for this export.
         lines.append(f"Split {split.split_index}:")
-        lines.append(f"  Model MAE: {split.model_mae}  |  Naive0 MAE: {split.naive0_mae}")
-        lines.append(f"  Model RMSE: {split.model_rmse}  |  Naive0 RMSE: {split.naive0_rmse}")
         lines.append(
-            f"  Model sMAPE: {split.model_smape}  |  Naive0 sMAPE: {split.naive0_smape}"
+            f"  Model MAE: {round_display_value(split.model_mae)}  |  "
+            f"Naive0 MAE: {round_display_value(split.naive0_mae)}"
         )
-        lines.append(f"  Model MASE: {split.model_mase}  |  Naive0 MASE: {split.naive0_mase}")
-        lines.append(f"  Model DA: {split.model_da}  |  Naive0 DA: {split.naive0_da}")
-        lines.append(f"  Model F1: {split.model_f1}  |  Naive0 F1: {split.naive0_f1}")
         lines.append(
-            f"  Model OOS R2: {split.model_oos_r2}  |  Naive0 OOS R2: {split.naive0_oos_r2}"
+            f"  Model RMSE: {round_display_value(split.model_rmse)}  |  "
+            f"Naive0 RMSE: {round_display_value(split.naive0_rmse)}"
         )
-        dm_pvalue = split.dm_pvalue if split.dm_pvalue is not None else "--"
+        lines.append(
+            f"  Model sMAPE: {round_display_value(split.model_smape)}  |  "
+            f"Naive0 sMAPE: {round_display_value(split.naive0_smape)}"
+        )
+        lines.append(
+            f"  Model MASE: {round_display_value(split.model_mase)}  |  "
+            f"Naive0 MASE: {round_display_value(split.naive0_mase)}"
+        )
+        lines.append(
+            f"  Model DA: {round_display_value(split.model_da)}  |  "
+            f"Naive0 DA: {round_display_value(split.naive0_da)}"
+        )
+        lines.append(
+            f"  Model F1: {round_display_value(split.model_f1)}  |  "
+            f"Naive0 F1: {round_display_value(split.naive0_f1)}"
+        )
+        lines.append(
+            f"  Model OOS R2: {round_display_value(split.model_oos_r2)}  |  "
+            f"Naive0 OOS R2: {round_display_value(split.naive0_oos_r2)}"
+        )
+        dm_pvalue = round_display_value(split.dm_pvalue)
+        dm_pvalue = dm_pvalue if dm_pvalue is not None else "--"
         lines.append(f"  DM p-value: {dm_pvalue}  |  Benchmark comparison verdict: {split.dm_verdict}")
         lines.append("")
 
@@ -563,7 +619,16 @@ def runs_list(
         body = response.json()
         runs = [RunSummaryResponse(**item) for item in body["items"]]
 
-    return templates.TemplateResponse(request, "runs_list.html", {"runs": runs})
+    return templates.TemplateResponse(
+        request,
+        "runs_list.html",
+        {
+            "runs": runs,
+            "page_limit": body["limit"],
+            "page_offset": body["offset"],
+            "page_total": body["total"],
+        },
+    )
 
 
 @router.get("/datasets")
@@ -590,6 +655,8 @@ def runs_horizon_summary(
     headers: DownstreamHeadersDep,
     base_url: GatewayApiUrlDep,
     days: int | None = None,
+    hours: int | None = None,
+    unit: str = "days",
 ):
     """FHS-002: see this module's own docstring for the full note. `days` is
     unset on first render (shows only the selector, no locally invented
@@ -601,24 +668,46 @@ def runs_horizon_summary(
     framed as backtested validation results), most recent first (the
     response already comes back `created_at DESC` per DASH-005-01 -- no
     client re-sort).
+
+    UAT-010: `unit` (`"days"`/`"hours"`, default `"days"` for backward
+    compatibility with every existing caller that never sets it) selects
+    whether `days` (converted via `_horizon_for_days`, ADR-0007 stays
+    authoritative) or the new `hours` param (mapped directly to `run.horizon`
+    -- no conversion, an hour bucket already names the dataset's native unit
+    per ADR-0007 finding (a)) supplies the target `horizon`. Both paths funnel
+    into the exact same `matching_runs` filtering line below -- only the
+    bucket-to-`horizon` mapping differs per unit.
     """
-    if days is None:
+    if unit not in ("days", "hours"):
+        raise HTTPException(status_code=422, detail="Unsupported 'unit' value.")
+
+    selected_bucket = hours if unit == "hours" else days
+    if selected_bucket is None:
         return templates.TemplateResponse(
             request,
             "horizon_summary.html",
-            {"days": None, "horizon": None, "runs": None},
+            {"days": None, "hours": None, "unit": unit, "horizon": None, "runs": None},
         )
 
-    # QA-found (Sprint 31 UAT sweep): an out-of-range `days` (e.g. 999 or -1)
-    # used to fall through silently -- 200, no day-tab marked active, an
-    # empty `runs` list indistinguishable from "no completed runs at a valid
-    # horizon". Rejected up front against the selector's own supported set
-    # instead, matching this route's/this file's existing convention of a
-    # 4xx for a rejected request rather than a silently degraded 200.
-    if days not in HORIZON_SUMMARY_DAY_OPTIONS:
-        raise HTTPException(status_code=422, detail="Unsupported 'days' value.")
-
-    horizon = _horizon_for_days(days)
+    if unit == "hours":
+        # QA-found (Sprint 31 UAT sweep) precedent, extended to the hour
+        # bucket: an out-of-range value must be rejected up front (4xx), not
+        # silently fall through to an empty, indistinguishable "no matches"
+        # state.
+        if hours not in HORIZON_SUMMARY_HOUR_OPTIONS:
+            raise HTTPException(status_code=422, detail="Unsupported 'hours' value.")
+        horizon = hours
+    else:
+        # QA-found (Sprint 31 UAT sweep): an out-of-range `days` (e.g. 999 or
+        # -1) used to fall through silently -- 200, no day-tab marked active,
+        # an empty `runs` list indistinguishable from "no completed runs at a
+        # valid horizon". Rejected up front against the selector's own
+        # supported set instead, matching this route's/this file's existing
+        # convention of a 4xx for a rejected request rather than a silently
+        # degraded 200.
+        if days not in HORIZON_SUMMARY_DAY_OPTIONS:
+            raise HTTPException(status_code=422, detail="Unsupported 'days' value.")
+        horizon = _horizon_for_days(days)
 
     with httpx.Client(base_url=base_url, timeout=DOWNSTREAM_HTTP_TIMEOUT_SECONDS) as client:
         # DASH-122: was a single `GET /runs` call with no `limit`, silently
@@ -638,7 +727,13 @@ def runs_horizon_summary(
     return templates.TemplateResponse(
         request,
         "horizon_summary.html",
-        {"days": days, "horizon": horizon, "runs": matching_runs},
+        {
+            "days": days if unit == "days" else None,
+            "hours": hours if unit == "hours" else None,
+            "unit": unit,
+            "horizon": horizon,
+            "runs": matching_runs,
+        },
     )
 
 
@@ -708,6 +803,7 @@ def run_new_submit(
     train_window: str = Form(""),
     test_window: str = Form(""),
     step: str = Form(""),
+    label: str = Form(""),
 ):
     values = {
         "dataset_id": dataset_id,
@@ -722,6 +818,7 @@ def run_new_submit(
         "train_window": train_window,
         "test_window": test_window,
         "step": step,
+        "label": label,
     }
 
     # DASH-120: every 422 error-redisplay below must re-fetch the tenant's
@@ -773,6 +870,7 @@ def run_new_submit(
                 train_window=int(train_window),
                 test_window=int(test_window),
                 step=int(step),
+                label=label.strip() if label.strip() else None,
             )
         except (ValueError, ValidationError) as exc:
             datasets = _fetch_ingestion_datasets(client, headers)
@@ -946,6 +1044,10 @@ def run_detail(
     # builders below.
     shareable_summary_text = build_shareable_summary_text(run, rendered_splits)
 
+    # UAT-003: reuses the same already-fetched `rendered_splits` -- no second
+    # DM-statistic computation, no new downstream call.
+    headline_verdict_summary = build_headline_verdict_summary(run, rendered_splits)
+
     return templates.TemplateResponse(
         request,
         "run_detail.html",
@@ -957,6 +1059,7 @@ def run_detail(
             "dm_verdict_chart": build_dm_verdict_chart(rendered_splits),
             "horizon_summary_rows": horizon_summary_rows,
             "shareable_summary_text": shareable_summary_text,
+            "headline_verdict_summary": headline_verdict_summary,
             "splits_truncated": splits_truncated,
             "total_splits_count": total_splits_count,
             "rendered_splits_count": len(rendered_splits),

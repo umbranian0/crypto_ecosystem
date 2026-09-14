@@ -29,7 +29,7 @@
    is shown as visible copy adjacent to the chart whenever the series is
    shown. #}
 <div class="chart-container">
-    <p class="chart-title">DM-test verdict by split (vs. Naive0)</p>
+    <h4 class="chart-title">DM-test verdict by split (vs. Naive0)</h4>
     <p class="chart-caption">"Better"/"worse" describe this split's own out-of-sample error
     relative to the Naive0 baseline, under the Harvey-corrected Diebold-Mariano test already
     applied upstream. A split whose DM statistic is undefined (a single-test-point split has
@@ -60,7 +60,7 @@
         {% endfor %}
     </svg>
     {% if dm_verdict_chart.has_client_baseline %}
-    <p class="chart-title">DM-test verdict by split (vs. Naive0) -- client-supplied baseline</p>
+    <h4 class="chart-title">DM-test verdict by split (vs. Naive0) -- client-supplied baseline</h4>
     <svg
         class="dm-verdict-chart-svg dm-verdict-chart-svg-client"
         viewBox="0 0 {{ dm_verdict_chart.width }} {{ dm_verdict_chart.height }}"

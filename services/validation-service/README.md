@@ -68,6 +68,18 @@ psycopg.errors.FeatureNotSupported: columnstore cannot be used on table with row
 
 -- the moment `ALTER TABLE ... SET (timescaledb.compress, ...)` is attempted against a table with `ENABLE`/`FORCE ROW LEVEL SECURITY` set (`0002_add_row_level_security.py`; both `runs` and `split_results` carry this, a locked-in multi-tenant isolation invariant). Alembic's transactional DDL rolled this back cleanly: `validation.alembic_version` stayed at `0007`, and `split_results`' RLS state/`reloptions` were confirmed unchanged. This is the same root-cause finding `INGEST-020` independently reached for `ingestion-service`'s three hypertables (same TimescaleDB version, same error) -- RLS and TimescaleDB compression are fundamentally incompatible on this platform version, not merely a continuous-aggregate-specific restriction (`INGEST-019`'s narrower finding). Unlike `INGEST-019`'s workaround (a plain materialized view can carry its own/no RLS independent of the source hypertable), compression is a physical, in-place transform on the hypertable's own chunks -- there is no view-based substitute. The only documented remediation (temporarily `DISABLE ROW LEVEL SECURITY`, compress, then `ENABLE`/`FORCE` again, even scoped inside one migration transaction) was not attempted: relaxing RLS on this tenant-isolated table, even transactionally, is a security-relevant decision this dev agent is not authorized to make unilaterally. **No `0008` migration was committed** -- see `docs/tickets/VS-028.md`'s Outcome section for the full reproduction detail and the options escalated to the user/PM (accept the gap / archive-old-data-into-a-non-RLS-table redesign / explicit Tech-Lead-authorized RLS toggle / wait for a future TimescaleDB release).
 
+**Optional run label (UAT-008)**: `runs.label` (nullable `String` column, `migrations/versions/
+0010_add_runs_label_column.py`) persists `RunRequest.label` -- an optional, freeform, tenant-supplied
+name for a run (max 200 chars, enforced by `libs/common`'s `RunRequest` Pydantic field, not re-validated
+here). `_persist_new_run`/`ValidationRunRepository.create_run` thread it through unmodified (`label=request.label`,
+same optional-keyword-argument pattern `warnings`/`feature_lineage` already established); `GET /runs` and
+`GET /runs/{id}` return it verbatim via `RunSummaryResponse.label`/`RunDetailResponse.label`, `None` whenever
+no label was supplied. Pass-through only -- never read by `run_validation_protocol`, `generate_splits`, or any
+guardrail (RSS-004/DH-005/MR-001). **Version-sync convention**: `RunRequest`/`RunDetailResponse`/
+`RunSummaryResponse` remain `libs/common`'s single canonical definitions (ARCH-003) -- this service and
+`gateway-api` both import them directly, so this field required no hand-duplicated schema edit here beyond
+the `runs.label` persistence column itself.
+
 `migrations/env.py` targets the `validation` schema specifically for Postgres, both for table creation (`SET search_path TO validation` on the migration connection) and for `alembic_version` tracking (`version_table_schema="validation"`) -- required (not optional) per an INF-005 finding: running two services' schema-less, `public`-targeting migrations back-to-back against the same shared Postgres database caused the second one to find `public.alembic_version` already stamped and silently skip its own `upgrade()`. Both settings are conditional on the connection actually being Postgres (`connection.dialect.name == "postgresql"`) so `alembic upgrade head` against a `sqlite:///` `DATABASE_URL` (as `tests/test_models.py::test_alembic_upgrade_head_creates_matching_schema` does) is unaffected.
 
 `src/app/dependencies/repositories.py` remains the only module that imports `sqlite_repository`/`postgres_repository` directly; route/business-logic code depends on the `ValidationRunRepository`/`SplitResultRepository` interfaces only.
@@ -121,5 +133,34 @@ psycopg.errors.FeatureNotSupported: columnstore cannot be used on table with row
 - **Per-fold preprocessing fit (`FeatureFoldScaler`)**: `fit(train_df) -> FittedScaler` computes per-column mean/std only over the rows passed in -- no function in `feature_dataset.py` computes a scaler parameter over the full, unsplit `feature_dataframe` (`tests/test_feature_dataset.py`'s hard-gate tests prove this both behaviorally, fold-to-fold divergence, and structurally, an AST scan of the module). Not yet wired into any candidate-model inference call -- no such consumer interface exists yet (MDF-004's explicit, deferred question) -- but directly callable against `generate_splits`'s own output today.
 - **Disclosed gap, real, not fixed this ticket**: `ingestion-service`'s `GET /datasets/{source}/series` (`src/app/routers/datasets.py`) does not expose each row's `fetched_at` today, even though it is stored per-row in that service's own tables. Per ADR-0009 ("never use a value's nominal timestamp as a stand-in for when it became knowable") and CLAUDE.md's no-silent-inference rule, a feature reference that resolves to `IngestionServiceDatasetSource` therefore **always fails closed** with a disclosed `FeatureDatasetError` (AC5) -- it is never silently approximated using the series' own nominal index. Real per-row `fetched_at` alignment *is* fully implemented and tested for the two dataset shapes that can carry it today: inline payloads and object-storage CSVs, both extended with an optional third `fetched_at` column/key (opt-in, backward compatible -- absent for a plain 2-column payload, byte-identical to pre-VS-030 behavior). Extending `ingestion-service`'s series endpoint to expose `fetched_at` is a different module's change, out of this ticket's file scope, and not filed as a numbered ticket by this ticket itself -- flagged here for the Tech Lead/PM to pick up as a follow-up (`INGEST-*`).
 - **Connector-status guardrail (AC6)**: a feature reference naming an ingestion-service source (`"source"` key) triggers `ConnectorStatusChecker.check` (real implementation: `IngestionServiceConnectorStatusChecker`, calling `GET /connectors/{source}/status`, reusing `IngestionServiceDatasetSource`'s own `httpx.Client`/`base_url`/`X-Tenant-Id` convention) *before* any loading/alignment is attempted -- any status other than `"completed"` (`"running"`/`"queued"`/`"failed"`) is rejected fail-closed, naming the concrete status.
+
+**Fixed bug: `failure_reason` surfacing as the bare literal `"0"` (`UAT-006`)**: `POST /runs`'s three
+`except Exception as exc` failure-handling blocks (dataset load, feature assembly, protocol execution/
+split persistence -- `src/app/routers/runs.py`) previously persisted `failure_reason=str(exc)` directly.
+**Root cause traced**: `str(exc)` alone is not reliably human-readable -- the concrete, reproducible
+failure shape this ticket responds to is any exception whose `str()` collapses to a bare digit (the
+textbook example: `str(KeyError(0)) == "0"`, since `BaseException.__str__` for a single-arg exception
+just returns `str(args[0])`, with no surrounding context). An exhaustive trace of every `raise` reachable
+from these three blocks -- `app/dataset_source.py`, `app/feature_dataset.py`, `app/level_detection.py`,
+and `naive_first_engine`'s `splitting.py`/`baselines.py`/`metrics.py`/`dm_test.py`/`protocol.py` -- found
+no first-party raise that constructs such an exception directly (every `DatasetSourceError`/
+`FeatureDatasetError`/`ValueError` in this codebase already embeds a descriptive f-string), so the live
+incident is a genuine but not locally reproducible exception (most plausibly a `KeyError` or similar
+single-arg exception surfacing from a third-party/stdlib code path, e.g. pandas/numpy internals or a
+downstream HTTP client) whose message happens to match this exact int-sentinel shape. **Fix**: a new
+`_fail_run(run_repository, tenant, run, exc)` helper (`runs.py`), reused by all three failure blocks
+(extract-on-second-duplication, implementation-plan.md section 9 -- previously three near-identical
+inline blocks), never trusts `str(exc)` to already be descriptive: it wraps any non-empty, non-numeric
+message with fixed context (`"Validation run failed: {exc}"`), and replaces an empty message or a
+message that is purely digits (this exact `"0"` signature, or any other digits-only message from the
+same exception family) outright with a fixed, descriptive fallback naming the exception's type and the
+run id (`"Validation run failed with an unspecified internal error ({type}). ... run id {id} ..."`) --
+never silently re-surfaced as a lone digit. A `try`/`except` around `str(exc)` itself is the blanket
+safety net for the separate "never-`str()`-able exception" case (Implementation AC2). See
+`tests/test_failure_reason_readability.py`: one test deterministically triggers the exact `KeyError(0)`
+repro shape via a fake `DatasetSource` and asserts `failure_reason` is non-numeric/non-empty/descriptive;
+a second re-asserts DH-003's pre-existing conflicting-timestamp failure path still produces a genuinely
+descriptive (not merely non-crashing) message under the new wrapping. `gateway-api` is untouched -- it
+only forwards `failure_reason` as-is, per its own README.
 
 **Dependency upgrades**: see [../../docs/dependency-upgrade-policy.md](../../docs/dependency-upgrade-policy.md) for this platform's cadence.

@@ -8,14 +8,27 @@ The conversion assumes the one hourly-sampled source available today -- see this
 architecture decision record, ADR-0007.</p>
 
 <nav class="horizon-selector">
-    <a href="/runs/horizon-summary?days=7" class="{{ 'active' if days == 7 else '' }}">7 days</a>
-    <a href="/runs/horizon-summary?days=15" class="{{ 'active' if days == 15 else '' }}">15 days</a>
-    <a href="/runs/horizon-summary?days=30" class="{{ 'active' if days == 30 else '' }}">30 days</a>
+    <a href="/runs/horizon-summary?days=7" class="{{ 'active' if (unit == 'days' and days == 7) else '' }}">7 days</a>
+    <a href="/runs/horizon-summary?days=15" class="{{ 'active' if (unit == 'days' and days == 15) else '' }}">15 days</a>
+    <a href="/runs/horizon-summary?days=30" class="{{ 'active' if (unit == 'days' and days == 30) else '' }}">30 days</a>
 </nav>
 
-{% if days is not none %}
+<p>Or select an hour-based bucket, mapped directly to the dataset's own native horizon steps
+(no day/hour conversion applied -- see ADR-0007).</p>
+
+<nav class="horizon-selector horizon-selector-hours">
+    <a href="/runs/horizon-summary?unit=hours&hours=1" class="{{ 'active' if (unit == 'hours' and hours == 1) else '' }}">1h</a>
+    <a href="/runs/horizon-summary?unit=hours&hours=6" class="{{ 'active' if (unit == 'hours' and hours == 6) else '' }}">6h</a>
+    <a href="/runs/horizon-summary?unit=hours&hours=24" class="{{ 'active' if (unit == 'hours' and hours == 24) else '' }}">24h</a>
+</nav>
+
+{% if (days is not none) or (hours is not none) %}
     {% if runs %}
+    {% if unit == 'hours' %}
+    <p>Completed runs at horizon {{ horizon }} ({{ hours }}h), most recent first.</p>
+    {% else %}
     <p>Completed runs at horizon {{ horizon }} ({{ days }} days), most recent first.</p>
+    {% endif %}
     <div class="table-scroll">
     <table>
         <thead>

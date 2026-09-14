@@ -40,9 +40,12 @@ VS-012: `run_validation_protocol` and the split-mapping/`add_splits`
 persistence that depends on its output are wrapped in a `try`/`except
 Exception`, whose run row is created (via the local `_persist_new_run`
 helper) immediately before that `try`, so a `run.id` always exists to attach
-a `"failed"` status to. On any exception, the handler persists
-`status="failed"` + `failure_reason=str(exc)` via `update_run_status` and
-returns immediately from inside the `except` block with a `201` (the HTTP
+a `"failed"` status to. On any exception, the handler delegates to the local
+`_fail_run` helper (UAT-006), which persists `status="failed"` with a
+guaranteed non-empty, non-numeric `failure_reason` (never a bare
+`str(exc)` -- see `_fail_run`'s own docstring for why a raw exception
+string is not trustworthy on its own) via `update_run_status`, and returns
+immediately from inside the `except` block with a `201` (the HTTP
 request was handled correctly -- a run that fails is a completed *request*,
 just an unsuccessful *run*; a bare `500` would suggest the service itself
 malfunctioned). That `return` is what makes
@@ -161,6 +164,65 @@ router = APIRouter()
 MAX_SPLIT_COUNT = 500
 
 
+def _fail_run(
+    run_repository,
+    tenant: TenantContext,
+    run,
+    exc: Exception,
+) -> RunResponse:
+    """UAT-006: single failure-persistence path, reused by all three
+    `except Exception as exc` blocks below (dataset load, feature
+    assembly, protocol execution/split persistence) -- previously each
+    block inlined its own `failure_reason=str(exc)` call (extract-on-
+    second-duplication, implementation-plan.md section 9).
+
+    **Root cause traced (UAT-006 Analysis)**: `str(exc)` alone is not
+    reliably human-readable -- the concrete, reproducible failure shape
+    this ticket was filed against is any exception whose `str()` collapses
+    to a bare number (the textbook example: `str(KeyError(0)) == "0"`,
+    since `BaseException.__str__` for a single-arg exception just returns
+    `str(args[0])`, with no surrounding context). No first-party raise in
+    this module, `naive_first_engine`, or `naive_first_common` was found
+    to construct such an exception directly (every `DatasetSourceError`/
+    `FeatureDatasetError`/`ValueError` raised in this codebase already
+    embeds a descriptive f-string) -- the live incident this ticket
+    responds to is therefore a genuine but not-locally-reproducible
+    exception (e.g. a KeyError surfacing from a third-party/stdlib code
+    path this handler calls into, such as pandas/numpy internals or a
+    downstream HTTP client) whose message happens to be exactly this
+    int-sentinel shape. Fixing this *at its source* means never trusting
+    `str(exc)` to already be descriptive: every failure is wrapped with
+    fixed, human-authored context (what failed), and any message that is
+    empty or looks like a bare number (this exact "0" signature, or any
+    other digits-only message from the same exception family) is replaced
+    outright with a fixed, descriptive fallback that still names the
+    exception's type and the run id for support follow-up -- not silently
+    re-surfaced as a lone digit.
+    """
+    try:
+        raw_reason = str(exc).strip()
+    except Exception:
+        # Blanket safety net (Implementation AC2): a `__str__` that itself
+        # raises is exactly the "never-str()-able exception" case -- never
+        # let that propagate out of failure handling.
+        raw_reason = ""
+
+    if not raw_reason or raw_reason.lstrip("-").isdigit():
+        failure_reason = (
+            f"Validation run failed with an unspecified internal error "
+            f"({type(exc).__name__}). No further detail was available from "
+            f"the underlying exception; contact support with run id "
+            f"{run.id} if this persists."
+        )
+    else:
+        failure_reason = f"Validation run failed: {raw_reason}"
+
+    run_repository.update_run_status(
+        tenant.tenant_id, run.id, status="failed", failure_reason=failure_reason
+    )
+    return RunResponse(id=run.id, status="failed")
+
+
 def _persist_new_run(
     run_repository,
     tenant: TenantContext,
@@ -180,6 +242,7 @@ def _persist_new_run(
         },
         warnings=warnings,
         feature_lineage=feature_lineage if feature_lineage is not None else [],
+        label=request.label,
     )
 
 
@@ -263,10 +326,7 @@ def create_run(
         # fired before unpacking), so this branch's warnings are unchanged
         # from today -- empty.
         run = _persist_new_run(run_repository, tenant, request, warnings=[])
-        run_repository.update_run_status(
-            tenant.tenant_id, run.id, status="failed", failure_reason=str(exc)
-        )
-        return RunResponse(id=run.id, status="failed")
+        return _fail_run(run_repository, tenant, run, exc)
 
     series = loaded.series
     warnings = loaded.warnings
@@ -298,10 +358,7 @@ def create_run(
             )
         except Exception as exc:
             run = _persist_new_run(run_repository, tenant, request, warnings=warnings)
-            run_repository.update_run_status(
-                tenant.tenant_id, run.id, status="failed", failure_reason=str(exc)
-            )
-            return RunResponse(id=run.id, status="failed")
+            return _fail_run(run_repository, tenant, run, exc)
 
         series = series.loc[assembled.index]
         warnings = warnings + assembled.warnings
@@ -467,14 +524,11 @@ def create_run(
 
         split_repository.add_splits(tenant.tenant_id, run.id, split_records)
     except Exception as exc:
-        run_repository.update_run_status(
-            tenant.tenant_id, run.id, status="failed", failure_reason=str(exc)
-        )
         # Returning here ends the request. `event_publisher.publish` below
         # is unreachable from this branch by construction -- it sits after
         # this entire try/except statement, with no finally/fallthrough
         # connecting the two.
-        return RunResponse(id=run.id, status="failed")
+        return _fail_run(run_repository, tenant, run, exc)
 
     completed_at = datetime.utcnow()
     run_repository.update_run_status(
@@ -513,6 +567,7 @@ def list_runs(
                 status=run.status,
                 created_at=run.created_at,
                 completed_at=run.completed_at,
+                label=run.label,
             )
             for run in runs
         ],
@@ -562,4 +617,5 @@ def get_run(
         # VS-030: derived, single source of truth (run.feature_lineage) --
         # same precedent VS-029 established for has_client_model.
         has_multimodal_features=bool(run.feature_lineage),
+        label=run.label,
     )

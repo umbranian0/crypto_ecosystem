@@ -320,6 +320,140 @@ def test_horizon_summary_pages_through_more_than_one_hundred_runs(monkeypatch) -
         assert run["id"] in response.text
 
 
+RUN_HORIZON_1H = {
+    "id": "55555555-5555-5555-5555-555555555555",
+    "tenant_id": "tenant-a",
+    "dataset_id": "dataset-3",
+    "horizon": 1,
+    "status": "completed",
+    "created_at": "2026-08-03T00:00:00Z",
+    "completed_at": "2026-08-03T01:00:00Z",
+}
+
+RUN_HORIZON_6H = {
+    "id": "66666666-6666-6666-6666-666666666666",
+    "tenant_id": "tenant-a",
+    "dataset_id": "dataset-3",
+    "horizon": 6,
+    "status": "completed",
+    "created_at": "2026-08-04T00:00:00Z",
+    "completed_at": "2026-08-04T01:00:00Z",
+}
+
+RUN_HORIZON_24H = {
+    "id": "77777777-7777-7777-7777-777777777777",
+    "tenant_id": "tenant-a",
+    "dataset_id": "dataset-3",
+    "horizon": 24,
+    "status": "completed",
+    "created_at": "2026-08-05T00:00:00Z",
+    "completed_at": "2026-08-05T01:00:00Z",
+}
+
+HOUR_RUNS_BODY = {
+    "items": [RUN_HORIZON_1H, RUN_HORIZON_6H, RUN_HORIZON_24H],
+    "limit": 50,
+    "offset": 0,
+    "total": 3,
+}
+
+
+@pytest.mark.parametrize(
+    "hours,expected_run,other_runs",
+    [
+        (1, RUN_HORIZON_1H, [RUN_HORIZON_6H, RUN_HORIZON_24H]),
+        (6, RUN_HORIZON_6H, [RUN_HORIZON_1H, RUN_HORIZON_24H]),
+        (24, RUN_HORIZON_24H, [RUN_HORIZON_1H, RUN_HORIZON_6H]),
+    ],
+)
+def test_horizon_summary_hour_bucket_filters_by_literal_horizon(
+    monkeypatch, hours, expected_run, other_runs
+) -> None:
+    """UAT-010: selecting an hour bucket filters by the literal `horizon`
+    value (1/6/24), no conversion -- matching the day-bucket tests' pattern.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=HOUR_RUNS_BODY)
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get(f"/runs/horizon-summary?unit=hours&hours={hours}")
+
+    assert response.status_code == 200
+    assert expected_run["id"] in response.text
+    for run in other_runs:
+        assert run["id"] not in response.text
+
+
+def test_horizon_summary_hour_bucket_out_of_range_rejected_with_422(monkeypatch) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("gateway-api must not be called for an out-of-range 'hours'")
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get("/runs/horizon-summary?unit=hours&hours=999")
+    assert response.status_code == 422
+
+
+def test_horizon_summary_unsupported_unit_rejected_with_422(monkeypatch) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("gateway-api must not be called for an unsupported 'unit'")
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get("/runs/horizon-summary?unit=weeks&hours=1")
+    assert response.status_code == 422
+
+
+def test_horizon_summary_no_selection_shows_both_selectors(monkeypatch) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("gateway-api must not be called until a bucket is selected")
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get("/runs/horizon-summary")
+
+    assert response.status_code == 200
+    assert "1h" in response.text
+    assert "6h" in response.text
+    assert "24h" in response.text
+    assert "7 days" in response.text
+
+
+def test_horizon_summary_day_bucket_behavior_unchanged_when_unit_defaults(monkeypatch) -> None:
+    """UAT-010: existing day-bucket behavior byte-identical to before -- same
+    assertions as `test_horizon_summary_days_7_shows_only_horizon_168_run`."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["authorization"] == f"Bearer {RAW_KEY}"
+        assert request.url.path == "/runs"
+        return httpx.Response(200, json=RUNS_BODY)
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get("/runs/horizon-summary?days=7")
+
+    assert response.status_code == 200
+    assert RUN_HORIZON_168["id"] in response.text
+    assert RUN_HORIZON_720["id"] not in response.text
+
+
 def test_horizon_summary_template_has_no_banned_positioning_words() -> None:
     template_path = (
         pathlib.Path(__file__).parent.parent / "src" / "app" / "templates" / "horizon_summary.html"

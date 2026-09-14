@@ -104,6 +104,54 @@ def test_runs_list_success_with_multiple_runs(monkeypatch) -> None:
     assert RUNS_LIST_BODY["items"][0]["completed_at"][:10] in response.text
 
 
+def test_runs_list_renders_label_when_present_and_id_stays_visible(monkeypatch) -> None:
+    body = {
+        "items": [
+            {
+                "id": RUN_ID_1,
+                "dataset_id": "dataset-1",
+                "horizon": 24,
+                "status": "completed",
+                "created_at": "2026-08-02T00:00:00Z",
+                "completed_at": "2026-08-02T01:00:00Z",
+                "label": "weekly audit",
+            },
+        ],
+        "limit": 50,
+        "offset": 0,
+        "total": 1,
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=body)
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get("/runs")
+
+    assert response.status_code == 200
+    assert "weekly audit" in response.text
+    assert RUN_ID_1 in response.text
+
+
+def test_runs_list_renders_bare_id_when_label_absent(monkeypatch) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=RUNS_LIST_BODY)
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get("/runs")
+
+    assert response.status_code == 200
+    assert RUN_ID_1 in response.text
+
+
 def test_runs_list_success_with_zero_runs(monkeypatch) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json=EMPTY_RUNS_LIST_BODY)
@@ -194,6 +242,94 @@ def test_runs_list_requires_session(monkeypatch) -> None:
 
     assert response.status_code == 303
     assert response.headers["location"] == "/login"
+
+
+def test_runs_list_pagination_next_link_present_when_more_pages_exist(monkeypatch) -> None:
+    """UAT-009: `total` > one page -> Next link present with correct `offset`;
+    Previous absent on page 1 (`offset == 0`)."""
+    body = {
+        "items": RUNS_LIST_BODY["items"],
+        "limit": 2,
+        "offset": 0,
+        "total": 5,
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=body)
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get("/runs?limit=2&offset=0")
+
+    assert response.status_code == 200
+    assert 'href="/runs?limit=2&offset=2"' in response.text
+    assert "pagination-prev" not in response.text
+
+
+def test_runs_list_pagination_previous_link_present_when_not_first_page(monkeypatch) -> None:
+    body = {
+        "items": RUNS_LIST_BODY["items"],
+        "limit": 2,
+        "offset": 2,
+        "total": 5,
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=body)
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get("/runs?limit=2&offset=2")
+
+    assert response.status_code == 200
+    assert 'href="/runs?limit=2&offset=0"' in response.text
+    assert "pagination-prev" in response.text
+
+
+def test_runs_list_pagination_next_absent_on_last_page(monkeypatch) -> None:
+    """UAT-009: on last page (`offset + limit >= total`), Next absent/disabled."""
+    body = {
+        "items": RUNS_LIST_BODY["items"],
+        "limit": 2,
+        "offset": 4,
+        "total": 5,
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=body)
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get("/runs?limit=2&offset=4")
+
+    assert response.status_code == 200
+    assert "pagination-next" not in response.text
+    assert "pagination-prev" in response.text
+
+
+def test_runs_list_pagination_absent_for_single_page_total(monkeypatch) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=RUNS_LIST_BODY)
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get("/runs")
+
+    assert response.status_code == 200
+    assert "pagination-next" not in response.text
+    assert "pagination-prev" not in response.text
 
 
 def test_runs_list_template_has_no_banned_positioning_words() -> None:

@@ -19,9 +19,11 @@ from app.charting import (
     UNDEFINED_VERDICT_CATEGORY,
     build_dm_verdict_chart,
     build_error_chart,
+    build_headline_verdict_summary,
     build_trend_chart,
     compute_consistency_indicator,
     model_column_label,
+    round_display_value,
 )
 
 _RUN_DETAIL_BODY = {
@@ -565,3 +567,54 @@ def test_model_column_label_plain_when_client_model_present() -> None:
     run = RunDetailResponse(**{**_RUN_DETAIL_BODY, "has_client_model": True})
 
     assert model_column_label(run) == MODEL_COLUMN_LABEL
+
+
+# UAT-003: `build_headline_verdict_summary` -- must reuse the exact same
+# per-split categorization `build_dm_verdict_chart` derives, so their
+# "better" counts can never disagree.
+
+
+def test_build_headline_verdict_summary_matches_dm_verdict_chart_better_count() -> None:
+    run = RunDetailResponse(**{**_RUN_DETAIL_BODY, "has_client_model": True})
+    splits = [
+        _dm_split(0, -1.2, 0.03, "better"),
+        _dm_split(1, -1.2, 0.03, "better"),
+        _dm_split(2, 0.5, 0.6, "worse"),
+        _dm_split(3, None, None, "no significant difference"),
+    ]
+
+    summary = build_headline_verdict_summary(run, splits)
+    chart = build_dm_verdict_chart(splits)
+    chart_better_count = next(bar.count for bar in chart.bars if bar.category == "better")
+
+    assert summary == f"Beat Naive0 on {chart_better_count}/4 splits."
+    assert chart_better_count == 2
+
+
+def test_build_headline_verdict_summary_placeholder_when_no_client_model() -> None:
+    run = RunDetailResponse(**{**_RUN_DETAIL_BODY, "has_client_model": False})
+    splits = [
+        _dm_split(0, -1.2, 0.03, "better"),
+        _dm_split(1, 0.5, 0.6, "worse"),
+    ]
+
+    summary = build_headline_verdict_summary(run, splits)
+
+    assert summary == "Beat NaiveLast placeholder on 1/2 splits -- no client model submitted."
+
+
+def test_build_headline_verdict_summary_none_for_zero_splits() -> None:
+    run = RunDetailResponse(**{**_RUN_DETAIL_BODY, "has_client_model": True})
+
+    assert build_headline_verdict_summary(run, []) is None
+
+
+# UAT-004: fixed-precision rounding for displayed metric values.
+
+
+def test_round_display_value_formats_to_four_decimal_places_with_trailing_zeros() -> None:
+    assert round_display_value(0.6460000000000008) == "0.6460"
+
+
+def test_round_display_value_passes_none_through_unchanged() -> None:
+    assert round_display_value(None) is None

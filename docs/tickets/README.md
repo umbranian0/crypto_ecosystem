@@ -260,6 +260,48 @@ against real diffs (not just dev-agent self-reports) and re-run test suites.
   dashboard-web runs bare rather than in Compose) — not corrected in this pass, left as a known small
   cleanup item for a future docs pass.
 
+## Sprint 39 (docs/sprints/sprint-39.md, backlog: docs/product/backlog-uat-findings.md)
+
+Ten UAT-findings stories in scope, all `services/dashboard-web`. Seven (UAT-003/004/006/007/008/012/013)
+were independently PM-verified as already implemented and passing in the working tree ahead of this
+sprint's ticket breakdown; only UAT-009/UAT-010/UAT-014 required new implementation work this sprint.
+
+| Ticket | Story | Module | Depends on | Status |
+|---|---|---|---|---|
+| [UAT-003](UAT-003.md) | Headline verdict summary on run-detail page | dashboard-web | none | done |
+| [UAT-004](UAT-004.md) | Fixed-precision (4dp) rounding filter for rendered metrics | dashboard-web | none | done |
+| [UAT-006](UAT-006.md) | Make `failure_reason` a real message instead of literal `"0"` | validation-service | none | done |
+| [UAT-007](UAT-007.md) | Type `RunRequest.dataset_reference` in the OpenAPI schema | libs/common, gateway-api | none | done |
+| [UAT-008](UAT-008.md) | Optional run label field | libs/common, gateway-api, validation-service, dashboard-web | UAT-007 (file-ordering only) | done |
+| [UAT-009](UAT-009.md) | Pagination controls on runs list page | dashboard-web | UAT-008 (file-ordering on `runs_list.html` only) | done |
+| [UAT-010](UAT-010.md) | Hour-based (1h/6h/24h) buckets on `/runs/horizon-summary` | dashboard-web | none | done |
+| [UAT-012](UAT-012.md) | Skip-to-content accessibility link | dashboard-web | none | done |
+| [UAT-013](UAT-013.md) | Chart-title heading-level fix | dashboard-web | none | done |
+| [UAT-014](UAT-014.md) | Plain-language `/help/concepts` page | dashboard-web | UAT-012 (file-ordering on `base.html` nav), UAT-008 (file-ordering on `run_new.html`) | done |
+
+**UAT-009/UAT-010/UAT-014 implementation (this sprint's actual delivery)**:
+- **UAT-009**: `runs_list` (`services/dashboard-web/src/app/routers/runs.py`) now passes
+  `page_limit`/`page_offset`/`page_total` (read from the existing `GET /runs` response envelope) to
+  `runs_list.html`, which renders Previous/Next pagination links. No backend change.
+- **UAT-010**: `runs_horizon_summary` gains a `unit` (`"days"`/`"hours"`, default `"days"`) query param
+  and `HORIZON_SUMMARY_HOUR_OPTIONS = (1, 6, 24)`, mapping hour buckets directly to `run.horizon` (no
+  conversion) — additive to the existing day-based buckets, `ADR-0007` unchanged.
+- **UAT-014**: new `src/app/routers/help.py` (`GET /help/concepts`) + `templates/help_concepts.html`,
+  a plain-language purge-gap/walk-forward-window explainer, linked from `base.html`'s nav and
+  `run_new.html`'s form.
+
+See `services/dashboard-web/README.md`'s "Runs list pagination (UAT-009)", "Horizon summary: hour-based
+buckets (UAT-010)", and "Plain-language concepts page (UAT-014)" sections for the full design notes.
+
+**Final suite count, personally re-run by the Tech Lead**: `services/dashboard-web` 341 passed, 7
+deselected (Selenium E2E, environment-gated, unaffected) — up from 319 before this sprint's three
+tickets. `services/validation-service`, `services/gateway-api`, and `libs/common` suites were also
+re-run (untouched by this sprint's scope — dashboard-web is the only module this sprint touches, but
+full-suite discipline is this project's standing convention) with zero regressions.
+
+**QA**: not yet raised as of this ticket-index update — see this sprint's final Tech Lead report for the
+go/no-go verdict once QA has independently validated the batch.
+
 # infra (INF-*) — urgent fix, outside sprint numbering
 
 | Ticket | Story | Depends on | Status |

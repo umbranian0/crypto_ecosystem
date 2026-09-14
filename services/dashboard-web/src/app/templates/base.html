@@ -8,6 +8,7 @@
     <script src="https://unpkg.com/htmx.org@1.9.12"></script>
 </head>
 <body>
+    <a href="#main-content" class="skip-link">Skip to main content</a>
     <header>
         <div class="header-inner">
             <h1>Naive-First -- validation/audit dashboard</h1>
@@ -18,6 +19,7 @@
                 <a href="/runs/horizon-summary" class="{{ 'active' if request.url.path == '/runs/horizon-summary' else '' }}">Horizon summary</a>
                 <a href="/runs/trend" class="{{ 'active' if request.url.path == '/runs/trend' else '' }}">Cross-run variation</a>
                 <a href="/datasets" class="{{ 'active' if request.url.path == '/datasets' else '' }}">Datasets</a>
+                <a href="/help/concepts" class="{{ 'active' if request.url.path == '/help/concepts' else '' }}">Concepts</a>
                 <form method="post" action="/logout" class="logout-form">
                     <button type="submit" class="nav-logout">Log out</button>
                 </form>
@@ -35,7 +37,7 @@
             {% endif %}
         </div>
     </header>
-    <main>
+    <main id="main-content">
         {% block content %}{% endblock %}
     </main>
 </body>

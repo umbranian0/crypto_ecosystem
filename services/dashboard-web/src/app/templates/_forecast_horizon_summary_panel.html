@@ -17,7 +17,7 @@
    comparisons only -- it never implies a future market outcome or advises
    a course of action. #}
 <div class="chart-container">
-    <p class="chart-title">Per-split validation summary (model vs. Naive0)</p>
+    <h4 class="chart-title">Per-split validation summary (model vs. Naive0)</h4>
     <p class="chart-caption">Backtested performance of the model against the Naive0 baseline for
     each walk-forward split, with the Diebold-Mariano benchmark-comparison verdict shown alongside
     each pair. This is a validation/audit summary only.</p>
@@ -48,21 +48,21 @@
             {% for split, verdict_category, verdict_css_slug in horizon_summary_rows %}
             <tr>
                 <td>{{ split.split_index }}</td>
-                <td>{{ split.model_mae }}</td>
-                <td>{{ split.naive0_mae }}</td>
-                <td>{{ split.model_rmse }}</td>
-                <td>{{ split.naive0_rmse }}</td>
-                <td>{{ split.model_smape }}</td>
-                <td>{{ split.naive0_smape }}</td>
-                <td>{{ split.model_mase }}</td>
-                <td>{{ split.naive0_mase }}</td>
-                <td>{{ split.model_da }}</td>
-                <td>{{ split.naive0_da }}</td>
-                <td>{{ split.model_f1 }}</td>
-                <td>{{ split.naive0_f1 }}</td>
-                <td>{{ split.model_oos_r2 }}</td>
-                <td>{{ split.naive0_oos_r2 }}</td>
-                <td>{{ split.dm_pvalue if split.dm_pvalue is not none else "--" }}</td>
+                <td>{{ split.model_mae|round4 }}</td>
+                <td>{{ split.naive0_mae|round4 }}</td>
+                <td>{{ split.model_rmse|round4 }}</td>
+                <td>{{ split.naive0_rmse|round4 }}</td>
+                <td>{{ split.model_smape|round4 }}</td>
+                <td>{{ split.naive0_smape|round4 }}</td>
+                <td>{{ split.model_mase|round4 }}</td>
+                <td>{{ split.naive0_mase|round4 }}</td>
+                <td>{{ split.model_da|round4 }}</td>
+                <td>{{ split.naive0_da|round4 }}</td>
+                <td>{{ split.model_f1|round4 }}</td>
+                <td>{{ split.naive0_f1|round4 }}</td>
+                <td>{{ split.model_oos_r2|round4 }}</td>
+                <td>{{ split.naive0_oos_r2|round4 }}</td>
+                <td>{{ split.dm_pvalue|round4 if split.dm_pvalue is not none else "--" }}</td>
                 <td><span class="verdict-label-{{ verdict_css_slug }}">{{ verdict_category }}</span></td>
             </tr>
             {% endfor %}

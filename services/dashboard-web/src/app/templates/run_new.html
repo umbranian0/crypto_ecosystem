@@ -25,6 +25,16 @@ finding. Compute a returns series before validating if you want a meaningful aud
            placeholder="uat-dataset"
            value="{{ values.dataset_id if values else '' }}">
 
+    <label for="label">
+        Label (optional)
+        <span class="field-tooltip" tabindex="0"
+              data-tooltip="An optional, freeform name for this run to help you find it later -- e.g. 'weekly audit'. Not used by the validation protocol itself. Up to 200 characters."
+              aria-label="An optional, freeform name for this run to help you find it later -- e.g. 'weekly audit'. Not used by the validation protocol itself. Up to 200 characters.">?</span>
+    </label>
+    <input type="text" id="label" name="label" maxlength="200"
+           placeholder="weekly audit"
+           value="{{ values.label if values else '' }}">
+
     <fieldset>
         <legend>Dataset reference (provide exactly one)</legend>
 
@@ -116,6 +126,8 @@ finding. Compute a returns series before validating if you want a meaningful aud
            placeholder="1"
            value="{{ values.horizon if values else '' }}">
     <p class="field-hint" id="horizon-unit-hint" aria-live="polite"></p>
+
+    <p><a href="/help/concepts">What are purge gap and walk-forward windows?</a></p>
 
     <label for="purge_gap_hours">
         Purge gap (hours)

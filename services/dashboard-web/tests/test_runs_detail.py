@@ -126,6 +126,45 @@ def test_run_detail_success_with_splits(monkeypatch) -> None:
     assert "1.0" in response.text  # naive0_mae
 
 
+def test_run_detail_renders_label_when_present_and_id_stays_visible(monkeypatch) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == f"/runs/{RUN_ID}":
+            return httpx.Response(200, json={**RUN_DETAIL_BODY, "label": "weekly audit"})
+        if request.url.path == f"/runs/{RUN_ID}/splits":
+            return httpx.Response(200, json=[SPLIT_BODY])
+        raise AssertionError(f"unexpected path {request.url.path}")
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get(f"/runs/{RUN_ID}")
+
+    assert response.status_code == 200
+    assert "weekly audit" in response.text
+    assert RUN_ID in response.text
+
+
+def test_run_detail_renders_bare_id_when_label_absent(monkeypatch) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == f"/runs/{RUN_ID}":
+            return httpx.Response(200, json=RUN_DETAIL_BODY)
+        if request.url.path == f"/runs/{RUN_ID}/splits":
+            return httpx.Response(200, json=[SPLIT_BODY])
+        raise AssertionError(f"unexpected path {request.url.path}")
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get(f"/runs/{RUN_ID}")
+
+    assert response.status_code == 200
+    assert RUN_ID in response.text
+
+
 def test_run_detail_renders_warning_when_present(monkeypatch) -> None:
     """DH-001: `RunDetailResponse.warnings` (non-empty) renders on the page,
     styled non-fatal (the same `.form-status` class the pre-existing
@@ -1299,3 +1338,174 @@ def test_run_detail_shows_raw_levels_warning_unconditionally_when_splits_present
 
     normalized = re.sub(r"\s+", " ", response.text)
     assert RAW_LEVELS_WARNING_SENTENCE in normalized
+
+
+# UAT-003: headline verdict summary -- one line below the status table, above
+# the per-split table/charts.
+
+
+def test_run_detail_renders_headline_verdict_summary_with_client_model(monkeypatch) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == f"/runs/{RUN_ID}":
+            return httpx.Response(200, json={**RUN_DETAIL_BODY, "has_client_model": True})
+        if request.url.path == f"/runs/{RUN_ID}/splits":
+            return httpx.Response(200, json=[SPLIT_BODY])
+        raise AssertionError(f"unexpected path {request.url.path}")
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get(f"/runs/{RUN_ID}")
+
+    assert response.status_code == 200
+    assert "headline-verdict-summary" in response.text
+    assert "Beat Naive0 on 0/1 splits." in response.text
+
+
+def test_run_detail_renders_headline_verdict_summary_placeholder_caveat(monkeypatch) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == f"/runs/{RUN_ID}":
+            return httpx.Response(200, json={**RUN_DETAIL_BODY, "has_client_model": False})
+        if request.url.path == f"/runs/{RUN_ID}/splits":
+            return httpx.Response(200, json=[SPLIT_BODY])
+        raise AssertionError(f"unexpected path {request.url.path}")
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get(f"/runs/{RUN_ID}")
+
+    assert response.status_code == 200
+    assert "Beat NaiveLast placeholder on 0/1 splits -- no client model submitted." in (
+        response.text
+    )
+
+
+def test_run_detail_omits_headline_verdict_summary_for_zero_splits(monkeypatch) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == f"/runs/{RUN_ID}":
+            body = {**RUN_DETAIL_BODY, "status": "running", "completed_at": None}
+            return httpx.Response(200, json=body)
+        if request.url.path == f"/runs/{RUN_ID}/splits":
+            return httpx.Response(200, json=[])
+        raise AssertionError(f"unexpected path {request.url.path}")
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get(f"/runs/{RUN_ID}")
+
+    assert response.status_code == 200
+    assert "headline-verdict-summary" not in response.text
+
+
+def test_run_detail_preexisting_elements_unchanged_alongside_headline(monkeypatch) -> None:
+    """UAT-003's own explicit acceptance criterion: every pre-existing
+    `run_detail.html` element still renders, unaffected by the new headline.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["authorization"] == f"Bearer {RAW_KEY}"
+        if request.url.path == f"/runs/{RUN_ID}":
+            return httpx.Response(200, json=RUN_DETAIL_BODY)
+        if request.url.path == f"/runs/{RUN_ID}/splits":
+            return httpx.Response(200, json=[SPLIT_BODY])
+        raise AssertionError(f"unexpected path {request.url.path}")
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get(f"/runs/{RUN_ID}")
+
+    assert response.status_code == 200
+    assert RUN_ID in response.text
+    assert "completed" in response.text
+    assert "no significant difference" in response.text
+    assert "1.1" in response.text
+    assert "<svg" in response.text
+    assert "1.0" in response.text
+
+
+# UAT-004: fixed-precision rounding, across the per-split table, the chart
+# partials' raw-number renders, the horizon-summary panel, and the
+# shareable-summary export.
+
+_PRECISE_SPLIT_BODY = {
+    **SPLIT_BODY,
+    "model_mae": 0.6460000000000008,
+    "naive0_mae": 0.6460000000000008,
+    "dm_statistic": 0.6460000000000008,
+    "dm_pvalue": 0.6460000000000008,
+}
+
+
+def test_run_detail_rounds_displayed_values_to_four_decimal_places(monkeypatch) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == f"/runs/{RUN_ID}":
+            return httpx.Response(200, json=RUN_DETAIL_BODY)
+        if request.url.path == f"/runs/{RUN_ID}/splits":
+            return httpx.Response(200, json=[_PRECISE_SPLIT_BODY])
+        raise AssertionError(f"unexpected path {request.url.path}")
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get(f"/runs/{RUN_ID}")
+
+    assert response.status_code == 200
+    assert "0.6460000000000008" not in response.text
+    # Per-split table, error-chart tooltip, and the horizon-summary panel all
+    # route the same raw value through the shared `round4` filter.
+    assert response.text.count("0.6460") >= 3
+
+
+def test_build_shareable_summary_text_rounds_displayed_values() -> None:
+    run = RunDetailResponse(**RUN_DETAIL_BODY)
+    split = SplitResultResponse(**_PRECISE_SPLIT_BODY)
+
+    text = build_shareable_summary_text(run, [split])
+
+    assert "0.6460000000000008" not in text
+    assert "0.6460" in text
+
+
+# UAT-013: chart section titles render as real heading elements
+# (`_error_chart.html`/`_dm_verdict_chart.html`/
+# `_forecast_horizon_summary_panel.html`), not `<p class="chart-title">`.
+
+
+def test_run_detail_chart_titles_render_as_heading_elements(monkeypatch) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == f"/runs/{RUN_ID}":
+            return httpx.Response(200, json=RUN_DETAIL_BODY)
+        if request.url.path == f"/runs/{RUN_ID}/splits":
+            return httpx.Response(200, json=[SPLIT_BODY])
+        raise AssertionError(f"unexpected path {request.url.path}")
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get(f"/runs/{RUN_ID}")
+
+    assert response.status_code == 200
+    assert '<h4 class="chart-title">' in response.text
+    # One heading per touched partial: error chart, DM-verdict chart, and the
+    # horizon-summary panel (the DM-verdict chart contributes only one here,
+    # since this fixture carries no client-supplied baseline second title).
+    assert response.text.count('<h4 class="chart-title">') == 3
+    # `_shareable_summary.html` (FHS-004, out of UAT-013's own file scope)
+    # still renders its own `<p class="chart-title">` unchanged -- only the
+    # three named partials' titles became headings.
+    assert response.text.count('<p class="chart-title">') == 1
