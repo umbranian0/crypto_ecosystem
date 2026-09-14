@@ -142,6 +142,76 @@ two new `RunDetailResponse` fields, which broke `services/gateway-api`'s
 assertion). Fixed directly -- added `feature_lineage`/`has_multimodal_features` to that test's expected key
 set; `services/gateway-api`'s full suite re-run, 209 passed, 0 failed. Ticket marked **done**.
 
+## Sprint 37 (docs/sprints/sprint-37.md, backlog: docs/product/backlog-first-run-setup-and-ops.md)
+
+SETUP-034 (Must) then SETUP-035 (Should), sequenced strictly one-at-a-time — both touch
+`services/dashboard-web/src/app/routers/operator.py` and the operator-login template, per this
+repo's established same-file-collision discipline (Sprint 14/24/35 precedent). Closes a live
+operator-reported gap: the `DASH-113` (Sprint 18) operator-login/session mechanism already worked
+but nothing in the rendered UI linked to it, and the login accepted any non-empty token
+unvalidated.
+
+| Ticket | Story | Module | Depends on | Status |
+|---|---|---|---|---|
+| [SETUP-034](SETUP-034.md) | Make the existing operator login reachable by clicking through the UI (nav link, operator `<nav>` block, `POST /operator-logout`) | dashboard-web | none | done |
+| [SETUP-035](SETUP-035.md) | Reject an invalid operator token at login time via lazy validation against `GET /tenants` | dashboard-web | SETUP-034 (same file/route) | done |
+
+**Outcome**: both tickets built and Tech-Lead-verified sequentially, real diffs read directly (not
+just the dev agents' self-reports).
+
+- SETUP-034: `login.html` gained a secondary `/operator-login` link; `base.html` gained a second,
+  independently-gated (`{% if %}`, not `{% elif %}`) operator `<nav>` block linking to
+  `/settings/tenants`, `/settings/environment`, `/monitoring`, plus a logout control;
+  `OperatorSessionStore` gained a `delete()` method mirroring `SessionStore.delete` exactly; new
+  `POST /operator-logout` (`operator.py`) reuses it plus `Response.delete_cookie`, mirroring
+  `DASH-007`'s tenant `POST /logout` one-for-one. Zero changes to `require_operator_session`,
+  `OperatorSessionStore.get`/`.create`, or the existing `POST /operator-login` handler's logic —
+  confirmed via direct diff read. `services/dashboard-web` suite: 298 passed, 7 deselected (up from
+  289 pre-sprint), personally re-run by the Tech Lead and matching the dev agent's own report.
+- SETUP-035: `operator_login_submit` (`operator.py`) now lazy-validates the submitted token against
+  gateway-api's existing `GET /tenants` (`SETUP-011`, already operator-gated via
+  `get_authenticated_operator`) before creating a session — the same pattern `DASH-002`'s tenant
+  `login_submit` already established. Both `401` and `403` are treated as "invalid token"
+  (`get_authenticated_operator`'s two real rejection branches, `GW-021`/`SETUP-010`), redisplaying
+  the form with a clear error (`422`); a transport failure (`ConnectError`/`TimeoutException`)
+  redisplays with a generic "unreachable" error (`502`), never treated as valid. No new
+  `gateway-api` endpoint introduced — `services/gateway-api` confirmed untouched (`git diff --stat`
+  empty for that module). `services/dashboard-web` suite: 301 passed, 7 deselected, personally
+  re-run by the Tech Lead and matching the dev agent's own report.
+- **Documentation**: `services/dashboard-web/README.md` updated for both tickets (new "Operator
+  login discoverability + operator nav + logout (SETUP-034)" and "Operator login token validation
+  (SETUP-035)" sections; the stale `DASH-113` "Known gaps" bullet about the unvalidated token
+  removed). `docs/product/backlog-first-run-setup-and-ops.md`'s SETUP-034/035 entries marked done
+  with acceptance-criteria boxes checked, pointing to their ticket files.
+- **QA verdict (independent `qa` subagent pass, raised after both tickets Tech-Lead-verified
+  done)**: **GO**. Independently re-read every changed file against both tickets' acceptance
+  criteria, confirmed `require_operator_session`/`OperatorSessionStore.get`/`.create`/
+  `operator_login_form` byte-for-byte unchanged, confirmed `services/gateway-api` has zero diff
+  for this sprint, independently re-ran `services/dashboard-web`'s full suite and reproduced the
+  exact same count (301 passed, 7 deselected). Traced `operator_login_submit`'s control flow
+  directly and confirmed no code path lets a failed/ambiguous `GET /tenants` validation reach
+  `store.create` — the ticket's own single highest-stakes review item. Confirmed `POST
+  /operator-logout` genuinely invalidates the session (a re-attached stale cookie is rejected by
+  `require_operator_session` on a real gated route afterward), not just a redirect. Confirmed the
+  operator `<nav>` block gates independently of the tenant block (`{% if %}`/`{% if %}`, not
+  `{% elif %}`). No positioning-rule violations. One non-blocking note: `services/gateway-api`'s
+  own suite could not be executed in QA's environment (unrelated Windows file-permission error on
+  `uv.lock`) — assessed as low regression risk given zero `gateway-api` diff, disclosed rather than
+  silently skipped, and independently confirmed by the Tech Lead post-QA (see below).
+- **Live rebuild/redeploy (Tech Lead, post-QA)**: `naive-first-dashboard-web` was running a
+  pre-Sprint-37 image at the time of QA's check (`GET /login` did not yet show the
+  `/operator-login` link). `docker compose build dashboard-web gateway-api` +
+  `docker compose up -d --force-recreate dashboard-web gateway-api` run against
+  `infra/docker-compose.yml`; both containers recreated and confirmed `Started`/healthy. Verified
+  with real requests against the live stack: `curl http://localhost:8004/health` and
+  `curl http://localhost:8000/health` both return `{"status":"ok"}`; `curl http://localhost:8004/login`
+  now serves `<p class="secondary-login-link">Platform operator? <a href="/operator-login">Log in
+  here</a></p>` — SETUP-034's link is live in production, not just in the working tree.
+  `services/gateway-api`'s own test suite could not be executed in this session's environment (a
+  pre-existing Windows file-permission error on `uv.lock`, unrelated to this sprint's zero-diff
+  status for that module — QA hit the identical error independently) — disclosed, not silently
+  skipped; zero code risk given the confirmed-empty `git diff` for that service this sprint.
+
 **Sprint 32 Outcome**: all six in-scope tickets (SETUP-011/012/015/020/021/022) are done, each verified
 against real diffs (not just dev-agent self-reports) and re-run test suites.
 

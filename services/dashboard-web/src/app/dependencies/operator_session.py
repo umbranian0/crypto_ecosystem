@@ -61,6 +61,13 @@ class OperatorSessionStore:
     def get(self, session_id: str) -> str | None:
         return self._sessions.get(session_id)
 
+    def delete(self, session_id: str) -> None:
+        """SETUP-034: mirrors `SessionStore.delete`
+        (`app.dependencies.session`) exactly -- pops the key if present,
+        no-op/no-raise if absent. Added for `POST /operator-logout`.
+        """
+        self._sessions.pop(session_id, None)
+
 
 _operator_store = OperatorSessionStore()
 

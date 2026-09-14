@@ -456,6 +456,15 @@ button:disabled {
   font-size: 0.9rem;
 }
 
+/* SETUP-034: a small, clearly secondary affordance below the tenant login
+   form -- deliberately muted/smaller than the primary form, never a second
+   submit button inside it. */
+.secondary-login-link {
+  margin-top: var(--space-5);
+  font-size: 0.85rem;
+  color: var(--color-text-muted, #6b7280);
+}
+
 /* Tables */
 
 .table-scroll {

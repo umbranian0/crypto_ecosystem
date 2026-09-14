@@ -60,6 +60,16 @@ def test_get_login_renders_form() -> None:
     assert 'action="/login"' in response.text
 
 
+def test_login_page_links_to_operator_login() -> None:
+    """SETUP-034: a small, clearly secondary link to `/operator-login`."""
+    client = TestClient(app)
+    response = client.get("/login")
+
+    assert response.status_code == 200
+    assert 'href="/operator-login"' in response.text
+    assert "operator" in response.text.lower()
+
+
 def test_valid_key_creates_session_and_redirects() -> None:
     transport = _RecordingTransport(status_code=404)
     client = _make_client(transport)

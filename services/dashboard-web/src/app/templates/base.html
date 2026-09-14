@@ -23,6 +23,16 @@
                 </form>
             </nav>
             {% endif %}
+            {% if request.cookies.get('operator_session_id') %}
+            <nav class="main-nav operator-nav">
+                <a href="/settings/tenants" class="{{ 'active' if request.url.path == '/settings/tenants' else '' }}">Tenants</a>
+                <a href="/settings/environment" class="{{ 'active' if request.url.path == '/settings/environment' else '' }}">Environment</a>
+                <a href="/monitoring" class="{{ 'active' if request.url.path == '/monitoring' else '' }}">Monitoring</a>
+                <form method="post" action="/operator-logout" class="logout-form">
+                    <button type="submit" class="nav-logout">Log out</button>
+                </form>
+            </nav>
+            {% endif %}
         </div>
     </header>
     <main>

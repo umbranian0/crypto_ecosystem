@@ -259,11 +259,9 @@ either response.
 **Known gaps (disclosed, not silent)**:
 - `GW-011` (JWT session auth) is not built either -- login uses `gateway-api`'s existing API-key auth
   (`GW-006`) instead (backlog decision 3).
-- `DASH-113`'s `POST /operator-login` does not validate the submitted operator token against
-  gateway-api at all (no gateway-api endpoint validates a bare token today) -- any non-empty token is
-  accepted and stored. `DASH-112`'s `/settings/connectors` (and now `SETUP-012`'s `/settings/tenants`)
-  are the routes that actually call an operator-gated gateway-api endpoint, so an invalid token surfaces
-  as that call's own `401`/`403` (rendered as the generic `error.html`), not at login time.
+- `SETUP-035` closed the `DASH-113`-era gap above: `POST /operator-login` now validates the
+  submitted operator token against gateway-api's `GET /tenants` (`SETUP-011`) before creating a
+  session -- see "Operator login token validation (SETUP-035)" below.
 - `DASH-112`'s `tenant_id` field is a plain manual-entry text input -- no tenant directory/dropdown
   exists yet to look one up or validate it against (an honest reflection of that gap, not a silently
   degraded feature). `SETUP-011` (tenant list/create/revoke admin endpoints, backlog
@@ -876,13 +874,13 @@ UI)/`SETUP-020` (monitoring epic) pulled into Sprint 18 for `DASH-109`/`110`/`11
 setup wizard and tenant-management UI remain that other backlog's own scope, not built here:
 
 - `GET /operator-login` renders a single-field (operator token) form; `POST /operator-login`
-  (`src/app/routers/operator.py`, new router module) does **not** call gateway-api to validate the
-  submitted token (no gateway-api endpoint validates a bare token without also doing something else
-  yet, per the ticket's own Analysis section) -- any non-empty token is stored, unvalidated, in
-  `OperatorSessionStore` (`src/app/dependencies/operator_session.py`) and set as an `operator_session_id`
-  cookie (`httponly`, `samesite=lax`, `secure` gated by the same `DASHBOARD_COOKIE_SECURE` env var
-  DASH-002 already reads), then redirects (303) to `/monitoring`. A blank submission redisplays the
-  form with a `422` and an error, the same convention `login.html`'s own empty-key path established.
+  (`src/app/routers/operator.py`, new router module) lazy-validates the submitted token against
+  gateway-api before creating a session -- see "Operator login token validation (SETUP-035)" below.
+  A validated token is stored in `OperatorSessionStore` (`src/app/dependencies/operator_session.py`)
+  and set as an `operator_session_id` cookie (`httponly`, `samesite=lax`, `secure` gated by the same
+  `DASHBOARD_COOKIE_SECURE` env var DASH-002 already reads), then redirects (303) to `/monitoring`.
+  A blank submission redisplays the form with a `422` and an error, the same convention `login.html`'s
+  own empty-key path established.
 - **Structurally distinct from the tenant session** (DASH-002/003, Review acceptance criteria): a
   different cookie name (`operator_session_id` vs `session_id`), a different store instance/namespace
   (`OperatorSessionStore` vs `SessionStore`, no shared dict), and a different dependency
@@ -914,6 +912,28 @@ setup wizard and tenant-management UI remain that other backlog's own scope, not
   `crawl_statuses is none`, so an authenticated tenant hitting a transient `_fetch_crawl_statuses`
   failure now sees a generic "results currently unavailable" message rather than the misleading "Log
   in..." prompt -- see "Last crawl status panel (DASH-109)" below for the panel itself.
+
+### Operator login token validation (SETUP-035)
+
+Closes the `DASH-113`-era gap above: `POST /operator-login` no longer accepts any non-empty token
+unvalidated. After the existing empty-token check, it calls gateway-api's `GET /tenants` (`SETUP-011`,
+already operator-gated via `get_authenticated_operator`) with `{"X-Operator-Token": <submitted
+token>}`, via `GatewayApiUrlDep` and a short-lived `httpx.Client(base_url=..., timeout=
+DOWNSTREAM_HTTP_TIMEOUT_SECONDS)` -- the same lazy-validation shape `auth.py`'s `login_submit`
+(`DASH-002`) already established for tenant login, reused not reinvented. No new gateway-api endpoint
+was introduced solely for this check.
+
+- **`401`/`403` both mean "invalid," not two different errors**: `get_authenticated_operator`
+  (`GW-021`/`SETUP-010`) returns `401` for a missing/unknown/revoked token and `403` for a
+  real-but-wrong-kind tenant key -- both are a genuine rejection from the operator's own point of view,
+  so both redisplay the same "Invalid operator token." error (`422`), not two differently-worded
+  messages. Any other status (including `200`) is treated as valid; the happy path (session creation,
+  cookie set, redirect to `/monitoring`) is otherwise unchanged.
+- **Transport failure is never treated as valid**: `httpx.ConnectError`/`httpx.TimeoutException`
+  redisplay the form with a generic "gateway-api is unreachable. Please try again shortly." error,
+  `502`, matching `DASH-002`'s own transport-failure convention exactly -- an unreachable gateway-api
+  must never fall through to session creation.
+- See `tests/test_operator_login.py` for the `401`/`403`/`ConnectError`/`200` coverage.
 
 ### Last crawl status panel (DASH-109)
 
@@ -1866,3 +1886,54 @@ route`/`test_revoke_own_session_cannot_reach_route`).
   (`SETUP-021`'s own logged-in-operator cases) updated to also stub `/system/runs-summary` /
   `/diagnostics/recent-errors` in their fake transport handlers, since `monitoring()` now issues both
   calls whenever an operator session is present.
+
+### Operator login discoverability + operator nav + logout (SETUP-034)
+
+`DASH-113` (Sprint 18) shipped a real, distinct operator login flow (`GET`/`POST /operator-login`,
+`OperatorSessionStore`, `require_operator_session`, the `operator_session_id` cookie), but nothing in
+`login.html`/`base.html` linked to it -- a pure discoverability gap. `SETUP-034` closes it, plus adds
+the one piece that was genuinely missing: an operator-scoped nav block and a real `POST
+/operator-logout` route (previously an operator session could only expire, never be explicitly ended).
+
+- **`src/app/templates/login.html`**: a small `<p class="secondary-login-link">` below the tenant
+  login form -- "Platform operator? [Log in here](/operator-login)" -- styled via a new,
+  muted/smaller `.secondary-login-link` CSS rule (`src/app/static/style.css`) so it reads as
+  clearly secondary, not a second tenant-login affordance and not a second `<button>` inside the
+  existing `<form>`.
+- **`src/app/templates/base.html`**: a second `<nav class="main-nav operator-nav">` block, gated
+  independently on `request.cookies.get('operator_session_id')` -- a separate `{% if %}`, not an
+  `{% elif %}` chained off the existing tenant `session_id`-gated nav block, so both can render
+  simultaneously when both cookies are present (this is the ticket's own binding structural
+  requirement). Links to `/settings/tenants`, `/settings/environment`, `/monitoring`, plus a
+  `<form method="post" action="/operator-logout">`/`<button class="nav-logout">` pair mirroring the
+  existing tenant `<form method="post" action="/logout">` shape exactly (same CSS classes,
+  `.logout-form`/`.nav-logout`, reused not duplicated).
+- **`POST /operator-logout`** (`src/app/routers/operator.py`, added next to `operator_login_submit`,
+  same adjacency precedent `auth.py`'s `POST /login`/`POST /logout` pair already set): reads the raw
+  `operator_session_id` cookie, calls `OperatorSessionStore.delete` (new this ticket) if present,
+  clears the cookie via `Response.delete_cookie`, redirects (`303`) to `/operator-login`. Follows
+  `auth.py`'s `POST /logout` (`DASH-007`) shape one-for-one -- no second logout-handling style.
+  Contract: a valid `operator_session_id` cookie is deleted from the store and the request is
+  redirected; a missing/already-invalid cookie is a safe no-op (no exception), same redirect.
+- **`OperatorSessionStore.delete(session_id)`** (`src/app/dependencies/operator_session.py`, new):
+  mirrors `SessionStore.delete` (`src/app/dependencies/session.py`, DASH-002's tenant store)
+  exactly -- pops the key if present, no-op/no-raise if absent. `require_operator_session`,
+  `OperatorSessionStore.get`/`.create`, and the existing `GET`/`POST /operator-login` handlers are
+  byte-for-byte unchanged by this ticket.
+- **Disclosed gap, `/settings/environment`**: this ticket's own source ticket
+  (`docs/tickets/SETUP-034.md`) states this route did not exist at the time the ticket was written
+  and that the nav link might 404 -- since then, `SETUP-015` shipped a real `GET
+  /settings/environment` route (`src/app/routers/settings_environment.py`), so the link is live as
+  of this entry, not a dangling placeholder. Recorded here for anyone reading the ticket text
+  literally: that specific disclosed gap has since closed.
+- **Tests**: `tests/test_base_nav.py` (new) renders a real page (`GET /login`, unauthenticated, so
+  reachable regardless of cookie state) across all four `session_id`/`operator_session_id`
+  cookie-presence combinations and asserts the tenant/operator nav blocks render independently
+  (including both-simultaneously). `tests/test_operator_logout.py` (new) mirrors
+  `test_logout.py`'s (DASH-007) fixture/cleanup style: session deleted from the store, cookie
+  cleared (`Max-Age=0`/`expires` on the `Set-Cookie` header), `303` redirect to `/operator-login`,
+  a no-session-present call is a safe no-op, and a stale post-logout cookie is rejected by
+  `require_operator_session` on a real gated route. `tests/test_auth.py` gained
+  `test_login_page_links_to_operator_login` asserting the new link's presence. Full suite: 298
+  unit passed (up from 289), 7 deselected (Selenium E2E, unaffected by this ticket), zero
+  regressions.

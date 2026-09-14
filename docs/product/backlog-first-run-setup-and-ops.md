@@ -286,7 +286,7 @@ Depends on: SETUP-011
 See `docs/tickets/SETUP-012.md` and `services/dashboard-web/README.md`'s "Settings: tenant management
 (SETUP-012)" section for the full implementation record.
 
-### SETUP-034 — `dashboard-web`: make the existing operator login reachable by clicking through the UI [Must]
+### SETUP-034 — `dashboard-web`: make the existing operator login reachable by clicking through the UI [Must] — Done, see `docs/tickets/SETUP-034.md`
 
 **Context (discovered-done check, same discipline `SETUP-010` applied to itself):** `DASH-113`
 (Sprint 18) already shipped a real, distinct operator login flow -- `GET`/`POST /operator-login`
@@ -311,35 +311,40 @@ functionality by clicking through the UI, the same way a tenant already clicks t
 of hand-typing a URL I'd have to already know.
 
 Acceptance criteria:
-- [ ] `login.html` (the existing tenant login page) adds a small, clearly secondary link to
+- [x] `login.html` (the existing tenant login page) adds a small, clearly secondary link to
   `/operator-login` (e.g. "Platform operator? Log in here") -- styled/positioned so it is obviously not
   a second way to log in as a tenant, avoiding the exact merge-back-together `SETUP-010`'s README
   explicitly warned against.
-- [ ] `base.html` gains a second, operator-scoped `<nav>` block, rendered when
+- [x] `base.html` gains a second, operator-scoped `<nav>` block, rendered when
   `request.cookies.get('operator_session_id')` is present, linking to `/settings/tenants`,
   `/settings/environment`, and `/monitoring`, plus a logout control for that session -- structurally
   parallel to, but never merged with, the existing tenant nav block (which stays gated on `session_id`
   only).
-- [ ] The tenant nav block and the new operator nav block render independently based on which cookie(s)
+- [x] The tenant nav block and the new operator nav block render independently based on which cookie(s)
   are present (a browser could plausibly hold both, e.g. an operator who is also testing as a tenant) --
   a template test covers all four cookie-presence combinations (tenant only, operator only, both,
   neither) and asserts the correct block(s) render.
-- [ ] A new `POST /operator-logout` (`src/app/routers/operator.py`, same module `DASH-113` already
+- [x] A new `POST /operator-logout` (`src/app/routers/operator.py`, same module `DASH-113` already
   owns) reuses `OperatorSessionStore.delete` and `Response.delete_cookie` -- the exact same mechanism
   `DASH-007`'s tenant `POST /logout` already established, not a second one -- and redirects to
   `/operator-login`. (No operator logout route exists today -- confirmed absent from
   `services/dashboard-web/README.md`.)
-- [ ] No change to `require_operator_session`, `OperatorSessionStore`, or the `POST /operator-login`
+- [x] No change to `require_operator_session`, `OperatorSessionStore`, or the `POST /operator-login`
   handler's own logic -- this story is templates/nav/one new logout route only, not a rebuild of
   `DASH-113`'s mechanism.
-- [ ] Positioning check: no new copy implies trading/prediction capability (CLAUDE.md).
+- [x] Positioning check: no new copy implies trading/prediction capability (CLAUDE.md).
+
+**Done** (`docs/tickets/SETUP-034.md`) -- see `services/dashboard-web/README.md`'s "Operator login
+discoverability + operator nav + logout (SETUP-034)" section for the full implementation record.
 
 Rationale for priority: Must -- directly closes the operator's reported real pain point, and the
 backend mechanism it depends on (`DASH-113`) already exists and is already tested; this is the
 smallest change that makes it actually usable, not new infrastructure.
 Depends on: none (SETUP-010/DASH-113 already shipped)
 
-### SETUP-035 — `gateway-api`/`dashboard-web`: reject an invalid operator token at login time, not on first use [Should]
+### SETUP-035 — `gateway-api`/`dashboard-web`: reject an invalid operator token at login time, not on first use [Should] -- done
+
+Ticket: `docs/tickets/SETUP-035.md`.
 
 **As** an operator **I want** `POST /operator-login` to tell me immediately if the token I typed is
 wrong, rather than accepting any non-empty value and only failing later on the first `/settings/*`
@@ -347,17 +352,17 @@ call **so that** a typo doesn't look like a successful login until I click into 
 generic `error.html`.
 
 Acceptance criteria:
-- [ ] `POST /operator-login` performs one lazy-validation call against an already-existing
+- [x] `POST /operator-login` performs one lazy-validation call against an already-existing
   operator-gated `gateway-api` endpoint (e.g. `GET /tenants`, `SETUP-011`) -- the same "cheap,
-  reuse-what-exists" pattern `DASH-002`'s own tenant-login lazy validation already established (a `403`
-  unambiguously means "invalid token"; any non-`403`/`401` response is treated as valid). No new
+  reuse-what-exists" pattern `DASH-002`'s own tenant-login lazy validation already established (`401`
+  and `403` both unambiguously mean "invalid token"; any other response is treated as valid). No new
   gateway-api endpoint is introduced solely for this check.
-- [ ] An invalid token redisplays `/operator-login` with a clear "invalid operator token" error, not a
+- [x] An invalid token redisplays `/operator-login` with a clear "invalid operator token" error, not a
   silent accept followed by a confusing later failure.
-- [ ] A transport-level failure (gateway-api unreachable) redisplays the form with a generic
+- [x] A transport-level failure (gateway-api unreachable) redisplays the form with a generic
   "unreachable" error, matching `DASH-002`'s own transport-failure convention -- never treated as "token
   valid."
-- [ ] `services/dashboard-web/README.md`'s "Known gaps" entry for `DASH-113`'s unvalidated-token
+- [x] `services/dashboard-web/README.md`'s "Known gaps" entry for `DASH-113`'s unvalidated-token
   behavior is removed/updated once this ships.
 
 Rationale for priority: Should -- real correctness/UX improvement, but the token is already fully

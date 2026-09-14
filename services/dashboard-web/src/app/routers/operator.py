@@ -180,6 +180,8 @@ router = APIRouter()
 
 _OPERATOR_SESSION_COOKIE_NAME = "operator_session_id"
 _EMPTY_TOKEN_ERROR = "Operator token is required."
+_UNREACHABLE_ERROR = "gateway-api is unreachable. Please try again shortly."
+_INVALID_TOKEN_ERROR = "Invalid operator token."
 
 
 @router.get("/operator-login")
@@ -191,8 +193,21 @@ def operator_login_form(request: Request):
 def operator_login_submit(
     request: Request,
     store: OperatorSessionStoreDep,
+    base_url: GatewayApiUrlDep,
     operator_token: str = Form(...),
 ):
+    """SETUP-035: lazy-validates the submitted token against gateway-api's
+    `GET /tenants` (`SETUP-011`, already operator-gated via
+    `get_authenticated_operator`) before creating a session -- the same
+    lazy-validation pattern `auth.py`'s `login_submit` (`DASH-002`) already
+    established for tenant login, no second pattern invented. `401`/`403`
+    are both treated as "this token did not authenticate as the operator"
+    (`get_authenticated_operator`'s own two rejection branches, `GW-021`/
+    `SETUP-010`) and redisplay the same invalid-token error -- neither is
+    more "valid" than the other from this handler's point of view. A
+    transport failure never counts as valid, matching `DASH-002`'s own
+    precedent that an unreachable gateway-api must not silently accept.
+    """
     if not operator_token.strip():
         return templates.TemplateResponse(
             request,
@@ -201,7 +216,27 @@ def operator_login_submit(
             status_code=422,
         )
 
-    session_id = store.create(operator_token.strip())
+    stripped_token = operator_token.strip()
+    try:
+        with httpx.Client(base_url=base_url, timeout=DOWNSTREAM_HTTP_TIMEOUT_SECONDS) as client:
+            response = client.get("/tenants", headers={"X-Operator-Token": stripped_token})
+    except (httpx.ConnectError, httpx.TimeoutException):
+        return templates.TemplateResponse(
+            request,
+            "operator_login.html",
+            {"error": _UNREACHABLE_ERROR},
+            status_code=502,
+        )
+
+    if response.status_code in (401, 403):
+        return templates.TemplateResponse(
+            request,
+            "operator_login.html",
+            {"error": _INVALID_TOKEN_ERROR},
+            status_code=422,
+        )
+
+    session_id = store.create(stripped_token)
     redirect = RedirectResponse(url="/monitoring", status_code=303)
     redirect.set_cookie(
         key=_OPERATOR_SESSION_COOKIE_NAME,
@@ -210,6 +245,28 @@ def operator_login_submit(
         samesite="lax",
         secure=cookie_secure(),
     )
+    return redirect
+
+
+@router.post("/operator-logout")
+def operator_logout(
+    request: Request,
+    store: OperatorSessionStoreDep,
+):
+    """SETUP-034: mirrors `auth.py`'s `POST /logout` (`DASH-007`) shape
+    one-for-one -- reads the raw `operator_session_id` cookie, calls the
+    store's `delete` (new this ticket, imported not reimplemented), clears
+    the cookie via `Response.delete_cookie`, and redirects (303) to
+    `/operator-login`. A missing/already-invalid session is a safe no-op
+    (`OperatorSessionStore.delete`'s own no-raise-if-absent behavior), same
+    as `POST /logout`'s own precedent.
+    """
+    session_id = request.cookies.get(_OPERATOR_SESSION_COOKIE_NAME)
+    if session_id is not None:
+        store.delete(session_id)
+
+    redirect = RedirectResponse(url="/operator-login", status_code=303)
+    redirect.delete_cookie(_OPERATOR_SESSION_COOKIE_NAME)
     return redirect
 
 
