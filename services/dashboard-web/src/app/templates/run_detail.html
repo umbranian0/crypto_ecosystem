@@ -37,6 +37,7 @@ before validating if you want a meaningful audit.</p>
 splits below -- full per-split detail for this run remains available via the API
 (<code>GET /runs/{{ run.id }}/splits</code>).</p>
 {% endif %}
+{% include "_feature_lineage.html" %}
 {% include "_forecast_horizon_summary_panel.html" %}
 {% include "_shareable_summary.html" %}
 {% include "_error_chart.html" %}

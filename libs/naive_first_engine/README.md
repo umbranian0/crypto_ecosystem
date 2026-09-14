@@ -14,7 +14,8 @@ libs/naive_first_engine/
 │   ├── metrics.py                # MAE, RMSE, sMAPE, MASE, DA, F1, naive-relative out-of-sample R²
 │   ├── dm_test.py                 # Diebold-Mariano + Harvey et al. 1997 long-run variance correction
 │   ├── report_schema.py           # typed result objects (SplitBoundaries, MetricSet, DMResult, SplitResult)
-│   └── protocol.py                # NFE-014: sixth file, added beyond implementation-plan.md section 3's original five-file list -- run_validation_protocol (Template Method) needs a home that isn't report_schema.py, to keep that module a pure data contract
+│   ├── protocol.py                # NFE-014: sixth file, added beyond implementation-plan.md section 3's original five-file list -- run_validation_protocol (Template Method) needs a home that isn't report_schema.py, to keep that module a pure data contract
+│   └── candidate_model.py         # MDF-004-01/ADR-0010: additive, multi-column CandidateModel Strategy interface -- NOT wired into protocol.py, interface-only
 └── tests/                        # pytest; includes regression tests vs the thesis's published 1h numbers
 ```
 
@@ -33,6 +34,8 @@ libs/naive_first_engine/
 **Standalone publishability check (NFE-017)**: [`scripts/check_standalone.py`](scripts/check_standalone.py) installs this package into a clean, throwaway venv (no `-e`, no workspace-root resolution) and runs a smoke `import naive_first_engine` + minimal `run_validation_protocol` call from inside it, proving the package is pip-installable and usable standalone. Re-run it (`python scripts/check_standalone.py` from within `libs/naive_first_engine`) whenever `pyproject.toml`'s dependencies change.
 
 **Urgent leakage fix (NFE-019)**: `generate_splits` now raises `ValueError` for any `purge_gap < 0` (both `int` and `pd.Timedelta` kinds), fixed at the shared entry point rather than per-branch. A negative `purge_gap` previously let `_generate_splits_by_position` produce a split whose `test_start` fell inside the train window — real train/test row overlap, not cosmetic. `_generate_splits_by_time` was already structurally safe and required no change. See [docs/tickets/NFE-019.md](../../docs/tickets/NFE-019.md).
+
+**Multimodal candidate-model interface analysis (MDF-004-01, 2026-09-14)**: `Baseline.predict(train: pd.Series, test: pd.Series) -> pd.Series` is unchanged — it governs only the mandatory Naive0/NaiveLast benchmarks and the DM-test error Series, not a candidate model's own inference call, so there was no forcing reason to touch it (`baselines.py`/`splitting.py`/`dm_test.py` all have a zero-line diff for this ticket). A new, additive `CandidateModel` Strategy interface was added in a new module, `candidate_model.py` (`predict(train_features: pd.DataFrame, train_target: pd.Series, test_features: pd.DataFrame) -> pd.Series`), for a future candidate model that consumes a multi-column feature `DataFrame` (e.g. `services/validation-service`'s `FeatureDatasetAssembler` output, MDF-003) and predicts on the same target — kept purely additive and **not wired into `protocol.py` or any call site** (interface-design-only, per this ticket's scope). See [docs/adr/0010-multimodal-candidate-model-interface.md](../../docs/adr/0010-multimodal-candidate-model-interface.md).
 
 ## Public API
 
@@ -69,6 +72,13 @@ Implementation-plan.md section 8: "for libs, the public function signatures in t
 ### `protocol.py`
 - `ValidationConfig` (class)
 - `run_validation_protocol(series, config)`
+
+`candidate_model.py`'s `CandidateModel` Strategy interface (MDF-004-01/ADR-0010) is deliberately **not**
+listed in the machine-checked module list above — `scripts/check_doc_sync.py`'s `MODULE_NAMES` is a fixed
+six-module list (NFE-018) and this ticket does not extend it, since `candidate_model.py` is not yet wired
+into any call site. `CandidateModel.predict(train_features: pd.DataFrame, train_target: pd.Series,
+test_features: pd.DataFrame) -> pd.Series` is documented in prose above (Status section) and in the
+module's own docstring instead.
 
 ## CI
 

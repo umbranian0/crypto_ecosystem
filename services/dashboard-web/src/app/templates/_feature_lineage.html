@@ -1,0 +1,41 @@
+{# MDF-005-01: feature-set composition (sources/fields) for a run whose
+   assembled feature table drew on more than one source (`run.
+   has_multimodal_features` true, VS-030's derived flag). Reuses the same
+   `.chart-container`/`.chart-title`/`.chart-caption`/`.table-scroll` classes
+   every other run-detail section already uses (`_dm_verdict_chart.html`,
+   the per-split validation summary panel partial) -- no new color/CSS
+   variable, no "multimodal mode" badge or visual treatment implying elevated
+   confidence.
+   `run.feature_lineage` (`[{"source", "field", "lag_hours"}, ...]`) is shown
+   verbatim, as a validation/composition fact alongside the naive-baseline +
+   candidate-model + DM-verdict presentation, never as evidence the extra
+   sources improve accuracy -- that judgment is exactly what the DM-verdict
+   panel above already renders, neutrally, regardless of source count. #}
+{% if run.has_multimodal_features %}
+<div class="chart-container">
+    <p class="chart-title">Feature-set composition</p>
+    <p class="chart-caption">The sources and fields assembled into this run's feature table --
+    a validation/composition fact only, not evidence that combining sources changes the
+    benchmark-comparison verdict shown above or below.</p>
+    <div class="table-scroll">
+    <table class="feature-lineage-table">
+        <thead>
+            <tr>
+                <th>Source</th>
+                <th>Field</th>
+                <th>Lag (hours)</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for reference in run.feature_lineage %}
+            <tr>
+                <td>{{ reference.source }}</td>
+                <td>{{ reference.field }}</td>
+                <td>{{ reference.lag_hours }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+{% endif %}

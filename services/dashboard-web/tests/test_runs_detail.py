@@ -1084,6 +1084,199 @@ RAW_LEVELS_WARNING_SENTENCE = (
 )
 
 
+def test_feature_lineage_partial_has_no_banned_positioning_words() -> None:
+    """MDF-005-01: same banned-word scan pattern as RAV-002/003/FHS-003's
+    above, applied to the new `_feature_lineage.html` partial -- this
+    ticket's own word list additionally includes "alpha"/"edge" (MDF-005's
+    AC), since those are the words most likely to leak into multi-source-data
+    marketing copy.
+    """
+    template_path = (
+        __import__("pathlib").Path(__file__).parent.parent
+        / "src"
+        / "app"
+        / "templates"
+        / "_feature_lineage.html"
+    )
+    text = template_path.read_text(encoding="utf-8").lower()
+
+    for banned in (
+        "prediction",
+        "forecast",
+        "signal",
+        "target",
+        "recommendation",
+        "alpha",
+        "edge",
+    ):
+        assert banned not in text, (
+            f"banned positioning word {banned!r} found in _feature_lineage.html"
+        )
+
+
+def test_run_detail_template_has_no_banned_positioning_words_full_list() -> None:
+    """MDF-005-01: extends the pre-existing `run_detail.html` banned-word scan
+    (`test_run_detail_template_has_no_banned_positioning_words` above) with
+    this ticket's own additional word list (`"target"`, `"alpha"`, `"edge"`)
+    -- a separate test rather than editing the pre-existing one, so the
+    original test's own scope/comment stays intact per this file's own
+    "extend, don't rewrite" precedent (FHS-003/FHS-004's own additions above).
+    """
+    import re
+
+    template_path = (
+        __import__("pathlib").Path(__file__).parent.parent
+        / "src"
+        / "app"
+        / "templates"
+        / "run_detail.html"
+    )
+    text = re.sub(r"\{%\s*include\s+.*?%\}", "", template_path.read_text(encoding="utf-8")).lower()
+    text = re.sub(r"\s+", " ", text)
+    text = text.replace(re.sub(r"\s+", " ", RAW_LEVELS_WARNING_SENTENCE.lower()), "")
+
+    for banned in ("target", "alpha", "edge"):
+        assert banned not in text, f"banned positioning word {banned!r} found in run_detail.html"
+
+
+FEATURE_LINEAGE = [
+    {"source": "binance_price_btcusdt_1h", "field": "close", "lag_hours": 1},
+    {"source": "fear_greed_index", "field": "value", "lag_hours": 24},
+]
+
+MULTIMODAL_RUN_DETAIL_BODY = {
+    **RUN_DETAIL_BODY,
+    "feature_lineage": FEATURE_LINEAGE,
+    "has_multimodal_features": True,
+}
+
+
+def test_run_detail_renders_feature_composition_for_multimodal_run(monkeypatch) -> None:
+    """MDF-005-01: a run with `has_multimodal_features: true` renders its
+    `feature_lineage` sources/fields inline with the existing naive-baseline
+    + candidate-model + DM-verdict presentation.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == f"/runs/{RUN_ID}":
+            return httpx.Response(200, json=MULTIMODAL_RUN_DETAIL_BODY)
+        if request.url.path == f"/runs/{RUN_ID}/splits":
+            return httpx.Response(200, json=[SPLIT_BODY])
+        raise AssertionError(f"unexpected path {request.url.path}")
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get(f"/runs/{RUN_ID}")
+
+    assert response.status_code == 200
+    assert "feature-lineage-table" in response.text
+    assert "Feature-set composition" in response.text
+    assert "binance_price_btcusdt_1h" in response.text
+    assert "fear_greed_index" in response.text
+
+
+def test_run_detail_omits_feature_composition_for_single_series_run(monkeypatch) -> None:
+    """MDF-005-01: `has_multimodal_features: false` (the pre-existing
+    `RUN_DETAIL_BODY` fixture's default) renders no feature-composition
+    section -- absent, not broken/empty markup.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == f"/runs/{RUN_ID}":
+            return httpx.Response(200, json=RUN_DETAIL_BODY)
+        if request.url.path == f"/runs/{RUN_ID}/splits":
+            return httpx.Response(200, json=[SPLIT_BODY])
+        raise AssertionError(f"unexpected path {request.url.path}")
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get(f"/runs/{RUN_ID}")
+
+    assert response.status_code == 200
+    assert "feature-lineage-table" not in response.text
+    assert "Feature-set composition" not in response.text
+
+
+def test_run_detail_not_beat_naive_verdict_identical_for_multimodal_and_single_series(
+    monkeypatch,
+) -> None:
+    """MDF-005-01: a not-beat-naive multimodal-run fixture and a not-beat-naive
+    single-series-run fixture get identical verdict CSS class/text treatment
+    -- no divergent styling implying elevated confidence for the multimodal
+    case.
+    """
+    not_beat_naive_split = {**SPLIT_BODY, "dm_verdict": "worse"}
+
+    def make_handler(run_body):
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == f"/runs/{RUN_ID}":
+                return httpx.Response(200, json=run_body)
+            if request.url.path == f"/runs/{RUN_ID}/splits":
+                return httpx.Response(200, json=[not_beat_naive_split])
+            raise AssertionError(f"unexpected path {request.url.path}")
+
+        return handler
+
+    _patch_transport(monkeypatch, make_handler(RUN_DETAIL_BODY))
+    client = TestClient(app)
+    _login(client)
+    single_series_response = client.get(f"/runs/{RUN_ID}")
+
+    _patch_transport(monkeypatch, make_handler(MULTIMODAL_RUN_DETAIL_BODY))
+    client = TestClient(app)
+    _login(client)
+    multimodal_response = client.get(f"/runs/{RUN_ID}")
+
+    assert single_series_response.status_code == 200
+    assert multimodal_response.status_code == 200
+    assert 'class="verdict-label-worse"' in single_series_response.text
+    assert 'class="verdict-label-worse"' in multimodal_response.text
+    assert single_series_response.text.count(
+        'class="verdict-label-worse"'
+    ) == multimodal_response.text.count('class="verdict-label-worse"')
+
+
+def test_run_detail_single_series_run_byte_identical_outside_feature_lineage_block(
+    monkeypatch,
+) -> None:
+    """MDF-005-01 Implementation AC: runs with `has_multimodal_features: false`
+    render exactly as before (zero visual/behavioral change) -- proven here by
+    confirming the pre-existing single-series fixture's response is identical
+    to stripping out only the new `_feature_lineage.html` include's own output
+    (which itself renders nothing for this fixture, per the test above).
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == f"/runs/{RUN_ID}":
+            return httpx.Response(200, json=RUN_DETAIL_BODY)
+        if request.url.path == f"/runs/{RUN_ID}/splits":
+            return httpx.Response(200, json=[SPLIT_BODY])
+        raise AssertionError(f"unexpected path {request.url.path}")
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get(f"/runs/{RUN_ID}")
+
+    assert response.status_code == 200
+    assert "chart-container" in response.text  # pre-existing sections unaffected
+    assert "feature-lineage-table" not in response.text
+    assert "Feature-set composition" not in response.text
+    # Every pre-existing assertion this file's own baseline test already
+    # makes still holds for this same fixture.
+    assert RUN_ID in response.text
+    assert "no significant difference" in response.text
+    assert "1.1" in response.text
+
+
 def test_run_detail_shows_raw_levels_warning_unconditionally_when_splits_present(
     monkeypatch,
 ) -> None:

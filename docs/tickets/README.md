@@ -2269,3 +2269,90 @@ non-code gap: QA found the running `naive-first-validation-service` Docker conta
 sprint's changes (`level_detection.py` absent inside it) — the guardrail is code-complete and
 test-verified but not yet live-enforced against the running stack; a rebuild/redeploy is needed before
 it protects real traffic, flagged here so it isn't silently missed.
+
+## Sprint 38 (docs/sprints/sprint-38.md, backlog: docs/product/backlog-multimodal-dataset-fusion.md)
+
+|---|---|---|---|---|
+| [MDF-004-01](MDF-004-01.md) | Analysis: does `naive_first_engine`'s public interface need to change for multi-column candidate-model input? [high scrutiny] | libs/naive_first_engine | none | done |
+| [MDF-005-01](MDF-005-01.md) | Positioning/copy discipline: feature-set composition rendering + banned-word discipline for multimodal run results | services/dashboard-web | none | done |
+
+Both stories from `docs/product/backlog-multimodal-dataset-fusion.md` (MDF-004, MDF-005), closing that
+backlog's Must stories. Confirmed zero file overlap before dispatch (`libs/naive_first_engine` vs.
+`services/dashboard-web`) — both dev agents raised in parallel in one message.
+
+**MDF-004-01 outcome**: `docs/adr/0010-multimodal-candidate-model-interface.md` (new, status `accepted`)
+answers the interface question: `Baseline.predict(train: pd.Series, test: pd.Series)` is **unchanged**
+(zero-line diff on `baselines.py`/`splitting.py`/`dm_test.py`/`report_schema.py`/`protocol.py` — confirmed
+by `git diff --stat`, not just claimed) — it governs only `Naive0`/`NaiveLast`/the DM-test error Series,
+never a candidate model's own inference call, and nothing in the codebase calls it with multi-column
+input today. A new, additive `CandidateModel` Strategy protocol was added
+(`libs/naive_first_engine/src/naive_first_engine/candidate_model.py`,
+`predict(train_features: pd.DataFrame, train_target: pd.Series, test_features: pd.DataFrame) -> pd.Series`)
+— structurally parallel to `Baseline`, no `test_target` parameter (so it is structurally impossible to
+read past `train_end`/into the test target, matching `Baseline`'s own leakage-safety argument), not wired
+into `protocol.py` or any call site (interface-design-only, per the ticket's explicit scope). A new test
+(`tests/test_candidate_model.py::test_generate_splits_same_regardless_of_model_input_shape`) directly
+proves `generate_splits`'s purge-gap logic is index-only and identical regardless of univariate/
+multivariate model-input shape, verifying ADR-0009's own "requires no change" claim against the real code
+rather than citing it. `libs/naive_first_engine/README.md` updated with a dated status note;
+`CandidateModel` is deliberately excluded from `scripts/check_doc_sync.py`'s six-module machine-checked
+Public API list (documented in the ADR's Consequences section) since that script's `MODULE_NAMES` list
+would flag a seventh heading as "unknown module" — `check_doc_sync.py` re-run, passes.
+
+**Tech Lead review (personally performed) for MDF-004-01**: read `candidate_model.py` and
+`test_candidate_model.py` in full; confirmed `git diff --stat` empty on all five core files; confirmed by
+grep that `CandidateModel` is imported/called nowhere in the repo; confirmed the new purge-gap test
+actually proves what it claims (re-derived the assertion logic by hand, not just re-run). Independently
+re-ran the full `libs/naive_first_engine` suite: **99 passed** (95 pre-existing + 4 new, zero regressions,
+zero existing test files modified) — matches the dev agent's reported count. ADR-0010's `status` flipped
+from `proposed` to `accepted` with this review recorded by name in the ADR's own Consequences section, per
+the sprint's high-scrutiny flag requiring the leakage-safety reviewer pass to be recorded before sign-off.
+
+**MDF-005-01 outcome**: `services/dashboard-web/src/app/templates/_feature_lineage.html` (new partial,
+included from `run_detail.html` immediately above the existing `_forecast_horizon_summary_panel.html`/
+`_shareable_summary.html`/`_error_chart.html` includes) renders `run.feature_lineage` (source/field/
+lag_hours) for any run with `run.has_multimodal_features` true, reusing the existing `.chart-container`/
+`.chart-title`/`.chart-caption`/`.table-scroll` classes verbatim — no new CSS/color/badge invented, no
+"multimodal mode" visual treatment. Single-series runs (`has_multimodal_features: false`) render with zero
+diff, proven by a byte-comparable test. A not-beat-naive multimodal run and a not-beat-naive single-series
+run render with an identical `verdict-label-worse` count/class. Banned-word grep tests (7-word list:
+`prediction`/`forecast`/`signal`/`target`/`recommendation`/`alpha`/`edge`, extending the FHS-003/FHS-004
+pattern) cover both the new `_feature_lineage.html` partial and `run_detail.html`'s full rendered text.
+`services/gateway-api`/`services/validation-service` field descriptions for `feature_lineage`/
+`has_multimodal_features` were grepped for the same word list — no matches, no fix needed, neither module
+touched. `services/dashboard-web/README.md` updated with a new status section.
+
+**Tech Lead review (personally performed) for MDF-005-01**: read the actual diff of `run_detail.html`
+(one new `{% include %}` line, correctly placed), `_feature_lineage.html` in full (confirmed no new CSS
+class, `.chart-container` etc. reused verbatim from `_dm_verdict_chart.html`'s own precedent), and all six
+new tests in `test_runs_detail.py`. Confirmed the banned-word list actually includes all seven words in
+both new tests. Confirmed zero `services/gateway-api`/`services/validation-service` diff. Independently
+re-ran the full `services/dashboard-web` suite: **307 passed, 7 deselected** (e2e) — up from the
+pre-ticket baseline of 301 passed/7 deselected (independently confirmed before dispatch), 6 new tests,
+zero regressions, matches the dev agent's reported count.
+
+**QA verdict (independent `qa` subagent pass, raised after Tech Lead verification)**: **GO** for
+production-readiness. Independently re-derived every claim rather than trusting the Tech Lead's summary:
+re-ran `libs/naive_first_engine` (99 passed, matching), re-ran `services/dashboard-web` (307 passed, 7
+deselected, matching), independently confirmed the zero-line-diff claim via its own `git diff --stat`,
+confirmed `CandidateModel.predict`'s missing `test_target` parameter both by reading the live signature and
+via the existing `inspect.signature` test, confirmed `generate_splits`'s purge-gap independence from
+column count by re-deriving the test's own logic, confirmed no CSS/visual treatment was invented for
+`_feature_lineage.html` and that its copy is neutral, confirmed all 7 banned words are scanned by both new
+tests, confirmed `services/gateway-api`/`services/validation-service` untouched. Also ran adjacent-module
+regression checks beyond this sprint's own scope: `services/gateway-api` 209 passed;
+`services/validation-service` found one flaky pre-existing test
+(`tests/test_sqlite_repository.py::test_list_runs_paginates_with_limit_and_offset`, a same-second
+`created_at` timestamp-collision race under fast sequential inserts, last touched Sprint 36, not by this
+sprint's diff — passed cleanly on 3 isolated re-runs) — disclosed as a pre-existing, out-of-scope defect,
+not a Sprint 38 blocker. Two non-blocking follow-ups flagged for future ticketing (not filed by this
+sprint, per this repo's own scoping convention): (1) that `validation-service` flaky test; (2) the
+banned-word grep tests (this ticket's and the pre-existing FHS/RAV pattern they copy) scan Jinja
+**source**, not rendered output — a real but narrow gap for `_feature_lineage.html` specifically, since it
+is the first partial whose primary content is untrusted dynamic data (ingestion-connector source/field
+names) rather than static copy; QA judged this non-blocking today because those names originate from
+`ingestion-service`'s own controlled connector/field vocabulary, not free-text user input.
+
+**Sprint 38 outcome**: both stories done, closing `backlog-multimodal-dataset-fusion.md`'s Must stories
+(MDF-001 through MDF-005 all now done). QA verdict: GO, two non-blocking follow-ups disclosed above for the
+requester/PM to number and file (not filed by this sprint itself, out of MDF-004/005's own scope).

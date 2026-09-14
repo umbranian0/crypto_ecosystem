@@ -187,7 +187,7 @@ Acceptance criteria:
   `ingestion-service`'s endpoint to expose `fetched_at` is flagged as a follow-up, not filed as a numbered
   ticket by VS-030 itself (out of that ticket's file scope).
 
-### MDF-004 — Confirm (or extend) `naive_first_engine`'s interfaces for multi-column model input [Must, high scrutiny]
+### MDF-004 — Confirm (or extend) `naive_first_engine`'s interfaces for multi-column model input [Must, high scrutiny] — **DONE** (Sprint 38, `docs/tickets/MDF-004-01.md`, `docs/adr/0010-multimodal-candidate-model-interface.md`, status `accepted`)
 
 As the Tech Lead, I need an explicit, reviewed answer on whether `naive_first_engine`'s public types need to
 change to support a multi-column candidate-model input, because this library is the platform's core IP and any
@@ -196,21 +196,28 @@ change to it carries more risk than an equivalent change anywhere else in the co
 Depends on: MDF-001, MDF-003 (needs to know the actual shape MDF-003 assembles).
 
 Acceptance criteria:
-- Written analysis states whether the existing `Baseline` protocol's `predict(train: pd.Series, test: pd.Series)`
+- [x] Written analysis states whether the existing `Baseline` protocol's `predict(train: pd.Series, test: pd.Series)`
   signature can stay untouched (most likely — it currently governs only naive baselines and DM-test error
   Series, not the candidate model's own inference call) or whether a *new*, separate interface is needed for
   "a candidate model that consumes a multi-column feature DataFrame and emits a Series of predictions on the
   same target," kept as an addition alongside the existing `Baseline` protocol rather than a modification to it.
-- If a new interface is added, it is proven not to change `Naive0`/`NaiveLast`/`dm_test.py`'s behavior or
+  Answer: `Baseline` stays untouched; a new additive `CandidateModel` protocol added
+  (`libs/naive_first_engine/src/naive_first_engine/candidate_model.py`), not wired into any call site.
+- [x] If a new interface is added, it is proven not to change `Naive0`/`NaiveLast`/`dm_test.py`'s behavior or
   existing test results — the full existing `naive_first_engine` regression suite (1h/6h/24h) passes unmodified.
-- Confirms `generate_splits`'s purge-gap logic is applied identically regardless of whether the model side is
+  Confirmed: zero-line diff on `baselines.py`/`splitting.py`/`dm_test.py`/`report_schema.py`/`protocol.py`,
+  99 passed (95 pre-existing + 4 new), zero existing test files modified.
+- [x] Confirms `generate_splits`'s purge-gap logic is applied identically regardless of whether the model side is
   univariate or multivariate — the purge gap protects the target/test-fold boundary, not the feature count, and
-  this story must not accidentally narrow or skip it for the multivariate path.
-- Any change to `libs/naive_first_engine` in this story is called out by name in the PR/ticket title and gets an
+  this story must not accidentally narrow or skip it for the multivariate path. Confirmed by
+  `tests/test_candidate_model.py::test_generate_splits_same_regardless_of_model_input_shape`.
+- [x] Any change to `libs/naive_first_engine` in this story is called out by name in the PR/ticket title and gets an
   explicit extra reviewer pass (leakage-safety-focused), per this document's own "high scrutiny" flag — not
-  merged as an incidental part of a validation-service story.
+  merged as an incidental part of a validation-service story. Reviewer pass recorded in
+  `docs/adr/0010-multimodal-candidate-model-interface.md`'s Consequences section and
+  `docs/tickets/README.md`'s Sprint 38 entry.
 
-### MDF-005 — Positioning and copy discipline for multimodal validation results [Must]
+### MDF-005 — Positioning and copy discipline for multimodal validation results [Must] — **DONE** (Sprint 38, `docs/tickets/MDF-005-01.md`)
 
 As a Product Owner, I want every surface that shows a multimodal validation run's result to frame it strictly as
 "does more data help this model beat naive, honestly measured" — matching this platform's existing convention —
@@ -220,17 +227,22 @@ better predictions.
 Depends on: MDF-003 (needs the run/lineage data to render).
 
 Acceptance criteria:
-- Any run detail view or API description showing a multi-source run states the feature-set composition (which
+- [x] Any run detail view or API description showing a multi-source run states the feature-set composition (which
   sources/fields) next to the same naive-first-baseline + candidate-model + DM-verdict presentation every other
   run already uses — no separate "multimodal mode" visual treatment that implies elevated confidence.
-- Banned-word grep test (reusing the pattern from `docs/product/backlog-forecast-horizon-summary.md`'s FHS-003/
+  `_feature_lineage.html` (new partial, `services/dashboard-web`) reuses existing `.chart-container` styling.
+- [x] Banned-word grep test (reusing the pattern from `docs/product/backlog-forecast-horizon-summary.md`'s FHS-003/
   FHS-004) covers this feature's new templates/copy for "prediction," "forecast," "signal," "alpha," "edge."
-- A not-beat-naive result on a multi-source run is presented with identical neutrality/formatting to a
+  (word list extended to also include "target"/"recommendation" per this repo's existing FHS-003/004 precedent).
+- [x] A not-beat-naive result on a multi-source run is presented with identical neutrality/formatting to a
   not-beat-naive result on a single-series run — no story in this backlog treats a null result as a feature
-  failure to be minimized in the UI.
-- Any external-facing description of this feature (docs, marketing-adjacent copy) states plainly that this
+  failure to be minimized in the UI. Proven by
+  `test_run_detail_not_beat_naive_verdict_identical_for_multimodal_and_single_series`.
+- [x] Any external-facing description of this feature (docs, marketing-adjacent copy) states plainly that this
   answers a validation question, not a claim that multimodal data improves prediction — consistent with
-  CLAUDE.md's "statistical accuracy != economic value" separation.
+  CLAUDE.md's "statistical accuracy != economic value" separation. `_feature_lineage.html`'s own caption text
+  states this explicitly ("a validation/composition fact only, not evidence that combining sources changes
+  the benchmark-comparison verdict").
 
 ## Explicitly out of scope for this backlog
 

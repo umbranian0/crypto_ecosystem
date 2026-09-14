@@ -294,6 +294,15 @@ design decision recorded in `docs/sprints/sprint-18.md`) adds `GET /settings/con
 "Settings: connector credential status (DASH-112)" below. `DASH-110` (same sprint, last ticket) adds the
 two trigger actions on `/monitoring` -- see "Trigger actions on /monitoring (DASH-110)" below.
 
+**Sprint 38**: `MDF-005-01` renders `RunDetailResponse.feature_lineage`/`has_multimodal_features`
+(already forwarded through `GET /runs/{id}` since MDF-003) on `GET /runs/{id}` -- a new
+`_feature_lineage.html` partial, `{% include %}`-ed inline with the existing naive-baseline +
+candidate-model + DM-verdict presentation, gated on `run.has_multimodal_features`, only for a run whose
+assembled feature table drew on more than one source -- see "Feature-set composition (MDF-005-01)"
+below (307 unit tests passing as of this ticket, up from 301, plus the same e2e). No backend change; no
+new "multimodal mode" visual treatment -- reuses the existing `.chart-container`/`.chart-title`/
+`.chart-caption`/`.table-scroll` classes and the existing `.verdict-label-*` CSS categories verbatim.
+
 ## Authentication (DASH-002)
 
 `GET /login` renders a form for a tenant's raw `gateway-api` API key; `POST /login`
@@ -732,6 +741,49 @@ new field:
   statements before scanning `run_detail.html`, since this ticket's own feature name ("Forecast
   Horizon Summary") legitimately makes the new partial's filename contain "forecast" as a structural
   reference, not product copy.
+
+## Feature-set composition (MDF-005-01)
+
+`GET /runs/{run_id}` (`src/app/routers/runs.py`) now also renders the feature-set composition
+(sources/fields, from `feature_lineage`) for a run whose assembled feature table drew on more than
+one source -- inline with the existing naive-baseline + candidate-model + DM-verdict presentation, no
+separate page/tab/badge:
+
+- **`app/templates/_feature_lineage.html`** (new partial, same `{% include %}` pattern as
+  `_dm_verdict_chart.html`/`_forecast_horizon_summary_panel.html`) renders `run.feature_lineage`
+  (`RunDetailResponse`'s existing `[{"source", "field", "lag_hours"}, ...]` field, already forwarded
+  through `GET /runs/{id}` since MDF-003 -- no new backend call, no new field) as a plain table, only
+  when `run.has_multimodal_features` is `True`. `run_detail.html` includes it inside the existing
+  `{% if splits %}` branch, next to `_dm_verdict_chart.html`/the per-split validation summary panel --
+  no new zero-splits check, no new router-level branch (`run.has_multimodal_features`/
+  `run.feature_lineage` are consumed directly off the already-passed `run` object; `app/routers/runs.py`
+  itself is unchanged by this ticket).
+- **Colors/styling**: no new CSS variable, class, or "multimodal mode" visual treatment -- reuses the
+  exact same `.chart-container`/`.chart-title`/`.chart-caption`/`.table-scroll` classes every other
+  run-detail section already uses, and the DM-verdict presentation elsewhere on the page continues to
+  use the same `.verdict-label-*`/`.verdict-bar-*` classes (RAV-003) regardless of `has_multimodal_
+  features` -- a not-beat-naive multimodal run and a not-beat-naive single-series run render an
+  identical verdict class/text, proven by
+  `tests/test_runs_detail.py::test_run_detail_not_beat_naive_verdict_identical_for_multimodal_and_single_series`.
+- **`has_multimodal_features: False`** (the common, single-series case) renders no feature-composition
+  section at all -- absent, not empty/broken markup -- and the rest of the page is byte-identical to
+  before this ticket, proven by
+  `test_run_detail_omits_feature_composition_for_single_series_run`/
+  `test_run_detail_single_series_run_byte_identical_outside_feature_lineage_block`.
+- **Positioning**: `_feature_lineage.html`'s own copy frames the section as "a validation/composition
+  fact only, not evidence that combining sources changes the benchmark-comparison verdict" -- the
+  banned-word scan for this ticket additionally checks "alpha"/"edge" (MDF-005's own AC, on top of the
+  pre-existing "prediction"/"forecast"/"signal"/"target"/"recommendation" list), per
+  `test_feature_lineage_partial_has_no_banned_positioning_words`. `run_detail.html`'s own pre-existing
+  banned-word test was extended (a new, additive test, not a rewrite of the original) to also cover
+  "target"/"alpha"/"edge".
+- **Read-only check**: `feature_lineage`/`has_multimodal_features`'s field descriptions in
+  `services/gateway-api`/`services/validation-service` were grepped for the same seven-word list --
+  none found; no change made to either service.
+- **Tests**: `tests/test_runs_detail.py` adds the banned-word scan above; a route-level test confirming
+  the composition table renders for a multimodal-run fixture (`feature_lineage` sources/fields visible)
+  and does not for a single-series fixture; the not-beat-naive verdict-parity test above; and the
+  byte-identical-outside-the-new-block test above (307 unit tests passing, up from 301).
 
 ## Shareable validation summary export (FHS-004)
 
