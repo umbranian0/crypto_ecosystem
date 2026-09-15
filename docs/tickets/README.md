@@ -278,10 +278,55 @@ naive benchmark — never a standalone predictive-edge claim (see `research/READ
 | Ticket | Story | Depends on | Status |
 |---|---|---|---|
 | [MR-002](MR-002.md) | Engineered feature set: `rolling_volatility`, `rolling_mean_return`, `rolling_std_return`, `lagged_returns` in `research/features.py` | none | done |
-| MR-003 | Multimodal fusion inputs feed into research candidates | MDF-003 (not started) | not started |
-| MR-004 | Candidate model wiring | MR-002 | not started |
-| MR-005 | DM-test comparison against naive | MR-004 | not started |
+| [MR-003](MR-003.md) | Documented interface for `research/` to eventually consume `validation-service`'s multi-source feature assembly; discloses no export endpoint exists yet | MDF-003 (done, Sprint 36) | done |
+| [MR-004](MR-004.md) | Gradient-boosting (LightGBM) `Baseline`, 1h/6h, light-compute-scoped | MR-001 (done), MR-003 (sequencing only) | done |
+| MR-005 | DM-test comparison against naive (regime-sensitive candidate) | MR-004 | not started |
 | MR-006 | Per-split explainability | MR-004/MR-005 | not started |
+
+## Sprint 41 (docs/sprints/sprint-41.md, backlog: docs/product/backlog-model-research.md)
+
+MR-003 (Should) then MR-004 (Should), sequenced MR-003 first (cheaper interface/documentation story,
+and its finding — MDF-003/VS-030 is real but `validation-service` exposes no export endpoint for the
+assembled multimodal feature table yet — is context MR-004's implementer benefits from having first,
+even though MR-004's own stated backlog dependency is only MR-001, already done). MR-004 is explicitly
+light-compute-scoped (CPU-only, bounded dataset window, tight fixed hyperparameters, minutes not
+hours) per this sprint's own non-negotiable constraint — see the sprint file's "Explicit light-compute
+scoping for MR-004" section for the full reasoning and caps.
+
+| Ticket | Story | Module | Depends on | Status |
+|---|---|---|---|---|
+| [MR-003](MR-003.md) | Documented interface for `research/` to eventually consume `validation-service`'s multi-source feature assembly (MDF-003/VS-030); discloses no export endpoint exists yet | research | MDF-003 (done) | done |
+| [MR-004](MR-004.md) | LightGBM `Baseline`, 1h/6h horizons, light-compute-scoped | research | MR-001 (done) | done |
+
+**Outcome**: MR-003 built directly by the Tech Lead (documentation/interface-design only, no dev agent —
+see `research/README.md`'s "Multimodal feature interface (MR-003)" section and `docs/tickets/MR-003.md`).
+MR-004 built by a `dev` subagent; **Tech Lead review caught a real same-row target-leakage bug** in
+`_make_features` (`research/models/gradient_boosting.py`) at first pass — `rolling_mean_return`/
+`rolling_volatility`'s current-inclusive rolling window was used unshifted, so the feature at row t
+partially contained `returns[t]`, the exact value being predicted, producing a suspiciously one-sided
+pre-fix DM result (6/10 and 7/10 splits "better", zero "worse"). Re-delegated with corrective
+instructions (shift the rolling-derived features by 1, `research/features.py` itself untouched — the bug
+was in the caller); re-verified post-fix. Corrected, honest DM-vs-Naive0 verdict counts on the seeded
+3,000-row synthetic fixture: 1h `{better: 0, worse: 1, no significant difference: 9}`; 6h `{better: 0,
+worse: 0, no significant difference: 10}` — consistent with the thesis's own core finding, not an
+artifact. **Suite counts personally re-run by the Tech Lead**: `research/` 10 passed (1.62-1.83s);
+`libs/naive_first_engine` 99 passed (2.75s, via `.venv/Scripts/python.exe -m pytest` directly — `uv run`
+hit this repo's known pre-existing Windows `.venv`/`uv.lock` file-permission quirk, same as Sprint
+37/38's precedent, unrelated to this sprint's zero-diff status for that module); `services/
+validation-service` 207 passed (35.27s). `git status --porcelain -- libs/naive_first_engine services/`
+confirmed empty throughout — neither module touched by this sprint. No live-deploy step applies:
+`research/` has no service/API surface and nothing here runs inside a deployed container.
+
+**QA verdict (independent `qa` subagent pass, raised after both tickets Tech-Lead-verified done)**: **GO**.
+Independently confirmed the leakage fix (`.shift(1)` on `roll_mean`/`roll_vol`) is real and correct,
+`research/features.py` unmodified, dataset genuinely capped at 3,000 synthetic rows, horizons exactly
+{1, 6}, hyperparameters small/fixed with no search loop anywhere, no positioning-rule violation, MR-003's
+disclosed gap is genuine. Independently re-ran all suites and reproduced matching counts (`research/` 10,
+`libs/naive_first_engine` 99, `services/validation-service` 207) and re-ran `libs/naive_first_engine`'s
+`scripts/check_doc_sync.py` (passes). One disclosed, non-blocking finding: `services/validation-service`'s
+`test_limit_and_offset_paginate_correctly_across_a_seeded_set_larger_than_one_page` is flaky when run as
+part of the full suite (passes reliably in isolation/on re-run) — pre-existing, zero diff for that module
+this sprint, flagged as a follow-up test-reliability ticket for a future sprint, not a Sprint 41 defect.
 
 ## Sprint 39 (docs/sprints/sprint-39.md, backlog: docs/product/backlog-uat-findings.md)
 

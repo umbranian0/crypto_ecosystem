@@ -7,7 +7,13 @@ requires-python = ">=3.10"
 dependencies = [
     "pandas>=2.0",
     "numpy>=1.24",
+    "lightgbm>=4.0",
+    "scikit-learn>=1.3",
+    "naive_first_engine",
 ]
+
+[tool.uv.sources]
+naive_first_engine = { path = "../libs/naive_first_engine", editable = true }
 
 [build-system]
 requires = ["hatchling"]

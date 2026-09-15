@@ -48,13 +48,13 @@ Acceptance criteria (see `docs/tickets/MR-002.md` — done):
 Rationale for priority: directly extends the thesis's own stated future-work table (section 1.6, "Comparação alargada de modelos" implies richer features too) and is a prerequisite for any non-trivial candidate model story; kept to "Should" not "Must" because MR-001 (methodology correctness) and the plug-in mechanism (MR-004) matter more first.
 Depends on: none
 
-### MR-003 — Multimodal fusion inputs feed into research candidates (bridges MDF-003) [Should]
+### MR-003 — Multimodal fusion inputs feed into research candidates (bridges MDF-003) [Should] — **done (Sprint 41, `docs/tickets/MR-003.md`)**
 **As a** research candidate model, **I want** the aligned multi-source feature table produced by MDF-003 (once built, in `validation-service`) to be consumable by a `research/`-side candidate model without duplicating the alignment/purge-gap logic ADR-0008/0009 already specified, **so that** on-chain/sentiment features (the thesis's stated coverage gap, section 1.5/1.6) can be tested as real candidate-model inputs, not just theoretically.
 
 Acceptance criteria:
-- [ ] A documented interface (e.g. "research code calls `validation-service`'s existing API/exported dataset, never re-implements `CompositeDatasetSource` or the `fetched_at`-based alignment rule from ADR-0008") is written before any research code touches multimodal data.
-- [ ] Explicitly blocked, with the blocking condition stated: this story cannot start implementation until MDF-003 (the actual fusion/join code) ships — MDF-003 is confirmed unblocked-but-not-started per the requester's own framing.
-- [ ] No `naive_first_engine` change (per ADR-0008's own finding that the engine needs no edit for aligned-table consumption); any need for a multi-column `Baseline` input surfaces as MDF-004's open question, not solved ad hoc here.
+- [x] A documented interface (e.g. "research code calls `validation-service`'s existing API/exported dataset, never re-implements `CompositeDatasetSource` or the `fetched_at`-based alignment rule from ADR-0008") is written before any research code touches multimodal data. See `research/README.md`'s "Multimodal feature interface (MR-003)" section.
+- [x] Explicitly blocked, with the blocking condition stated: MDF-003 itself shipped (Sprint 36), but `validation-service` exposes no export endpoint for the assembled table yet — that is the actual, revised blocking condition this ticket discloses, per sprint-41.md's pre-read finding.
+- [x] No `naive_first_engine` change (per ADR-0008's own finding that the engine needs no edit for aligned-table consumption); any need for a multi-column `Baseline` input surfaces as MDF-004's open question (already answered additively by ADR-0010's `CandidateModel` interface), not solved ad hoc here.
 
 Rationale for priority: "Should" not "Must" because it is explicitly gated on MDF-003 landing first (a separate, already-scoped backlog item) — sequencing dependency, not lower research value; this is the most direct link between the ADR-approved fusion work and genuine model improvement.
 Depends on: MDF-003 (external, tracked in `docs/product/backlog-multimodal-dataset-fusion.md`)
@@ -63,10 +63,12 @@ Depends on: MDF-003 (external, tracked in `docs/product/backlog-multimodal-datas
 **As a** research candidate model, **I want** a gradient-boosting model (e.g. LightGBM/XGBoost) wrapped as a `Baseline` implementation (`.predict(train, test) -> pd.Series`, `.name` attribute) registered via `config.extra_baselines`, **so that** it runs through the exact same purge-gap, train-fold-only-fit, DM-vs-Naive0 protocol as OLS/RF/ARIMA did in the thesis, on a model class the thesis's own section 1.6 names as untested ("Boosting, GRU, Transformer ainda não testados").
 
 Acceptance criteria:
-- [ ] `research/models/gradient_boosting.py` (or similar) implements the `Baseline` protocol exactly as documented in `libs/naive_first_engine/README.md`'s public API — no edits to `naive_first_engine` itself.
-- [ ] Fit happens strictly inside the per-split training fold (no global fit) — test asserts the model object is re-instantiated/re-fit per split, not reused stale across splits.
-- [ ] Full run at 1h and 6h horizons produces a `SplitResult` set with MAE/RMSE/DA/F1 and a DM-vs-Naive0 verdict count, in the exact same report shape as the thesis's OLS/RF rows (section 1.3) — enabling direct side-by-side comparison.
-- [ ] The story's "definition of done" explicitly includes reporting the result honestly regardless of outcome — beating or not beating naive are both valid closes.
+- [x] `research/models/gradient_boosting.py` (or similar) implements the `Baseline` protocol exactly as documented in `libs/naive_first_engine/README.md`'s public API — no edits to `naive_first_engine` itself.
+- [x] Fit happens strictly inside the per-split training fold (no global fit) — test asserts the model object is re-instantiated/re-fit per split, not reused stale across splits.
+- [x] Full run at 1h and 6h horizons produces a `SplitResult` set with MAE/RMSE/DA/F1 and a DM-vs-Naive0 verdict count, in the exact same report shape as the thesis's OLS/RF rows (section 1.3) — enabling direct side-by-side comparison.
+- [x] The story's "definition of done" explicitly includes reporting the result honestly regardless of outcome — beating or not beating naive are both valid closes.
+
+Shipped: Sprint 41, `docs/tickets/MR-004.md`, light-compute-scoped (3,000-row seeded synthetic series, fixed hyperparameters, CPU-only, 1h/6h horizons only) per this section's own dataset ambiguity note.
 
 Rationale for priority: the single most direct match to the thesis's explicit "not yet tried" list and the lowest-friction plug-in point (`extra_baselines` already exists, purpose-built for exactly this); "Should" not "Must" because MR-001 must land first to avoid a levels-vs-returns false positive.
 Depends on: MR-001
