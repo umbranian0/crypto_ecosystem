@@ -280,8 +280,8 @@ naive benchmark — never a standalone predictive-edge claim (see `research/READ
 | [MR-002](MR-002.md) | Engineered feature set: `rolling_volatility`, `rolling_mean_return`, `rolling_std_return`, `lagged_returns` in `research/features.py` | none | done |
 | [MR-003](MR-003.md) | Documented interface for `research/` to eventually consume `validation-service`'s multi-source feature assembly; discloses no export endpoint exists yet | MDF-003 (done, Sprint 36) | done |
 | [MR-004](MR-004.md) | Gradient-boosting (LightGBM) `Baseline`, 1h/6h, light-compute-scoped | MR-001 (done), MR-003 (sequencing only) | done |
-| MR-005 | DM-test comparison against naive (regime-sensitive candidate) | MR-004 | not started |
-| MR-006 | Per-split explainability | MR-004/MR-005 | not started |
+| MR-005 | Regime-sensitive candidate: 2-state HMM gating a linear model, `Baseline`, 1h/6h, light-compute-scoped (Sprint 42) | MR-001 (done), MR-004 (done) | not started |
+| MR-006 | Per-split explainability | MR-004 (done); deferred to sprint after MR-005 (see sprint-42.md) | not started |
 
 ## Sprint 41 (docs/sprints/sprint-41.md, backlog: docs/product/backlog-model-research.md)
 
@@ -327,6 +327,33 @@ disclosed gap is genuine. Independently re-ran all suites and reproduced matchin
 `test_limit_and_offset_paginate_correctly_across_a_seeded_set_larger_than_one_page` is flaky when run as
 part of the full suite (passes reliably in isolation/on re-run) — pre-existing, zero diff for that module
 this sprint, flagged as a follow-up test-reliability ticket for a future sprint, not a Sprint 41 defect.
+
+## Sprint 42 (docs/sprints/sprint-42.md, backlog: docs/product/backlog-model-research.md)
+
+MR-005 (Track A) and MR-007 (Track B), two parallel-eligible tracks with no file overlap — MR-005 touches
+only `research/`, MR-007 touches only `services/validation-service`; either can be built first, second,
+or concurrently (same parallel-pairing precedent as Sprint 40's DASH-128/MR-002). MR-006 considered
+(dependency-unblocked, since it depends only on the already-done MR-004) and explicitly deferred to the
+sprint after MR-005 lands — reasoning: avoids combining a novel-model story (MR-005, already carrying
+this sprint's own compute-budget risk) with a novel-instrumentation story in one pass, and MR-006's
+explainability output is more valuable once it can cover both MR-004's and MR-005's fitted models. See
+sprint-42.md's "MR-006 considered, explicitly deferred" section for the full reasoning.
+
+MR-005's own backlog AC is scoped down explicitly for this sprint's light-compute constraint: a 2-state
+Gaussian HMM gating a simple linear model (fixed state count, no search), on the same seeded 3,000-row
+synthetic fixture MR-004 used, fixed hyperparameters, CPU-only, 1h/6h horizons only, regime fit strictly
+per-split/training-fold-only. See sprint-42.md's "Explicit compute-budget scoping decision for MR-005"
+section for the full reasoning and caps.
+
+MR-007 adds a read-only `GET /runs/{run_id}/features` export endpoint to `services/validation-service`,
+keyed by `run_id` and re-invoking `FeatureDatasetAssembler.assemble` from the run's persisted
+`feature_lineage`, closing MR-003's disclosed export-endpoint gap. Strictly additive — zero lines changed
+in `routers/runs.py::create_run`'s existing call path.
+
+| Ticket | Story | Module | Depends on | Status |
+|---|---|---|---|---|
+| MR-005 | 2-state HMM gating linear model `Baseline`, 1h/6h horizons, light-compute-scoped | research | MR-001 (done), MR-004 (done) | not started |
+| MR-007 | Read-only `GET /runs/{run_id}/features` export endpoint, re-invoking `FeatureDatasetAssembler.assemble` from persisted run lineage; closes MR-003's disclosed gap | services/validation-service | MR-003 (done), VS-030 (done) | not started |
 
 ## Sprint 39 (docs/sprints/sprint-39.md, backlog: docs/product/backlog-uat-findings.md)
 
