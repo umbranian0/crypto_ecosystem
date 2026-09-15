@@ -136,6 +136,7 @@ from naive_first_engine.protocol import (
 from naive_first_engine.splitting import generate_splits
 
 from app.client_baseline import ClientPredictionBaseline
+from app.dataset_source import DatasetSourceError
 from app.dependencies.repositories import (
     ConnectorStatusCheckerDep,
     DatasetSourceDep,
@@ -619,3 +620,95 @@ def get_run(
         has_multimodal_features=bool(run.feature_lineage),
         label=run.label,
     )
+
+
+@router.get("/runs/{run_id}/features")
+def get_run_features(
+    run_id: str,
+    run_repository: ValidationRunRepositoryDep,
+    dataset_source: DatasetSourceDep,
+    feature_dataset_assembler: FeatureDatasetAssemblerDep,
+    connector_status_checker: ConnectorStatusCheckerDep,
+    tenant: TenantContext = Depends(get_tenant_context),
+    missing_timestamp_policy: str = Query(default="drop_row"),
+) -> dict:
+    """MR-007: read-only re-export of the multi-column feature table
+    `FeatureDatasetAssembler.assemble` built for this run, keyed by
+    `run_id`. Thin HTTP adapter only -- reuses `FeatureDatasetAssembler`/
+    `DatasetSource` exactly as `create_run` already does; no alignment or
+    dispatch logic is reimplemented here (ADR-0008/ADR-0009 remain owned by
+    `feature_dataset.py`/`dataset_source.py`).
+
+    **Disclosed, binding limitation (MR-007 Analysis section -- a real,
+    documented schema gap, not an oversight)**: `runs.missing_timestamp_policy`
+    and the original `dataset_reference` dict `POST /runs` used are not
+    persisted anywhere, so this route cannot literally replay the original
+    `assemble()` call:
+
+    - `missing_timestamp_policy` is accepted here as an optional query
+      parameter, defaulting to the strictest policy (`"drop_row"`) when
+      omitted. If the caller passes a different policy than the run's
+      original, the returned table may legitimately have a different row
+      count than the original run's own target index -- a known,
+      documented limitation, not a bug.
+    - The primary series is reloaded via
+      `dataset_source.load({"source": run.dataset_id})` (the
+      `IngestionServiceDatasetSource` shape) -- this only works for runs
+      whose original `dataset_reference` was ingestion-service-backed with
+      `source == dataset_id`. A run originally loaded via `inline`/`path`/
+      `object_key` cannot be re-loaded this way; this route returns `422`
+      naming that limitation explicitly rather than silently returning an
+      empty/wrong table.
+    - `feature_references` are reconstructed from `run.feature_lineage` as
+      `{"source", "field"}` pairs -- `lag_hours` is dropped, since it is
+      *derived* by `feature_dataset.py`'s `FEATURE_SOURCE_LAG_HOURS` table
+      from `source`, not an input to `assemble()`.
+
+    This is a first-cut, disclosed-limitation implementation (MR-007's own
+    backlog framing) -- not a fully general feature-re-assembly API.
+    """
+    # Same single-404-for-both-cases pattern `get_run` already establishes
+    # (VS-004/VS-007): "doesn't exist" and "wrong tenant" collapse into one
+    # 404, and a run with no multimodal features (feature_lineage == [],
+    # the same has_multimodal_features derivation get_run already uses)
+    # collapses into the same 404 rather than a distinct empty response.
+    run = run_repository.get_run(tenant.tenant_id, run_id)
+    if run is None or not run.feature_lineage:
+        raise HTTPException(status_code=404, detail="run not found")
+
+    feature_references = [
+        {"source": entry["source"], "field": entry["field"]} for entry in run.feature_lineage
+    ]
+
+    try:
+        loaded = dataset_source.load({"source": run.dataset_id})
+    except DatasetSourceError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"could not reload the primary series for run {run_id!r} via "
+                f"dataset_source.load({{'source': {run.dataset_id!r}}}): {exc}. "
+                "This route can only re-export features for runs whose original "
+                "dataset_reference was ingestion-service-backed with "
+                "source == dataset_id -- a run originally loaded via inline/path/"
+                "object_key cannot be re-loaded this way (MR-007 disclosed "
+                "limitation)."
+            ),
+        ) from exc
+
+    try:
+        assembled = feature_dataset_assembler.assemble(
+            target_index=loaded.series.index,
+            feature_references=feature_references,
+            missing_timestamp_policy=missing_timestamp_policy,
+            dataset_source=dataset_source,
+            connector_status_checker=connector_status_checker,
+        )
+    except FeatureDatasetError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    # `pandas.DataFrame.to_dict(orient="split")` is the {"index", "columns",
+    # "data"} shape MR-007's backlog entry itself proposes -- reused here
+    # rather than hand-rolled; FastAPI's own jsonable_encoder already renders
+    # the pandas.Timestamp index entries as ISO8601 strings.
+    return assembled.feature_dataframe.to_dict(orient="split")

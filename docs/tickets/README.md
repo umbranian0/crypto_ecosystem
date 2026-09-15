@@ -280,7 +280,7 @@ naive benchmark — never a standalone predictive-edge claim (see `research/READ
 | [MR-002](MR-002.md) | Engineered feature set: `rolling_volatility`, `rolling_mean_return`, `rolling_std_return`, `lagged_returns` in `research/features.py` | none | done |
 | [MR-003](MR-003.md) | Documented interface for `research/` to eventually consume `validation-service`'s multi-source feature assembly; discloses no export endpoint exists yet | MDF-003 (done, Sprint 36) | done |
 | [MR-004](MR-004.md) | Gradient-boosting (LightGBM) `Baseline`, 1h/6h, light-compute-scoped | MR-001 (done), MR-003 (sequencing only) | done |
-| MR-005 | Regime-sensitive candidate: 2-state HMM gating a linear model, `Baseline`, 1h/6h, light-compute-scoped (Sprint 42) | MR-001 (done), MR-004 (done) | not started |
+| [MR-005](MR-005.md) | Regime-sensitive candidate: 2-state HMM gating a linear model, `Baseline`, 1h/6h, light-compute-scoped (Sprint 42) | MR-001 (done), MR-004 (done) | done |
 | MR-006 | Per-split explainability | MR-004 (done); deferred to sprint after MR-005 (see sprint-42.md) | not started |
 
 ## Sprint 41 (docs/sprints/sprint-41.md, backlog: docs/product/backlog-model-research.md)
@@ -352,8 +352,8 @@ in `routers/runs.py::create_run`'s existing call path.
 
 | Ticket | Story | Module | Depends on | Status |
 |---|---|---|---|---|
-| MR-005 | 2-state HMM gating linear model `Baseline`, 1h/6h horizons, light-compute-scoped | research | MR-001 (done), MR-004 (done) | not started |
-| MR-007 | Read-only `GET /runs/{run_id}/features` export endpoint, re-invoking `FeatureDatasetAssembler.assemble` from persisted run lineage; closes MR-003's disclosed gap | services/validation-service | MR-003 (done), VS-030 (done) | not started |
+| [MR-005](MR-005.md) | 2-state HMM gating linear model `Baseline`, 1h/6h horizons, light-compute-scoped | research | MR-001 (done), MR-004 (done) | done |
+| [MR-007](MR-007.md) | Read-only `GET /runs/{run_id}/features` export endpoint, re-invoking `FeatureDatasetAssembler.assemble` from persisted run lineage; closes MR-003's disclosed gap | services/validation-service | MR-003 (done), VS-030 (done) | done |
 
 ## Sprint 39 (docs/sprints/sprint-39.md, backlog: docs/product/backlog-uat-findings.md)
 

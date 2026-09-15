@@ -1,17 +1,20 @@
 """MR-004 — tests for `research/models/gradient_boosting.py`'s `LightGBMBaseline`.
 
 ============================== DISCLOSURE ==================================
-The fixture below (`_synthetic_hourly_returns`) is a SEEDED, DETERMINISTIC
-SYNTHETIC series of exactly 3,000 hourly "returns" (`numpy.random.default_rng`
-with a fixed seed), generated only to exercise this pipeline at the bounded,
-light-compute scale sprint-41.md's MR-004 scoping note requires. It is NOT the
-thesis's real BTC dataset, and no number produced by these tests is claimed to
-reproduce, or even approximate, any of the thesis's published results
-(compare `libs/naive_first_engine/tests/test_regression_1h.py`'s own
-disclosure block, which this file's convention follows). These tests exercise
-the pipeline mechanics -- fresh-fit-per-split, `run_validation_protocol`
-wiring, DM-vs-Naive0 verdict reporting -- not a claim that LightGBM predicts
-real Bitcoin returns or generates a trading signal.
+The fixture (`_synthetic_hourly_returns`, now imported from
+`tests/fixtures.py::synthetic_hourly_returns` -- extracted for reuse by
+MR-005's `test_regime_hmm.py`, see that module's own docstring) is a SEEDED,
+DETERMINISTIC SYNTHETIC series of exactly 3,000 hourly "returns"
+(`numpy.random.default_rng` with a fixed seed), generated only to exercise
+this pipeline at the bounded, light-compute scale sprint-41.md's MR-004
+scoping note requires. It is NOT the thesis's real BTC dataset, and no number
+produced by these tests is claimed to reproduce, or even approximate, any of
+the thesis's published results (compare
+`libs/naive_first_engine/tests/test_regression_1h.py`'s own disclosure
+block, which this file's convention follows). These tests exercise the
+pipeline mechanics -- fresh-fit-per-split, `run_validation_protocol` wiring,
+DM-vs-Naive0 verdict reporting -- not a claim that LightGBM predicts real
+Bitcoin returns or generates a trading signal.
 ==============================================================================
 """
 
@@ -20,32 +23,17 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from models.gradient_boosting import LightGBMBaseline  # noqa: E402
 
 from naive_first_engine.protocol import ValidationConfig, run_validation_protocol  # noqa: E402
 
-N_ROWS = 3_000
-SEED = 42
-
-
-def _synthetic_hourly_returns() -> pd.Series:
-    """Exactly 3,000 seeded synthetic hourly "returns" -- see module DISCLOSURE.
-
-    Not the thesis's real dataset; not claimed to reproduce its published
-    numbers. Exists only to exercise this pipeline at a bounded,
-    light-compute scale (sprint-41.md).
-    """
-    rng = np.random.default_rng(SEED)
-    values = rng.normal(loc=0.0, scale=0.01, size=N_ROWS)
-    index = pd.date_range("2020-01-01", periods=N_ROWS, freq="h")
-    return pd.Series(values, index=index, name="return")
-
+from fixtures import synthetic_hourly_returns as _synthetic_hourly_returns  # noqa: E402
 
 CONFIG_KWARGS = dict(train_window=500, test_window=50, step=250, purge_gap=6)
 

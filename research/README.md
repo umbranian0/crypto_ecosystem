@@ -121,3 +121,57 @@ never assumed.
   4}`; 6h `{'better': 7, 'worse': 0, 'no significant difference': 3}`~~
 
 See `docs/tickets/MR-004.md` for the full ticket.
+
+## Regime-gated linear candidate model (MR-005, Sprint 42 — shipped, light-compute-scoped)
+
+`research/models/regime_hmm.py`'s `RegimeHMMBaseline` is a `Baseline`-protocol Strategy implementation
+(`libs/naive_first_engine/src/naive_first_engine/baselines.py`) wrapping a 2-state
+`hmmlearn.hmm.GaussianHMM` (fixed state count) gating one `sklearn.linear_model.LinearRegression` per
+state, registered via `config.extra_baselines` and run through the real, unmodified
+`run_validation_protocol` — the same purge-gap, train-fold-only-fit, DM-vs-Naive0 protocol as every other
+baseline. The HMM's `.fit()`/`.predict()` calls see only the `train`/`test` arguments handed to that
+split's `predict(train, test)` call, never a module-level or closed-over full series, per CLAUDE.md's
+leakage rule and this ticket's own regime-fit-boundary AC. Per-state linear features come from
+`research/features.py`'s existing `lagged_returns` (MR-002, `lag>=1` by construction) — no rolling
+current-row-inclusive primitive is used, so the same-row target-leakage bug MR-004's review found and
+fixed does not apply here.
+
+This is a research baseline tested against Naive0 under the existing leakage-safe protocol, not a
+price-prediction or trading-signal feature — whether it beats naive is reported honestly either way,
+never assumed.
+
+**Light-compute scoping (sprint-42.md, non-negotiable ceiling)**:
+- State count: fixed at 2 (`GaussianHMM(n_components=2, covariance_type="diag")`), no state-count search
+  of any kind.
+- Dataset: the same seeded, deterministic 3,000-row synthetic hourly-returns series MR-004 already uses,
+  now extracted into `research/tests/fixtures.py::synthetic_hourly_returns` for shared reuse (MR-004's own
+  `test_gradient_boosting.py` was updated to import from the same place rather than keep a duplicate
+  inline generator — its own assertions/numbers are unchanged).
+- `ValidationConfig`: `train_window=500, test_window=50, step=250, purge_gap=6` (same as MR-004 — measured
+  runtime did not require narrowing further).
+- Hyperparameters, fixed, no search: HMM `n_components=2, covariance_type="diag", n_iter=30,
+  random_state=42`; per-state `LinearRegression` uses library defaults.
+- CPU-only. Horizons: 1h and 6h only.
+- Measured runtime: `uv run pytest tests/test_regime_hmm.py -q` — 4 passed in ~5.3-5.9s (pytest-reported),
+  well under the 5-minute ceiling.
+- **Degenerate-state disclosure**: on this i.i.d.-Gaussian synthetic fixture, the 2-state HMM is not
+  guaranteed to find a real, well-separated regime split (the fixture was built for MR-004's boosting
+  story, not to contain a planted regime shift) — this is expected per the ticket's compute-budget section
+  and is not treated as a bug; no fallback/retry logic was added to force better-separated states.
+- Observed DM-vs-Naive0 verdict counts on this synthetic fixture (not a claim about real BTC data): 1h
+  `{'better': 0, 'worse': 0, 'no significant difference': 10}`; 6h `{'better': 1, 'worse': 0, 'no
+  significant difference': 9}` — consistent with the thesis's own core finding (no model beats naive in a
+  stable, significant way); the single 6h "better" split is one split out of ten, not a stable/significant
+  pattern, and is reported here exactly as observed, not smoothed over.
+
+**Correction (post-review)**: Tech Lead review found that the original `predict` decoded each test row's
+regime state using `test`'s own current-row return value (`test.to_numpy()` fed straight into
+`hmm.predict()`) — target leakage, since `return[t]` is the exact value being predicted at row t. Fixed to
+decode test states from the lagged return series (`test.shift(1)`, backfilled from `train`'s last
+observation for the first test row) instead, matching this module's existing `lag>=1` convention. See the
+"Correction" subsection in `docs/tickets/MR-005.md`'s Outcome section for the full bug/fix writeup. Re-run
+verdict counts after the fix were unchanged on this specific seeded fixture (1h and 6h numbers above are the
+corrected, post-fix numbers) — not evidence the leakage was harmless in general, only that this fixture's
+lag-1 return doesn't route rows differently than the current-row return did here.
+
+See `docs/tickets/MR-005.md` for the full ticket.
