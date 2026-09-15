@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Split {{ split_index }} points -- run {{ run.id }} -- dashboard-web{% endblock %}
+{% block content %}
+<h2>Split {{ split_index }} -- actual value vs. predicted value (test-window only)</h2>
+<p><a href="/runs/{{ run.id }}">Back to run {{ run.id }}</a></p>
+<p>Per-timestamp values for split {{ split_index }} of validation run {{ run.id }}, this split's own
+already-completed test window only. This is a backtested validation result, not a statement about any
+value beyond this split's own already-recorded data.</p>
+{% include "_predicted_vs_actual_chart.html" %}
+{% endblock %}

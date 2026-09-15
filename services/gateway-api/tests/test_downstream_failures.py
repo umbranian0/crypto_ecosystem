@@ -1,5 +1,6 @@
-"""GW-009: transport-level failure handling for `app.routers.runs`'s three
-proxied calls to `validation-service`.
+"""GW-009: transport-level failure handling for `app.routers.runs`'s
+proxied calls to `validation-service` (extended by GW-031 to also cover
+`GET /runs/{run_id}/splits/{split_index}/points`).
 
 Reuses the same `httpx.MockTransport` pattern as GW-008's
 `tests/test_runs_routing.py` -- the handler function raises
@@ -105,6 +106,7 @@ def _failed_run_handler(request: httpx.Request) -> httpx.Response:
         ("post", "/runs", {"json": _VALID_RUN_REQUEST}),
         ("get", "/runs/some-run-id", {}),
         ("get", "/runs/some-run-id/splits", {}),
+        ("get", "/runs/some-run-id/splits/0/points", {}),
     ],
 )
 def test_connect_error_returns_502_with_generic_body(method, path, kwargs) -> None:
@@ -127,6 +129,7 @@ def test_connect_error_returns_502_with_generic_body(method, path, kwargs) -> No
         ("post", "/runs", {"json": _VALID_RUN_REQUEST}),
         ("get", "/runs/some-run-id", {}),
         ("get", "/runs/some-run-id/splits", {}),
+        ("get", "/runs/some-run-id/splits/0/points", {}),
     ],
 )
 def test_timeout_returns_504(method, path, kwargs) -> None:

@@ -50,6 +50,21 @@ envelope field names exactly since this is pass-through, not
 reimplementation (same precedent as `RunResponse`/`RunDetailResponse`/
 `SplitResultResponse` being this router's own Pydantic models even though
 they're field-for-field copies of validation-service's).
+
+GW-031: `GET /runs/{run_id}/splits/{split_index}/points` proxies VS-033's
+real per-split point drill-down endpoint, same shape as `get_splits`
+immediately above it -- resolve tenant -> build headers -> forward via
+`_call_downstream`/`_raise_for_error` -> return. `limit`/`offset` query
+params are forwarded to `validation-service` unmodified, same precedent as
+GW-016's `list_runs`. `SplitPointResponse` (the `items` element shape) is
+imported from `naive_first_common.contracts` (VS-033/ARCH-003), never
+redefined; `SplitPointsResponse` (the `{items, limit, offset, total}`
+envelope) is this router's own local wire shape, same "local envelope,
+shared item shape" precedent as `RunListResponse` above. No tenant-
+isolation/retention/pagination-bounds logic is reimplemented here -- the
+404 for a nonexistent/cross-tenant run or split, and the empty-`items`
+response for a split whose points were pruned or never persisted, are
+entirely validation-service's own behavior (VS-033), forwarded as-is.
 """
 
 from __future__ import annotations
@@ -61,6 +76,7 @@ from naive_first_common.contracts import (
     RunRequest,
     RunResponse,
     RunSummaryResponse,
+    SplitPointResponse,
     SplitResultResponse,
 )
 from naive_first_common.tenant_context import TenantContext
@@ -86,6 +102,23 @@ class RunListResponse(BaseModel):
     """
 
     items: list[RunSummaryResponse]
+    limit: int
+    offset: int
+    total: int
+
+
+class SplitPointsResponse(BaseModel):
+    """GW-031: response envelope for `GET /runs/{run_id}/splits/{split_index}/
+    points`, mirroring `validation-service`'s own `SplitPointsResponse`
+    envelope field-for-field (`services/validation-service/src/app/routers/
+    splits.py`, VS-033) since this is a pass-through proxy, not a
+    reimplementation. `items` uses `SplitPointResponse`, imported from
+    `naive_first_common.contracts` (VS-033/ARCH-003) -- never redefined
+    here. This envelope shape itself is local to this router, same
+    precedent as `RunListResponse` above.
+    """
+
+    items: list[SplitPointResponse]
     limit: int
     offset: int
     total: int
@@ -176,3 +209,26 @@ def get_splits(
     response = _call_downstream(client.get, f"/runs/{run_id}/splits", headers=headers)
     _raise_for_error(response)
     return [SplitResultResponse(**item) for item in response.json()]
+
+
+@router.get(
+    "/runs/{run_id}/splits/{split_index}/points",
+    response_model=SplitPointsResponse,
+)
+def get_split_points(
+    run_id: str,
+    split_index: int,
+    client: ValidationServiceClientDep,
+    tenant: TenantContext = Depends(get_authenticated_tenant),
+    limit: int = Query(default=20),
+    offset: int = Query(default=0),
+) -> SplitPointsResponse:
+    headers = build_downstream_headers(tenant)
+    response = _call_downstream(
+        client.get,
+        f"/runs/{run_id}/splits/{split_index}/points",
+        params={"limit": limit, "offset": offset},
+        headers=headers,
+    )
+    _raise_for_error(response)
+    return SplitPointsResponse(**response.json())

@@ -636,6 +636,65 @@ main > table th {
   font-style: italic;
 }
 
+/* Predicted-vs-actual per-split chart (DASH-129/RAV-008): server-rendered
+   inline SVG, per docs/adr/0006-dashboard-web-charting-server-rendered-svg.md.
+   Colors reuse the exact same three accent variables RAV-002/RAV-005 already
+   established above -- never a new hex value, never green/red. `--color-
+   text-muted` is reused for the actual-value series (a neutral fourth line,
+   not a fourth accent color) so the three baseline colors stay reserved for
+   predicted-value series only. */
+
+.predicted-vs-actual-chart-svg {
+  display: block;
+  width: 100%;
+  max-width: 640px;
+  height: auto;
+}
+
+.predicted-vs-actual-chart-svg .line-actual,
+.predicted-vs-actual-chart-svg .line-actual-point {
+  stroke: var(--color-text-muted);
+  fill: var(--color-text-muted);
+}
+
+.predicted-vs-actual-chart-svg .line-actual {
+  stroke-width: 1.5;
+}
+
+.predicted-vs-actual-chart-svg .line-model,
+.predicted-vs-actual-chart-svg .line-model-point {
+  stroke: var(--color-accent);
+  fill: var(--color-accent);
+}
+
+.predicted-vs-actual-chart-svg .line-model {
+  stroke-width: 1.5;
+}
+
+.predicted-vs-actual-chart-svg .line-naive0,
+.predicted-vs-actual-chart-svg .line-naive0-point {
+  stroke: var(--color-accent-2);
+  fill: var(--color-accent-2);
+}
+
+.predicted-vs-actual-chart-svg .line-naive0 {
+  stroke-width: 1.5;
+}
+
+.predicted-vs-actual-chart-svg .line-client,
+.predicted-vs-actual-chart-svg .line-client-point {
+  stroke: var(--color-accent-3);
+  fill: var(--color-accent-3);
+}
+
+.predicted-vs-actual-chart-svg .line-client {
+  stroke-width: 1.5;
+}
+
+.chart-legend-swatch.actual {
+  background-color: var(--color-text-muted);
+}
+
 /* DM-test verdict-by-split chart (RAV-003): server-rendered inline SVG, per
    docs/adr/0006-dashboard-web-charting-server-rendered-svg.md. Four category
    colors reuse existing, already-status-neutral variables rather than

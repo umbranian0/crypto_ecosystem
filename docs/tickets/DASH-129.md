@@ -1,5 +1,8 @@
 # DASH-129 — Predicted-vs-actual chart per split
 
+**Status**: Done — implemented, tested, and personally reviewed (354/354 unit + 7/7 e2e
+`services/dashboard-web` tests pass; positioning copy verified clean).
+
 **Module**: `services/dashboard-web` only.
 **Story**: RAV-008.
 **Depends on**: GW-031 (needs the real proxy endpoint to call).
@@ -51,42 +54,51 @@ fourth independent charting approach invented for this one chart.
 
 ## Implementation acceptance criteria
 
-- [ ] Renders per-split (not per-run), for model/Naive0/client-baseline-when-present series, sourced
+- [x] Renders per-split (not per-run), for model/Naive0/client-baseline-when-present series, sourced
       from GW-031's endpoint.
-- [ ] Chart title/axis labels/copy state "actual value vs. this split's predicted value, test-window
+- [x] Chart title/axis labels/copy state "actual value vs. this split's predicted value, test-window
       only" (or equivalent), no forecast/extrapolation/signal/recommendation language anywhere on this
       view — verified by the same banned-word test convention `datasets.html`'s `tests/test_datasets.py`
       already established (grep for "predict"/"forecast"/"signal"/"recommend" outside of the explicitly
       allowed "predicted value" axis label itself).
-- [ ] No trend-line, no extrapolated/future point rendered under any circumstance.
-- [ ] Status-neutral colors only, matching `style.css`'s documented no-green/red constraint.
+- [x] No trend-line, no extrapolated/future point rendered under any circumstance.
+- [x] Status-neutral colors only, matching `style.css`'s documented no-green/red constraint.
 
 ## Test acceptance criteria
 
-- [ ] Unit test: `build_predicted_vs_actual_chart` renders correct point-for-point series for a
+- [x] Unit test: `build_predicted_vs_actual_chart` renders correct point-for-point series for a
       fixture split's per-point data (model, naive0, and — separately — a fixture including a client
       baseline).
-- [ ] Unit test: positioning-language check (no forecast/extrapolation/signal/recommendation wording)
+- [x] Unit test: positioning-language check (no forecast/extrapolation/signal/recommendation wording)
       on the new route's rendered HTML.
-- [ ] Unit test: a split with zero/pruned points (VS-032's retention cutoff) renders a plain "no
+- [x] Unit test: a split with zero/pruned points (VS-032's retention cutoff) renders a plain "no
       per-point data available for this split" message, not a broken/empty chart or an error.
-- [ ] Full `services/dashboard-web` suite passes, including the existing Selenium e2e suite (no
+- [x] Full `services/dashboard-web` suite passes, including the existing Selenium e2e suite (no
       regression to the existing login → submit → view loop).
 
 ## Review acceptance criteria (Tech Lead verifies personally)
 
-- [ ] Personally read the rendered template copy and confirm zero occurrences of "prediction"/
+- [x] Personally read the rendered template copy and confirm zero occurrences of "prediction"/
       "forecast"/"signal"/"recommend" outside the literal "predicted value" axis label (CLAUDE.md
-      positioning check, the sprint's own binding Definition of Done item).
-- [ ] Confirm no trend-line/extrapolation element exists anywhere in the SVG-building code (read
-      `build_predicted_vs_actual_chart`'s full body).
-- [ ] Confirm the new route/partial reuses `DownstreamHeadersDep`/`GatewayApiUrlDep`/
+      positioning check, the sprint's own binding Definition of Done item). Confirmed by reading
+      `_predicted_vs_actual_chart.html`/`split_points_chart.html` in full: the word "predicted" only
+      appears in "predicted value" text; none of "prediction"/"forecast"/"signal"/"recommend" appear
+      anywhere on this view.
+- [x] Confirm no trend-line/extrapolation element exists anywhere in the SVG-building code (read
+      `build_predicted_vs_actual_chart`'s full body). Confirmed: `scale_x`/`scale_y` are bounded by
+      `min_ts`/`max_ts`/`min_value`/`max_value` computed only from the passed-in `points`; each
+      `LineSeries.polyline_points` strictly connects already-persisted points in ascending-timestamp
+      order; no code path draws or infers anything beyond that range.
+- [x] Confirm the new route/partial reuses `DownstreamHeadersDep`/`GatewayApiUrlDep`/
       `_call_downstream`/`_render_error_for_status` rather than a fifth near-identical transport-
-      handling block.
-- [ ] Run the full test suite (unit + e2e) personally.
+      handling block. Confirmed by reading `run_split_points_chart`'s full body in
+      `src/app/routers/runs.py` — identical DI/error-handling seam to `run_detail`.
+- [x] Run the full test suite (unit + e2e) personally. Unit: 354 passed, 7 deselected. E2e: 7 passed,
+      354 deselected (real Chrome + Selenium Manager driver, not skipped) — both run directly via
+      `.venv/Scripts/python.exe -m pytest -q -m "not e2e"` / `-m e2e`.
 
 ## Documentation acceptance criteria
 
-- [ ] `services/dashboard-web/README.md` gains a new section ("Predicted-vs-actual chart per split
+- [x] `services/dashboard-web/README.md` gains a new section ("Predicted-vs-actual chart per split
       (RAV-008/DASH-129)") documenting the new route/partial and its positioning constraints, following
-      the density/style of the existing RAV-002/003/004/005 sections.
+      the density/style of the existing RAV-002/003/004/005 sections. Confirmed present at line 2217.

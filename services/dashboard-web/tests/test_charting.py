@@ -9,6 +9,7 @@ from naive_first_common.contracts import (
     ClientBaselineResult,
     RunDetailResponse,
     RunSummaryResponse,
+    SplitPointResponse,
     SplitResultResponse,
 )
 
@@ -20,6 +21,7 @@ from app.charting import (
     build_dm_verdict_chart,
     build_error_chart,
     build_headline_verdict_summary,
+    build_predicted_vs_actual_chart,
     build_trend_chart,
     compute_consistency_indicator,
     model_column_label,
@@ -618,3 +620,90 @@ def test_round_display_value_formats_to_four_decimal_places_with_trailing_zeros(
 
 def test_round_display_value_passes_none_through_unchanged() -> None:
     assert round_display_value(None) is None
+
+
+# DASH-129 (RAV-008): unit tests for `build_predicted_vs_actual_chart`.
+
+
+def _split_point(
+    timestamp: str, predicted: float, actual: float, baseline_key: str
+) -> SplitPointResponse:
+    return SplitPointResponse(
+        timestamp=timestamp, predicted=predicted, actual=actual, baseline_key=baseline_key
+    )
+
+
+def test_build_predicted_vs_actual_chart_empty_points_has_no_data() -> None:
+    chart = build_predicted_vs_actual_chart([])
+
+    assert chart.has_data is False
+    assert chart.actual is None
+    assert chart.model is None
+    assert chart.naive0 is None
+    assert chart.client is None
+
+
+def test_build_predicted_vs_actual_chart_model_and_naive0_series() -> None:
+    points = [
+        _split_point("2026-01-10T06:00:00Z", predicted=1.0, actual=1.5, baseline_key="naive_last"),
+        _split_point("2026-01-10T07:00:00Z", predicted=1.2, actual=1.4, baseline_key="naive_last"),
+        _split_point("2026-01-10T06:00:00Z", predicted=0.0, actual=1.5, baseline_key="naive0"),
+        _split_point("2026-01-10T07:00:00Z", predicted=0.0, actual=1.4, baseline_key="naive0"),
+    ]
+
+    chart = build_predicted_vs_actual_chart(points)
+
+    assert chart.has_data is True
+    assert chart.client is None
+    assert chart.client_baseline_key is None
+
+    assert [p.value for p in chart.model.points] == [1.0, 1.2]
+    assert [p.value for p in chart.naive0.points] == [0.0, 0.0]
+    # Actual series sourced from the naive_last group (preferred), not
+    # duplicated once per baseline group.
+    assert [p.value for p in chart.actual.points] == [1.5, 1.4]
+
+    # Points are strictly in ascending-timestamp order, connecting only
+    # already-known points -- no point beyond this fixture's own two
+    # timestamps is ever produced.
+    assert len(chart.model.points) == 2
+    assert chart.model.points[0].x < chart.model.points[1].x
+
+
+def test_build_predicted_vs_actual_chart_includes_client_baseline_third_series() -> None:
+    points = [
+        _split_point("2026-01-10T06:00:00Z", predicted=1.0, actual=1.5, baseline_key="naive_last"),
+        _split_point("2026-01-10T06:00:00Z", predicted=0.0, actual=1.5, baseline_key="naive0"),
+        _split_point("2026-01-10T06:00:00Z", predicted=0.8, actual=1.5, baseline_key="client-model-x"),
+    ]
+
+    chart = build_predicted_vs_actual_chart(points)
+
+    assert chart.has_data is True
+    assert chart.client is not None
+    assert chart.client_baseline_key == "client-model-x"
+    assert [p.value for p in chart.client.points] == [0.8]
+
+
+def test_build_predicted_vs_actual_chart_never_extrapolates_beyond_data_range() -> None:
+    """No trend-line/extrapolated point exists -- the x-scale's domain is
+    bounded exactly by this split's own min/max timestamp, and every series'
+    point count matches its own input row count exactly (no synthetic point
+    added).
+    """
+    points = [
+        _split_point("2026-01-10T06:00:00Z", predicted=1.0, actual=1.5, baseline_key="naive_last"),
+        _split_point("2026-01-10T08:00:00Z", predicted=1.4, actual=1.3, baseline_key="naive_last"),
+        _split_point("2026-01-10T06:00:00Z", predicted=0.0, actual=1.5, baseline_key="naive0"),
+        _split_point("2026-01-10T08:00:00Z", predicted=0.0, actual=1.3, baseline_key="naive0"),
+    ]
+
+    chart = build_predicted_vs_actual_chart(points)
+
+    assert len(chart.model.points) == 2
+    assert len(chart.naive0.points) == 2
+    assert len(chart.actual.points) == 2
+    # First point sits at the plot's left edge, last at the right edge -- no
+    # point is placed past either boundary.
+    assert chart.model.points[0].x >= 0
+    assert chart.model.points[-1].x <= chart.width

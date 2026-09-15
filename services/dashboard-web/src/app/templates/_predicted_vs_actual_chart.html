@@ -1,0 +1,80 @@
+{# DASH-129 (RAV-008): per-split actual-value-vs-predicted-value chart, server-rendered
+   inline SVG per ADR-0006 (docs/adr/0006-dashboard-web-charting-server-rendered-svg.md)
+   -- no client-side charting library. `points_chart` is `app/charting.py`'s
+   `build_predicted_vs_actual_chart(points)` output, computed by
+   `run_split_points_chart`'s handler (charting.py has no Jinja2 import; this
+   partial is the only place its geometry becomes markup).
+
+   Binding positioning constraint (CLAUDE.md, DASH-129 ticket Design section):
+   this chart is strictly a view of one split's own already-completed test
+   window -- actual value vs. this split's predicted value, test-window only.
+   No trend-line, no extrapolated/future point, ever. The word "predicted"
+   appears only inside the literal "predicted value" axis label/legend text
+   below -- never "prediction"/"forecast"/"signal"/"recommendation" anywhere
+   on this partial.
+
+   Colors are the three named CSS variables only (`--color-accent` for the
+   model series, `--color-accent-2` for Naive0, `--color-accent-3` for an
+   optional client-supplied baseline), applied via the `line-model`/
+   `line-naive0`/`line-client`/`line-actual` classes below (style.css) --
+   never a hardcoded hex value, and never a green/red pairing, same
+   RAV-002/RAV-005 precedent. #}
+{% if not points_chart.has_data %}
+<p class="chart-caption">No per-point data available for this split.</p>
+{% else %}
+<div class="chart-container">
+    <h4 class="chart-title">Actual value vs. this split's predicted value (test-window only) -- split {{ split_index }}</h4>
+    <p class="chart-caption">Backtested validation result for one already-completed test window -- not a
+        statement about any value outside this split's own recorded data.</p>
+    <svg
+        class="predicted-vs-actual-chart-svg"
+        viewBox="0 0 {{ points_chart.width }} {{ points_chart.height }}"
+        role="img"
+        aria-label="Actual value versus this split's predicted value, test-window only, for split {{ split_index }}"
+    >
+        <line
+            class="chart-axis"
+            x1="0"
+            y1="{{ points_chart.plot_bottom }}"
+            x2="{{ points_chart.width }}"
+            y2="{{ points_chart.plot_bottom }}"
+        />
+        {% if points_chart.actual %}
+        <polyline class="line-actual" points="{{ points_chart.actual.polyline_points }}" fill="none" />
+        {% for point in points_chart.actual.points %}
+        <circle class="line-actual-point" cx="{{ point.x }}" cy="{{ point.y }}" r="2.5"><title>{{ point.timestamp }} -- actual value: {{ point.value|round4 }}</title></circle>
+        {% endfor %}
+        {% endif %}
+        {% if points_chart.model %}
+        <polyline class="line-model" points="{{ points_chart.model.polyline_points }}" fill="none" />
+        {% for point in points_chart.model.points %}
+        <circle class="line-model-point" cx="{{ point.x }}" cy="{{ point.y }}" r="2.5"><title>{{ point.timestamp }} -- {{ model_column_label }} predicted value: {{ point.value|round4 }}</title></circle>
+        {% endfor %}
+        {% endif %}
+        {% if points_chart.naive0 %}
+        <polyline class="line-naive0" points="{{ points_chart.naive0.polyline_points }}" fill="none" />
+        {% for point in points_chart.naive0.points %}
+        <circle class="line-naive0-point" cx="{{ point.x }}" cy="{{ point.y }}" r="2.5"><title>{{ point.timestamp }} -- Naive0 predicted value: {{ point.value|round4 }}</title></circle>
+        {% endfor %}
+        {% endif %}
+        {% if points_chart.client %}
+        <polyline class="line-client" points="{{ points_chart.client.polyline_points }}" fill="none" />
+        {% for point in points_chart.client.points %}
+        <circle class="line-client-point" cx="{{ point.x }}" cy="{{ point.y }}" r="2.5"><title>{{ point.timestamp }} -- client baseline predicted value: {{ point.value|round4 }}</title></circle>
+        {% endfor %}
+        {% endif %}
+    </svg>
+    <div class="chart-legend">
+        <span><span class="chart-legend-swatch actual"></span>Actual value</span>
+        {% if points_chart.model %}
+        <span><span class="chart-legend-swatch model"></span>{{ model_column_label }} predicted value</span>
+        {% endif %}
+        {% if points_chart.naive0 %}
+        <span><span class="chart-legend-swatch naive0"></span>Naive0 predicted value</span>
+        {% endif %}
+        {% if points_chart.client %}
+        <span><span class="chart-legend-swatch client"></span>Client baseline predicted value ({{ points_chart.client_baseline_key }})</span>
+        {% endif %}
+    </div>
+</div>
+{% endif %}

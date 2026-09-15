@@ -270,6 +270,27 @@ routes now call `_fetch_all_runs` instead of a bare, unparameterized
 pagination UI. `runs_list` (DASH-005-01) itself is deliberately untouched --
 it forwards a caller-supplied `limit`/`offset` unmodified by design (its own
 docstring), not this bug's territory.
+
+DASH-129 (RAV-008): `GET /runs/{run_id}/splits/{split_index}/points-chart`
+(this same file, same "no second router module" precedent every route above
+sets) -- a per-split drill-down page plotting that split's own actual values
+against the model's (`naive_last`) and Naive0's predicted values over its
+already-completed test window, plus a client-supplied baseline when present.
+Reuses the exact same `_call_downstream`/`_render_error_for_status` seam
+every other route in this file uses -- two outbound calls, `GET /runs/{id}`
+(for `model_column_label`'s disclosure, same as `run_detail`) and GW-031's
+new `GET /runs/{id}/splits/{index}/points`, both via that same seam, no new
+transport-handling code. `build_predicted_vs_actual_chart` (`app/charting.py`,
+pure function, no I/O) turns the fetched points into pixel geometry;
+`split_points_chart.html`/`_predicted_vs_actual_chart.html` render it,
+following `_error_chart.html`'s exact `.chart-container`/`.chart-title`/
+`.chart-legend` convention. `points-chart`'s own endpoint call is a single,
+unparameterized request (GW-031's/VS-033's own `limit=20` default applies) --
+no `_fetch_all_runs`-style paging loop was added, since this ticket's own
+acceptance criteria do not call for one; a future ticket can add pagination
+here the same way DASH-122 added it to `runs_horizon_summary`/`runs_trend` if
+a real split's test window is found to exceed that default. `run_detail.html`
+gains a "Points" column per split row linking into this route.
 """
 
 from __future__ import annotations
@@ -285,6 +306,7 @@ from naive_first_common.contracts import (
     RunRequest,
     RunResponse,
     RunSummaryResponse,
+    SplitPointResponse,
     SplitResultResponse,
 )
 from pydantic import ValidationError
@@ -295,6 +317,7 @@ from app.charting import (
     build_dm_verdict_chart,
     build_error_chart,
     build_headline_verdict_summary,
+    build_predicted_vs_actual_chart,
     build_trend_chart,
     compute_consistency_indicator,
     model_column_label,
@@ -975,6 +998,56 @@ def runs_trend(
             "metric_options": METRIC_REGISTRY,
             "trend_chart": trend_chart,
             "consistency_indicator": consistency_indicator,
+        },
+    )
+
+
+@router.get("/runs/{run_id}/splits/{split_index}/points-chart")
+def run_split_points_chart(
+    request: Request,
+    run_id: str,
+    split_index: int,
+    headers: DownstreamHeadersDep,
+    base_url: GatewayApiUrlDep,
+):
+    """DASH-129 (RAV-008): see this module's own docstring for the full note.
+    Fetches the run detail (for `model_column_label`'s disclosure) and this
+    one split's points (GW-031) via the same `_call_downstream`/
+    `_render_error_for_status` seam every other route in this file uses.
+    """
+    with httpx.Client(base_url=base_url, timeout=DOWNSTREAM_HTTP_TIMEOUT_SECONDS) as client:
+        detail_response, transport_status = _call_downstream(
+            client.get, f"/runs/{run_id}", headers=headers
+        )
+        if transport_status is not None:
+            return _render_error_for_status(request, transport_status)
+        if detail_response.status_code in (502, 504):
+            return _render_error_for_status(request, detail_response.status_code)
+        if detail_response.status_code == 404:
+            return templates.TemplateResponse(request, "not_found.html", {}, status_code=404)
+
+        run = RunDetailResponse(**detail_response.json())
+
+        points_response, points_transport_status = _call_downstream(
+            client.get, f"/runs/{run_id}/splits/{split_index}/points", headers=headers
+        )
+        if points_transport_status is not None:
+            return _render_error_for_status(request, points_transport_status)
+        if points_response.status_code in (502, 504):
+            return _render_error_for_status(request, points_response.status_code)
+        if points_response.status_code == 404:
+            return templates.TemplateResponse(request, "not_found.html", {}, status_code=404)
+
+        points = [SplitPointResponse(**item) for item in points_response.json()["items"]]
+
+    return templates.TemplateResponse(
+        request,
+        "split_points_chart.html",
+        {
+            "run": run,
+            "split_index": split_index,
+            "points_chart": build_predicted_vs_actual_chart(points),
+            "model_column_label": model_column_label(run),
         },
     )
 

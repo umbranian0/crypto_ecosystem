@@ -101,6 +101,17 @@ _SPLIT_RECORD = {
 
 _SEED_SPLITS: dict[str, list[dict]] = {RUN_OWNED_BY_A: [_SPLIT_RECORD]}
 
+_POINT_RECORD = {
+    "timestamp": "2026-01-08T02:00:00",
+    "predicted": 1.5,
+    "actual": 1.4,
+    "baseline_key": "naive0",
+}
+
+_SEED_POINTS: dict[tuple[str, int], list[dict]] = {
+    (RUN_OWNED_BY_A, 0): [_POINT_RECORD],
+}
+
 
 @dataclass
 class FakeValidationService:
@@ -189,6 +200,31 @@ class FakeValidationService:
                     "limit": limit,
                     "offset": offset,
                     "total": len(tenant_runs),
+                },
+            )
+
+        if request.method == "GET" and "/splits/" in path and path.endswith("/points"):
+            # path shape: /runs/{run_id}/splits/{split_index}/points
+            remainder = path.removeprefix("/runs/")
+            run_id, _, tail = remainder.partition("/splits/")
+            split_index_str, _, _ = tail.partition("/points")
+            run = _SEED_RUNS.get(run_id) or self.created_runs.get(run_id)
+            if run is None or run["tenant_id"] != tenant_id:
+                return httpx.Response(404, json={"detail": "run not found"})
+            splits = _SEED_SPLITS.get(run_id, [])
+            if not any(split["split_index"] == int(split_index_str) for split in splits):
+                return httpx.Response(404, json={"detail": "run not found"})
+
+            limit = int(request.url.params.get("limit", 20))
+            offset = int(request.url.params.get("offset", 0))
+            points = _SEED_POINTS.get((run_id, int(split_index_str)), [])
+            return httpx.Response(
+                200,
+                json={
+                    "items": points[offset : offset + limit],
+                    "limit": limit,
+                    "offset": offset,
+                    "total": len(points),
                 },
             )
 
@@ -379,6 +415,62 @@ def test_cross_tenant_get_run_returns_404(client: TestClient) -> None:
 def test_cross_tenant_get_splits_returns_404(client: TestClient) -> None:
     response = client.get(
         f"/runs/{RUN_OWNED_BY_B}/splits", headers={"Authorization": f"Bearer {RAW_KEY_A}"}
+    )
+
+    assert response.status_code == 404
+
+
+# --- GW-031: GET /runs/{run_id}/splits/{split_index}/points ---
+
+
+def test_get_split_points_forwards_and_returns_full_shape(client: TestClient) -> None:
+    response = client.get(
+        f"/runs/{RUN_OWNED_BY_A}/splits/0/points",
+        headers={"Authorization": f"Bearer {RAW_KEY_A}"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert set(body.keys()) == {"items", "limit", "offset", "total"}
+    assert body["limit"] == 20
+    assert body["offset"] == 0
+    assert body["total"] == 1
+    assert len(body["items"]) == 1
+    assert set(body["items"][0].keys()) == set(_POINT_RECORD.keys())
+    assert body["items"][0] == _POINT_RECORD
+
+
+def test_get_split_points_forwards_limit_and_offset_unmodified(
+    client: TestClient, fake_validation_service: FakeValidationService
+) -> None:
+    response = client.get(
+        f"/runs/{RUN_OWNED_BY_A}/splits/0/points?limit=5&offset=10",
+        headers={"Authorization": f"Bearer {RAW_KEY_A}"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["limit"] == 5
+    assert body["offset"] == 10
+
+    seen = fake_validation_service.seen_requests[-1]
+    assert seen.url.params["limit"] == "5"
+    assert seen.url.params["offset"] == "10"
+
+
+def test_cross_tenant_get_split_points_returns_404(client: TestClient) -> None:
+    response = client.get(
+        f"/runs/{RUN_OWNED_BY_B}/splits/0/points",
+        headers={"Authorization": f"Bearer {RAW_KEY_A}"},
+    )
+
+    assert response.status_code == 404
+
+
+def test_nonexistent_split_index_get_split_points_returns_404(client: TestClient) -> None:
+    response = client.get(
+        f"/runs/{RUN_OWNED_BY_A}/splits/99/points",
+        headers={"Authorization": f"Bearer {RAW_KEY_A}"},
     )
 
     assert response.status_code == 404

@@ -83,6 +83,7 @@ splits below -- full per-split detail for this run remains available via the API
             <th>DM statistic</th>
             <th>DM p-value</th>
             <th>DM verdict</th>
+            <th>Points</th>
         </tr>
     </thead>
     <tbody>
@@ -109,6 +110,7 @@ splits below -- full per-split detail for this run remains available via the API
             <td>{{ split.dm_statistic|round4 }}</td>
             <td>{{ split.dm_pvalue|round4 }}</td>
             <td>{{ split.dm_verdict }}</td>
+            <td><a href="/runs/{{ run.id }}/splits/{{ split.split_index }}/points-chart">Actual vs. predicted value</a></td>
         </tr>
         {% endfor %}
     </tbody>

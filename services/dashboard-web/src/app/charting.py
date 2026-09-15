@@ -77,15 +77,34 @@ split) rather than a second None-check. When no split carries a
 `client_baseline`, both functions return exactly the same shape (same bar
 geometry, `client`/`client_bars` empty/`None`) as before this ticket -- no
 layout change for the common case.
+
+DASH-129 (RAV-008): `build_predicted_vs_actual_chart` takes a single split's
+already-fetched `list[SplitPointResponse]` (GW-031/VS-033's per-split
+drill-down endpoint) and returns point/line geometry for that split's own
+already-completed test window -- explicitly retrospective/audit framing
+throughout (title/axis copy live in the template, not here), never a
+forecast of anything beyond the data handed in. Grouped by `baseline_key`
+into up to three predicted-value series (`naive_last`/model, `naive0`,
+optionally one client-supplied baseline) plus one shared `actual` series --
+a new `Point`/`LineSeries` geometry pair, since this is a continuous x
+(timestamp) / y (value) line/point chart, a different scaling problem than
+`build_error_chart`'s per-split bar groups (no existing bar-geometry helper
+applies, same disclosed-non-duplication reasoning RAV-003's own docstring
+above gives for its own categorical count chart). No trend-line/
+extrapolation code path exists anywhere in this function -- every line
+segment strictly connects two already-known, already-persisted points.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
+from datetime import datetime
+
 from naive_first_common.contracts import (
     RunDetailResponse,
     RunSummaryResponse,
+    SplitPointResponse,
     SplitResultResponse,
 )
 
@@ -773,4 +792,201 @@ def compute_consistency_indicator(
         beat_count=beat_count,
         total_count=total_count,
         has_data=total_count > 0,
+    )
+
+
+# DASH-129 (RAV-008): per-split, per-timestamp actual-vs-predicted point/line
+# chart -- backtest/audit framing only (CLAUDE.md, ticket Design section).
+# Reuses the exact same "pure function, no I/O, no Jinja2 import" contract as
+# `build_error_chart`/`build_dm_verdict_chart` above; a new geometry primitive
+# (`Point`/`LineSeries`, below) is introduced because this is a continuous
+# x (timestamp) / y (value) line/point chart, not a bar chart -- no existing
+# bar-geometry helper applies.
+
+_POINT_CHART_WIDTH = 640
+_POINT_CHART_HEIGHT = 220
+_POINT_PADDING_LEFT = 48
+_POINT_PADDING_RIGHT = 16
+_POINT_PADDING_TOP = 16
+_POINT_PADDING_BOTTOM = 32
+
+# The two fixed baseline keys always looked for (naive_first_engine's own
+# `NAIVE0_KEY`/`NAIVE_LAST_KEY` string values, restated here as plain literals
+# per `SplitPointResponse`'s own docstring -- this is a wire-contract string
+# comparison, not an engine-internal import, per CLAUDE.md's no-service/lib
+# cross-import rule).
+_NAIVE_LAST_BASELINE_KEY = "naive_last"
+_NAIVE0_BASELINE_KEY = "naive0"
+
+
+@dataclass(frozen=True)
+class Point:
+    """One rendered `<circle>`'s pixel position plus the raw timestamp/value
+    it represents (carried through so the template/tests can assert against
+    the real value, not just the scaled pixel position).
+    """
+
+    x: float
+    y: float
+    timestamp: datetime
+    value: float
+
+
+@dataclass(frozen=True)
+class LineSeries:
+    """One series' ordered points plus a pre-joined `polyline_points` string
+    (`"x1,y1 x2,y2 ..."`, the exact `<polyline points="...">` attribute
+    value) -- points are always in ascending-timestamp order, and the
+    polyline strictly connects only already-known, already-persisted points
+    to their immediate neighbor; nothing beyond the last real point is ever
+    drawn (no trend-line, no extrapolation, per this ticket's binding
+    constraint).
+    """
+
+    css_slug: str
+    points: list[Point]
+    polyline_points: str
+
+
+@dataclass(frozen=True)
+class PredictedVsActualChartData:
+    """`has_data` distinguishes "this split has zero persisted points" (e.g.
+    pruned by VS-032's retention cutoff, or a split whose points were never
+    persisted) from a genuine chart -- the template must render a plain "no
+    per-point data available for this split" message in that case, never a
+    broken/empty `<svg>` (this ticket's Implementation acceptance criteria).
+
+    `model`/`naive0`/`client` are each `None` when that baseline's key is not
+    present in this split's points at all (`client` is `None` whenever no
+    baseline key other than `naive_last`/`naive0` is present -- the common,
+    no-client-baseline case). `actual` is a single series (one line) even
+    though the underlying rows repeat the same actual value once per
+    baseline_key group -- sourced from whichever one group is present
+    (`naive_last` preferred, then `naive0`, then any other), never rendered
+    as three overlapping duplicate lines.
+    """
+
+    width: int
+    height: int
+    plot_bottom: float
+    has_data: bool
+    actual: LineSeries | None = None
+    model: LineSeries | None = None
+    naive0: LineSeries | None = None
+    client: LineSeries | None = None
+    client_baseline_key: str | None = None
+
+
+def build_predicted_vs_actual_chart(
+    points: list[SplitPointResponse],
+) -> PredictedVsActualChartData:
+    """Pre-computes point/line geometry for one split's actual-value-vs-this-
+    split's-predicted-value chart, grouped by `baseline_key` into up to three
+    predicted-value series (`naive_last` == the model/client-submitted
+    series, `naive0`, and at most one other client-supplied baseline key) plus
+    one shared `actual` series.
+
+    Both axes share one scale across every series so they are directly
+    comparable: x is timestamp, linearly interpolated between this split's
+    own earliest and latest persisted timestamp; y is value, linearly scaled
+    between the smallest and largest actual/predicted value across all of
+    this split's own points. Every line segment connects exactly two
+    already-persisted, already-known points, strictly within this split's own
+    timestamp range -- there is no code path here that computes, draws, or
+    otherwise implies a point beyond the data it was handed (this ticket's
+    binding "no trend-line, no extrapolation" constraint).
+
+    An empty `points` list returns `has_data=False` and no series, rather than
+    raising or producing a broken zero-range chart -- the caller/template must
+    render the "no per-point data available for this split" message in that
+    case (this ticket's Test acceptance criteria).
+    """
+    plot_width = _POINT_CHART_WIDTH - _POINT_PADDING_LEFT - _POINT_PADDING_RIGHT
+    plot_height = _POINT_CHART_HEIGHT - _POINT_PADDING_TOP - _POINT_PADDING_BOTTOM
+    plot_bottom = float(_POINT_PADDING_TOP + plot_height)
+
+    if not points:
+        return PredictedVsActualChartData(
+            width=_POINT_CHART_WIDTH,
+            height=_POINT_CHART_HEIGHT,
+            plot_bottom=plot_bottom,
+            has_data=False,
+        )
+
+    by_baseline: dict[str, list[SplitPointResponse]] = {}
+    for point in points:
+        by_baseline.setdefault(point.baseline_key, []).append(point)
+
+    if _NAIVE_LAST_BASELINE_KEY in by_baseline:
+        actual_source_key = _NAIVE_LAST_BASELINE_KEY
+    elif _NAIVE0_BASELINE_KEY in by_baseline:
+        actual_source_key = _NAIVE0_BASELINE_KEY
+    else:
+        actual_source_key = next(iter(by_baseline))
+
+    all_timestamps = [point.timestamp for point in points]
+    all_values = [point.actual for point in points] + [point.predicted for point in points]
+
+    min_ts, max_ts = min(all_timestamps), max(all_timestamps)
+    min_value, max_value = min(all_values), max(all_values)
+    if max_value == min_value:
+        max_value = min_value + 1.0
+    ts_range_seconds = (max_ts - min_ts).total_seconds()
+
+    def scale_x(timestamp: datetime) -> float:
+        if ts_range_seconds <= 0:
+            return _POINT_PADDING_LEFT + plot_width / 2
+        return _POINT_PADDING_LEFT + (
+            (timestamp - min_ts).total_seconds() / ts_range_seconds
+        ) * plot_width
+
+    def scale_y(value: float) -> float:
+        return plot_bottom - ((value - min_value) / (max_value - min_value)) * plot_height
+
+    def build_series(css_slug: str, rows: list[SplitPointResponse], value_attr: str) -> LineSeries:
+        sorted_rows = sorted(rows, key=lambda row: row.timestamp)
+        series_points = [
+            Point(
+                x=scale_x(row.timestamp),
+                y=scale_y(getattr(row, value_attr)),
+                timestamp=row.timestamp,
+                value=getattr(row, value_attr),
+            )
+            for row in sorted_rows
+        ]
+        polyline_points = " ".join(f"{p.x},{p.y}" for p in series_points)
+        return LineSeries(css_slug=css_slug, points=series_points, polyline_points=polyline_points)
+
+    actual_series = build_series("actual", by_baseline[actual_source_key], "actual")
+    model_series = (
+        build_series("model", by_baseline[_NAIVE_LAST_BASELINE_KEY], "predicted")
+        if _NAIVE_LAST_BASELINE_KEY in by_baseline
+        else None
+    )
+    naive0_series = (
+        build_series("naive0", by_baseline[_NAIVE0_BASELINE_KEY], "predicted")
+        if _NAIVE0_BASELINE_KEY in by_baseline
+        else None
+    )
+
+    client_baseline_key = next(
+        (key for key in by_baseline if key not in (_NAIVE_LAST_BASELINE_KEY, _NAIVE0_BASELINE_KEY)),
+        None,
+    )
+    client_series = (
+        build_series("client", by_baseline[client_baseline_key], "predicted")
+        if client_baseline_key is not None
+        else None
+    )
+
+    return PredictedVsActualChartData(
+        width=_POINT_CHART_WIDTH,
+        height=_POINT_CHART_HEIGHT,
+        plot_bottom=plot_bottom,
+        has_data=True,
+        actual=actual_series,
+        model=model_series,
+        naive0=naive0_series,
+        client=client_series,
+        client_baseline_key=client_baseline_key,
     )

@@ -2612,5 +2612,5 @@ next ticket's input): `VS-031 → VS-032 → VS-033 → GW-031 → DASH-129`.
 | [VS-031](VS-031.md) | RAV-006 (persistence half): `split_points` table + repository + `POST /runs` wiring | validation-service (+ additive `naive_first_engine.report_schema.BaselineResult.predictions` field) | none | done |
 | [VS-032](VS-032.md) | RAV-006 (retention half): 90-day cutoff, prune script, storage-growth estimate | validation-service | VS-031 | done |
 | [VS-033](VS-033.md) | RAV-007 (validation-service half): `GET /runs/{id}/splits/{split_index}/points` + canonical `SplitPointResponse` contract | validation-service, libs/common | VS-031, VS-032 | done |
-| [GW-031](GW-031.md) | RAV-007 (gateway-api half): pass-through proxy for the new endpoint | gateway-api | VS-033 | todo |
-| [DASH-129](DASH-129.md) | RAV-008: predicted-vs-actual chart per split | dashboard-web | GW-031 | todo |
+| [GW-031](GW-031.md) | RAV-007 (gateway-api half): pass-through proxy for the new endpoint | gateway-api | VS-033 | done |
+| [DASH-129](DASH-129.md) | RAV-008: predicted-vs-actual chart per split | dashboard-web | GW-031 | done |

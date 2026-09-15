@@ -2213,3 +2213,62 @@ form. Linked from `base.html`'s tenant nav ("Concepts") and from `run_new.html`,
 All three tickets landed additively on top of the existing UAT-003/004/006/007/008/012/013 work already
 shipped this sprint -- no changes to any of those tickets' own code. Full suite: 341 unit passed (up
 from 319), 7 deselected (Selenium E2E, not re-run this sprint), zero regressions.
+
+## Predicted-vs-actual chart per split (RAV-008/DASH-129)
+
+`GET /runs/{run_id}/splits/{split_index}/points-chart` (`src/app/routers/runs.py`, new route,
+depends on GW-031/`validation-service`'s VS-033 per-split point drill-down endpoint) renders one
+split's own actual values against the model's (`naive_last`) and Naive0's predicted values over that
+split's already-completed test window, plus a client-supplied baseline series when present -- a
+drill-down from `run_detail.html`'s existing per-split table, not a replacement for it.
+
+- **`app/charting.py`** gained `build_predicted_vs_actual_chart(points: list[SplitPointResponse]) ->
+  PredictedVsActualChartData` -- a pure function (no I/O, no Jinja2 import), same contract as
+  `build_error_chart`/`build_dm_verdict_chart`. Points are grouped by `baseline_key` into up to three
+  predicted-value series (`naive_last`/model, `naive0`, and at most one other client-supplied
+  baseline key) plus one shared `actual` series (sourced from whichever one baseline group is
+  present, `naive_last` preferred, so the same actual value isn't rendered three times). Both axes
+  share one linear scale (x = timestamp, y = value) across every series in the split. A new
+  `Point`/`LineSeries` geometry pair was introduced (not `Bar`/`SplitBars`) since this is a
+  continuous line/point chart, a different scaling problem than the existing bar-geometry helpers --
+  same disclosed non-duplication reasoning RAV-003's own DM-verdict chart used for its own new
+  geometry shape.
+- **No trend-line/extrapolation, ever**: every line segment in `build_predicted_vs_actual_chart`
+  strictly connects two already-known, already-persisted points (sorted ascending by timestamp) --
+  there is no code path that computes or renders a point outside the min/max timestamp this split's
+  own points actually span. An empty (or fully pruned, VS-032's retention cutoff) `points` list
+  returns `has_data=False`; `_predicted_vs_actual_chart.html` renders a plain "No per-point data
+  available for this split." message in that case, never a broken/empty `<svg>`.
+- **`app/routers/runs.py`**: `run_split_points_chart` reuses the exact same `_call_downstream`/
+  `_render_error_for_status`/`DownstreamHeadersDep`/`GatewayApiUrlDep` seam every other route in this
+  file uses -- two outbound calls (`GET /runs/{id}` for `model_column_label`'s disclosure, and GW-031's
+  `GET /runs/{id}/splits/{index}/points`), no new transport-handling code. The points call is a
+  single, unparameterized request (GW-031's own `limit=20` default applies) -- no DASH-122-style
+  paging loop was added, since this ticket's own acceptance criteria don't call for one.
+- **Templates**: `split_points_chart.html` (new page, extends `base.html`) includes
+  `_predicted_vs_actual_chart.html` (new partial, `.chart-container`/`.chart-title`/svg
+  `viewBox`/`.chart-legend`/`role="img"`+`aria-label`, same convention as `_error_chart.html`).
+  `run_detail.html`'s per-split table gained a "Points" column linking each row into this route.
+- **Positioning (binding, CLAUDE.md)**: the chart's title reads "Actual value vs. this split's
+  predicted value (test-window only) -- split N"; the caption states this is "a backtested validation
+  result for one already-completed test window -- not a statement about any value outside this
+  split's own recorded data." The word "predicted" appears only inside the literal "predicted value"
+  axis/legend label -- "prediction"/"forecast"/"signal"/"recommendation" appear nowhere on this
+  template, verified by `tests/test_split_points_chart.py`'s own banned-word scan of the rendered
+  response (the exact same four-word list `tests/test_datasets.py` established; "predicted value" is
+  not flagged since "predict" itself is not in that list).
+- **Colors**: the model series uses `--color-accent`, Naive0 uses `--color-accent-2`, an optional
+  client baseline uses `--color-accent-3` (`style.css`'s existing three accent variables, applied via
+  `.line-model`/`.line-naive0`/`.line-client` classes) -- the actual-value series uses
+  `--color-text-muted` (a neutral fourth line, not a new accent color) so the three baseline colors
+  stay reserved for predicted-value series only. Never a hardcoded hex value, never green/red.
+- **Tests**: `tests/test_charting.py` gained unit tests for `build_predicted_vs_actual_chart` --
+  empty points (`has_data=False`), model+naive0 series with the shared actual series correctly
+  deduplicated, a third client-baseline series, and a "never extrapolates beyond the data range"
+  assertion. `tests/test_split_points_chart.py` (new file, mirrors `test_runs_detail.py`'s
+  `httpx.MockTransport` fixture pattern) covers the route: model+naive0 rendering, the zero-points
+  "no per-point data available" message, a 404 for a nonexistent run, the session-required redirect,
+  and the banned-positioning-word scan against the rendered HTML.
+- **Full suite**: 354 unit passed (up from ~347), 7 e2e passed (Selenium, actually run this ticket --
+  Chrome + Selenium Manager were available in this environment), zero regressions to the existing
+  login -> submit -> view loop.
