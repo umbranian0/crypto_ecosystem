@@ -281,7 +281,7 @@ naive benchmark — never a standalone predictive-edge claim (see `research/READ
 | [MR-003](MR-003.md) | Documented interface for `research/` to eventually consume `validation-service`'s multi-source feature assembly; discloses no export endpoint exists yet | MDF-003 (done, Sprint 36) | done |
 | [MR-004](MR-004.md) | Gradient-boosting (LightGBM) `Baseline`, 1h/6h, light-compute-scoped | MR-001 (done), MR-003 (sequencing only) | done |
 | [MR-005](MR-005.md) | Regime-sensitive candidate: 2-state HMM gating a linear model, `Baseline`, 1h/6h, light-compute-scoped (Sprint 42) | MR-001 (done), MR-004 (done) | done |
-| MR-006 | Per-split explainability | MR-004 (done); deferred to sprint after MR-005 (see sprint-42.md) | not started |
+| MR-006 | Per-split explainability: feature-importance-only scope (no SHAP) — `LightGBMBaseline.feature_importances_` + `RegimeHMMBaseline` per-state coefficients/active-state assignment (see sprint-43.md) | MR-004 (done), MR-005 (done) | not started |
 
 ## Sprint 41 (docs/sprints/sprint-41.md, backlog: docs/product/backlog-model-research.md)
 
@@ -327,6 +327,20 @@ disclosed gap is genuine. Independently re-ran all suites and reproduced matchin
 `test_limit_and_offset_paginate_correctly_across_a_seeded_set_larger_than_one_page` is flaky when run as
 part of the full suite (passes reliably in isolation/on re-run) — pre-existing, zero diff for that module
 this sprint, flagged as a follow-up test-reliability ticket for a future sprint, not a Sprint 41 defect.
+
+## Sprint 43 (docs/sprints/sprint-43.md, backlog: docs/product/backlog-model-research.md)
+
+Single story: MR-006 (per-split explainability), deferred from Sprint 42 specifically so it could cover
+both MR-004's (LightGBM) and MR-005's (regime-HMM) fitted models — both now done. Scope decision made by
+the PM at planning time: feature-importance-only, no SHAP, no new dependency (`LGBMRegressor.
+feature_importances_` for MR-004; per-state `LinearRegression` coefficients plus per-row active-state
+assignment for MR-005, in place of SHAP, which doesn't map cleanly onto an HMM gate). See sprint-43.md's
+"Explicit scope decision for MR-006" section for the full reasoning. Not yet built — Tech Lead to break
+into ticket(s).
+
+| Ticket | Story | Module | Depends on | Status |
+|---|---|---|---|---|
+| MR-006 | Per-split explainability artifacts, feature-importance-only (no SHAP), covering `LightGBMBaseline` (MR-004) and `RegimeHMMBaseline` (MR-005) | research | MR-004 (done), MR-005 (done) | not started |
 
 ## Sprint 42 (docs/sprints/sprint-42.md, backlog: docs/product/backlog-model-research.md)
 
