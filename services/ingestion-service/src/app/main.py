@@ -28,6 +28,7 @@ from naive_first_common import CorrelationIdMiddleware, configure_structured_log
 from app.dependencies.repositories import HealthCheckEngineDep
 from app.routers.connectors import router as connectors_router
 from app.routers.datasets import router as datasets_router
+from app.routers.internal import router as internal_router
 
 # OPS-006: configure the shared JSON logging convention before the app is
 # constructed -- every log line this process emits picks up the JSON
@@ -49,6 +50,7 @@ app.add_middleware(CorrelationIdMiddleware)
 
 app.include_router(connectors_router)
 app.include_router(datasets_router)
+app.include_router(internal_router)
 
 
 @app.get("/health", response_model=None)

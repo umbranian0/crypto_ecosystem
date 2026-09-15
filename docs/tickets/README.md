@@ -1551,7 +1551,8 @@ here.
 | [DASH-109](DASH-109.md) | Monitoring: ingestion-service 4th health row | INGEST-007, GW-022, DASH-113 | done |
 | [DASH-110](DASH-110.md) | Trigger-action UI (crawl now / generate report) | GW-019, GW-018, DASH-113 | done |
 | [DASH-112](DASH-112.md) | Settings: connector credential status (read-only phase) | INGEST-004, GW-021, DASH-113 | done |
-| [INGEST-010](INGEST-010.md) | Repeatable `seed_tenant.py` backfill CLI (revised) | INGEST-002, INGEST-003 | todo (blocked only on founder's tenant-attachment decision) |
+| [INGEST-010](INGEST-010.md) | Repeatable `seed_tenant.py` backfill CLI (revised, `--all-existing-tenants` mode added 2026-09-15) | INGEST-002, INGEST-003 | see Sprint 45 below |
+| INGEST-029 (story) | Provisioning-time hook: copy platform historical CSV data to every *new* tenant automatically (split out of `INGEST-010` per the same founder decision) — implemented as two tickets, `INGEST-030` (ingestion-service) + `GW-030` (gateway-api), per the two-modules-two-tickets rule | INGEST-010, SETUP-002/SETUP-011 | see Sprint 45 below |
 | [INGEST-012](INGEST-012.md) | `GET /connectors/credentials-status` (live-UAT gap fix, per-tenant lookup) | INGEST-004 | done |
 
 ## Sequencing / batches
@@ -2557,3 +2558,45 @@ on old semantics (none found), scrutinized the new regression test for tautology
 both equality to the real event-time and inequality to the divergent `fetched_at`), and confirmed no
 cross-service leakage. QA's one finding — this ticket-index row was missing at the time of its pass — has
 been added as part of closing out QA's finding; no code or test defect was found.
+
+# Sprint 45 — Tenant historical-data backfill (INGEST-010, INGEST-030, GW-030)
+
+Source: `docs/sprints/sprint-45.md`, `docs/product/backlog-ingestion-pipeline-integration.md`
+(`INGEST-010` revised, `INGEST-029` new). Strict sequential chain, one ticket at a time:
+`INGEST-010` (backfill CLI + `--all-existing-tenants` mode) → `INGEST-030` (internal
+`POST /internal/seed-platform-history` endpoint, reuses `INGEST-010`'s write path) → `GW-030`
+(gateway-api's `provision()` hook, calls `INGEST-030`, degraded-not-blocking on failure). `INGEST-029`
+(the backlog story) is implemented as two tickets, not one, per this repo's own "a ticket spanning two
+modules should be two tickets" rule — `INGEST-030` touches only `services/ingestion-service`, `GW-030`
+touches only `services/gateway-api`.
+
+| Ticket | Story | Module | Depends on | Status |
+|---|---|---|---|---|
+| [INGEST-010](INGEST-010.md) | `seed_tenant.py` backfill CLI (base single-tenant mode, built from scratch — no prior code existed on disk despite the earlier ticket file's claim — plus new `--all-existing-tenants` mode) | ingestion-service | INGEST-002, INGEST-003 (both done) | done |
+| [INGEST-030](INGEST-030.md) | `POST /internal/seed-platform-history`: service-authenticated single-tenant seed endpoint, reuses INGEST-010's write path | ingestion-service | INGEST-010 | done |
+| [GW-030](GW-030.md) | `provision()` calls INGEST-030's endpoint once per new tenant, degraded-not-blocking on failure | gateway-api | INGEST-030, SETUP-002/SETUP-011 (both done) | done |
+
+**Tech Lead verification (all three tickets, real diffs read directly, not just dev-agent self-reports)**:
+`services/ingestion-service` full suite personally re-run: 161 passed, 2 skipped (up from a 156/2
+pre-sprint baseline after INGEST-010 landed, unchanged count after INGEST-030's 5 new tests were folded
+into that same run). `services/gateway-api` full suite personally re-run: 220 passed (up from a 209
+pre-sprint baseline). Zero regressions in either suite. Confirmed `seed_platform_history.py` lives under
+`src/app` (not `scripts/`, so `INGEST-030` can import it directly, matching `gateway-api/provisioning.py`'s
+own precedent for the identical problem); confirmed `INGEST-030`'s router calls
+`seed_tenant_platform_history` directly with no second write-path implementation; confirmed `GW-030`'s
+`provision()` reuses the existing `get_ingestion_service_client` provider (no second httpx client
+constructed); confirmed `POST /tenants` already routed through `provision()` before this sprint (no
+refactor needed — cross-front-door parity between `scripts/provision_tenant.py`/`POST /tenants`/
+`POST /setup/initialize` is real, not asserted); confirmed the degraded-not-blocking failure path by
+reading the actual `try`/`except httpx.HTTPError` control flow (no re-raise on any path); confirmed no
+cross-service schema access anywhere in the three diffs (`grep -R "ingestion\." services/gateway-api/src`
+and `grep -R "identity\." services/ingestion-service/src` both return nothing beyond comments/existing
+router names).
+
+**One disclosed, non-blocking gap found during Tech Lead review of INGEST-030**: a `tenant_id` whose
+platform CSV archive directory is entirely absent (not merely present-but-empty) causes
+`_load_platform_csvs` to raise `FileNotFoundError`, which the endpoint's generic `except Exception`
+converts to a `503` rather than the ticket's stated `200`-with-zero-count for that edge case. This cannot
+occur against the real, committed `data/raw/_platform/` archive (all four source directories always
+exist) — flagged honestly by the dev agent in `docs/tickets/INGEST-030.md` rather than silently checked
+off, accepted as an out-of-sprint-scope edge case, not a defect blocking sign-off.

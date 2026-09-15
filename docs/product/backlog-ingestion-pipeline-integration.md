@@ -537,53 +537,113 @@ Depends on: GW-020, VS-024 (both needed for the full round trip to be real, not 
 
 ## Epic D — Historical CSV backfill migration
 
-### INGEST-010 — One-time backfill: load `data/raw/_platform/...` CSVs into the `ingestion` schema [Must]
+### INGEST-010 — Backfill: copy `data/raw/_platform/...` CSVs into every existing tenant's `ingestion` schema rows [Must]
 
-**As** the platform owner **I want** a one-time, re-runnable-without-duplication migration script that
-reads every existing seed + incremental CSV under `data/raw/_platform/...` and writes it into
-`INGEST-002`'s Postgres tables **so that** the historical data these connectors have already collected
-(price back to 2018, on-chain back to 2009, Reddit sentiment collected so far) isn't stranded on local
-disk in a second, inconsistent storage location once the DB becomes the real system of record.
+**Resolved (2026-09-15, founder decision)**: the "open product question" this story originally carried is
+now closed. The historical CSV data under `data/raw/_platform/...` gets **copied to every tenant** —
+option 1 of the two originally listed, never a single "demo tenant" special case. This story now covers
+only the **one-time backfill against tenants that already exist at the time this runs**; the separate,
+ongoing concern of what happens for tenants created *after* this backfill (the founder's instruction was
+explicitly "copied to every new tenant on provisioning," not just today's tenants) is split out to
+**`INGEST-029`** below, not crammed into this ticket's own scope — see that story for the repeatable
+provisioning-time hook.
+
+**As** the platform owner **I want** a re-runnable-without-duplication script that reads every existing
+seed + incremental CSV under `data/raw/_platform/...` and writes an **independent full copy of the
+historical rows into every existing tenant's rows** in `INGEST-002`'s Postgres tables **so that** the
+historical data these connectors have already collected (price back to 2018, on-chain back to 2009,
+Reddit sentiment collected so far) isn't stranded on local disk, and every existing tenant sees real
+history immediately rather than only one designated demo tenant.
 
 Acceptance criteria:
-- [ ] A standalone script (`scripts/backfill_from_csv.py`, matching `provision_tenant.py`'s
-  "standalone, operator-run, not part of the request path" convention) reads each source's `seed/` and
-  `incremental/` directories (per `PROVENANCE.md`'s documented layout) and writes rows via `INGEST-003`'s
-  same repository interface — no second, divergent CSV-parsing/DB-writing code path.
-- [ ] Idempotent: running the script twice does not duplicate rows — either an upsert keyed on
-  `(tenant_id, source, timestamp)` or a pre-check per source/tenant, matching the "re-running the golden
-  path is a safe no-op" convention `SETUP-004`/`INF-016` already established elsewhere in this platform.
-- [ ] **Open product question, flagged explicitly here rather than silently resolved by whoever
-  implements this** (per this backlog's own instruction not to assume an answer): the existing CSVs
-  are platform-wide/undifferentiated (collected before any tenant concept existed), but the new schema
-  is strictly per-tenant. This script needs the founder's decision on **which tenant(s) the backfilled
-  data gets attached to** — the two live options, neither silently chosen here:
-  1. **Attach to every existing tenant at backfill time** (each tenant gets its own full copy of the
-     historical rows) — maximizes "every tenant sees real history immediately," at the cost of N
-     redundant copies of what is, historically, the same platform-collected data (the same tradeoff
-     already accepted for going-forward crawls per decision #4, extended backward).
-  2. **Attach only to one designated "seed"/demo tenant** — avoids redundant storage of
-     platform-collected historical data, but means new pilot tenants start with empty ingested history
-     until their own crawler runs, which may be the more honest reflection of "this tenant's own
-     independent crawler" (decision #4's own framing) but is a worse first-run demo experience.
-  This story's own Definition of Done includes recording the founder's actual choice in
-  `services/ingestion-service/README.md`'s backfill section — not defaulting to either option
-  unstated.
+- [ ] The backfill script (`services/ingestion-service/scripts/seed_tenant.py`, `INGEST-010`'s already-
+  built repeatable, tenant-parameterized CLI — see `docs/tickets/INGEST-010.md`) gains an `--all-existing-
+  tenants` mode (in addition to its existing single `--tenant-id` invocation) that enumerates every tenant
+  currently known to `gateway-api`'s tenant repository (via `GW-020`'s existing tenant-resolution
+  convention, or a read of the shared `identity` schema's tenant list through the same channel `SETUP-011`
+  already exposes — never a direct cross-service DB read, per `implementation-plan.md` section 2) and, for
+  each one, writes a full, independent copy of every row from `data/raw/_platform/<source>/{seed,
+  incremental}/...` into that tenant's rows. No tenant is special-cased as "the" demo tenant — this is the
+  same accepted "N redundant copies of platform-collected data" tradeoff `INGEST-005`'s own acceptance
+  criteria already named and accepted for going-forward per-tenant crawls, extended backward to the
+  historical archive.
+- [ ] Idempotent per tenant: running `--all-existing-tenants` twice does not duplicate rows for any
+  tenant — reuses the same `(tenant_id, source, event_time)` upsert key `INGEST-010`'s existing
+  single-tenant path already established, applied per tenant in the loop.
+- [ ] `--dry-run` (already required by `INGEST-010`'s existing acceptance criteria) prints row counts per
+  source **per tenant** when combined with `--all-existing-tenants`, not just a single aggregate count, so
+  an operator can sanity-check the full fan-out before committing to it.
 - [ ] `PROVENANCE.md`'s existing per-source seed/coverage notes (raw/processed boundary caveat for
   price, the Kaggle-sentiment-discontinuity note, the licensing-review-not-done flag) are copied into
-  `ingestion-service/README.md`'s new backfill section, not lost in the move from file-based to
-  DB-based storage — a future reader of the DB rows alone shouldn't lose the caveats the CSV
-  `PROVENANCE.md` file currently carries.
-- [ ] A dry-run mode (`--dry-run`) prints row counts per source/tenant without writing, so the founder
-  can sanity-check the backfill's shape before committing to whichever tenant-attachment answer above
-  is chosen.
+  `ingestion-service/README.md`'s backfill section, not lost in the move from file-based to DB-based
+  storage.
+- [ ] `services/ingestion-service/README.md`'s backfill section records the founder's resolved decision
+  verbatim (copy to every tenant, no demo-tenant special case) and links to `INGEST-029` for the
+  provisioning-time-forward half of the same decision.
 
 Rationale for priority: Must — named explicitly in the task as a required epic, and blocks
-`INGEST-009`/`VS-023`/`DASH-108` from having any real historical data to show on day one (without this,
-those stories only work for data ingested *after* this backlog ships, which is a materially worse pilot
-demo than "here's five years of BTC price history already validated-ready").
-Depends on: INGEST-002, INGEST-003. **Blocked on founder decision** (tenant-attachment choice above) —
-flagged to the requester in this backlog's closing summary, not silently defaulted.
+`INGEST-009`/`VS-023`/`DASH-108` from having any real historical data to show on day one for every
+tenant, not just one demo tenant (without this, those stories only work for data ingested *after* this
+backlog ships, which is a materially worse pilot demo than "here's five years of BTC price history
+already validated-ready, for every tenant").
+Depends on: INGEST-002, INGEST-003. No longer blocked — the founder's tenant-attachment decision is
+resolved (see above); `services/ingestion-service/scripts/seed_tenant.py` already exists per
+`docs/tickets/INGEST-010.md` and only needs the `--all-existing-tenants` mode this revision adds.
+
+### INGEST-029 — Provisioning-time hook: copy platform historical CSV data to every new tenant automatically [Must]
+
+**As** `gateway-api`'s tenant-provisioning flow (`scripts/provision_tenant.py`'s `provision()`,
+`GW-005`, and `SETUP-002`'s `POST /setup/initialize`/`SETUP-011`'s `POST /tenants` — the two existing
+front doors that create a tenant) **I want** a repeatable, automatic step that copies the same platform
+historical CSV data `INGEST-010` backfills for existing tenants into a **newly created** tenant's
+`ingestion` schema rows at provisioning time **so that** "copied to every new tenant on provisioning" (the
+founder's own words) is actually true going forward, not just a one-time fact about tenants that existed
+on the day `INGEST-010` ran once.
+
+This is deliberately its own ticket, not folded into `INGEST-010`: `INGEST-010` is a standalone,
+operator-run backfill script against the historical archive; this story is a **live hook inside the
+tenant-creation request path itself**, spans a different module (`gateway-api`, plus a new
+`ingestion-service` endpoint it calls), and per this repo's own "a ticket spanning two modules should be
+two tickets" rule (see `docs/sprints/sprint-36.md`'s precedent for the same reasoning), it does not belong
+inside `INGEST-010`'s own acceptance criteria.
+
+Acceptance criteria:
+- [ ] A new, internal, operator/service-authenticated `ingestion-service` endpoint (e.g.
+  `POST /internal/seed-platform-history`, tenant-scoped by an explicit `tenant_id` body field rather than
+  the usual `X-Tenant-Id` header, since the caller is `gateway-api` acting on behalf of a tenant that has
+  just been created and may not yet have an issued API key) invokes the exact same write path
+  `INGEST-010`/`seed_tenant.py` already uses (`INGEST-003`'s `ConnectorRecordRepository`,
+  `data/raw/_platform/<source>/{seed,incremental}/...`) for the one tenant named in the request — no
+  second, divergent CSV-parsing/DB-writing implementation.
+- [ ] `gateway-api`'s `provision()` (`src/app/provisioning.py`, shared by both `scripts/provision_tenant.py`
+  and `POST /setup/initialize`/`POST /tenants`) calls this new endpoint once, synchronously or
+  fire-and-forget per the Tech Lead's call, immediately after a tenant row is created and before
+  `provision()` returns — every code path that creates a tenant goes through this one call, not just one
+  of the two front doors.
+- [ ] A tenant-creation call that succeeds even when the historical-seed call fails (e.g. `ingestion-
+  service` unreachable) does not block or roll back tenant creation itself — the tenant still exists, the
+  gap is logged as a real, disclosed degraded case (same "disclosed interim, not silent" convention
+  `SETUP-010`'s operator token already uses elsewhere in this repo) and is safely retriable, since
+  `seed_tenant.py`'s underlying write path is already idempotent per `INGEST-010`'s own acceptance
+  criteria.
+- [ ] No direct database or cross-service-schema access: `gateway-api`'s `provision()` calls
+  `ingestion-service`'s new endpoint over HTTP only (Compose-internal hostname, same precedent
+  `reporting-service`→`validation-service` and `VS-023`'s `IngestionServiceDatasetSource` already use),
+  never a shared connection string.
+- [ ] Tests cover: a new tenant created via `scripts/provision_tenant.py` and via `POST /tenants`
+  (`SETUP-011`) both end up with the same historical rows a directly-run `INGEST-010 --tenant-id <id>`
+  invocation would have produced; a downstream `ingestion-service` failure during provisioning does not
+  fail tenant creation itself; re-running the seed call for the same tenant does not duplicate rows
+  (reuses `INGEST-010`'s idempotency guarantee).
+- [ ] `services/gateway-api/README.md`'s provisioning section and `services/ingestion-service/README.md`'s
+  backfill section both document this hook, cross-linked to `INGEST-010`.
+
+Rationale for priority: Must — without this, the founder's actual decision ("copied to every new tenant
+on provisioning") is only half-true: existing tenants get the data once, but every tenant created after
+that one backfill run would silently start with empty ingested history, directly contradicting the
+decision this story exists to implement.
+Depends on: INGEST-010 (reuses its write path and idempotency guarantee), SETUP-002/SETUP-011 (the
+existing tenant-creation front doors this hook attaches to, both already done).
 
 ---
 
@@ -720,20 +780,22 @@ Depends on: INGEST-004, SETUP-010 (already built or in flight)
 
 ## Summary
 
-15 distinct Must stories, 4 Should stories, 0 Could, 0 Won't — **19 stories total**, across five
+16 distinct Must stories, 4 Should stories, 0 Could, 0 Won't — **20 stories total**, across five
 epics and five modules (`ingestion-service`, `libs/common`, `validation-service`, `dashboard-web`,
-`gateway-api`).
+`gateway-api`). (Updated 2026-09-15: `INGEST-029` added, split out of `INGEST-010` once the founder's
+tenant-attachment decision made clear it needed its own provisioning-time-hook ticket — see `INGEST-010`'s
+and `INGEST-029`'s own text above.)
 
 | Priority | Count | IDs |
 |---|---|---|
-| Must | 15 | INGEST-002, INGEST-003, INGEST-004, INGEST-005, INGEST-007, INGEST-008, INGEST-009, INGEST-010, LC-010, VS-023, VS-024, DASH-108, DASH-109, DASH-110, GW-019, GW-020 |
+| Must | 17 | INGEST-002, INGEST-003, INGEST-004, INGEST-005, INGEST-007, INGEST-008, INGEST-009, INGEST-010, INGEST-029, LC-010, VS-023, VS-024, DASH-108, DASH-109, DASH-110, GW-019, GW-020 |
 | Should | 4 | INGEST-006, DASH-111, DASH-112 |
 | Could | 0 | — |
 | Won't | 0 | — (this backlog proposes no explicit declines of its own; it resolves/supersedes `SETUP-013` from the prior backlog instead) |
 
-(Note: the Must row above lists 16 IDs because `GW-019`/`GW-020` are two separate tickets — the row
-count of "15" refers to distinct pieces of work if `GW-019`/`GW-020` were counted as one proxy-layer
-unit; treat 16 as the literal Must ticket count, 19 as the literal total ticket count.)
+(Note: the Must row above lists 17 IDs because `GW-019`/`GW-020` are two separate tickets — the row
+count of "17" refers to the literal Must ticket count including `INGEST-029`; 20 is the literal total
+ticket count across the whole backlog.)
 
 Sequencing note for the PM/Tech Lead: the dependency chain is genuinely linear across most of this
 backlog, unusually so for this repo — `INGEST-002` (schema) and `LC-010` (DRY extraction) can run in
@@ -749,9 +811,12 @@ can be scheduled opportunistically once their individual dependencies land.
 
 ## Open product questions for the founder (flag before PM sequencing)
 
-1. **Backfill tenant attachment (`INGEST-010`)** — attach the existing platform-wide CSV history to
-   every existing tenant, or only to one designated seed/demo tenant? This backlog does not choose for
-   you; see `INGEST-010`'s own acceptance criteria for the two live options and their tradeoffs.
+1. **Backfill tenant attachment (`INGEST-010`) — RESOLVED (2026-09-15)**: the founder decided the
+   existing platform-wide CSV history gets copied to **every existing tenant** (option 1 of the two
+   originally listed), and — going forward — to **every new tenant at provisioning time** too, not just
+   tenants that exist today. `INGEST-010` now covers the one-time backfill against today's tenants;
+   `INGEST-029` (new) covers the repeatable provisioning-time hook for tenants created afterward. No
+   demo-tenant special-casing anywhere in either story.
 2. **Reddit credential encryption at rest (`INGEST-004`)** — this backlog accepts plaintext-at-rest
    (protected only by RLS/DB-access boundaries, the same posture the rest of this platform already
    applies to non-API-key secrets) as the MVP posture, explicitly disclosed rather than silently

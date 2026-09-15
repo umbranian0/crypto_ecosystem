@@ -420,6 +420,109 @@ fallback. `REDDIT_USER_AGENT` is not a secret and has no `connector_credentials`
 always read from `os.environ` in both modes. `Binance`/`BlockchainInfo` connectors need no credential
 row and gained no new required constructor parameter.
 
+**Platform-history backfill (`INGEST-010`, `src/app/seed_platform_history.py` + `scripts/seed_tenant.py`)**:
+copies the platform-wide historical CSV archive (`data/raw/_platform/`, see `PROVENANCE.md`) into a
+tenant's own rows, via the same `ConnectorRecordRepository.add_price_records`/`add_onchain_records`/
+`add_sentiment_records` write path `connectors/base.py::run_incremental`'s DB-write branch already uses
+-- no second CSV-parsing/DB-writing implementation. The real backfill logic lives in `src/app` (not
+`scripts/`), the same "not part of the packaged wheel" reasoning `gateway-api/src/app/provisioning.py`
+already documents for its own move out of `scripts/provision_tenant.py` -- `INGEST-030` (next ticket in
+this chain) needs to import this module's functions directly from inside the running FastAPI process.
+`scripts/seed_tenant.py` is a thin CLI wrapper (argument parsing + stdout only) around it.
+
+**Two modes**:
+- `seed_tenant.py --tenant-id <id> --source <source> --from <path-or-"platform-csv"> [--dry-run]` --
+  single tenant, single source. `--tenant-id`/`--source`/`--from` are all required, no hardcoded
+  default anywhere in the script. `--source` is one of `binance_price_btcusdt_1h`,
+  `blockchain_info_hash-rate`, `blockchain_info_n-unique-addresses`, `kaggle_bitcoin_sentiments_21_24`
+  (`app.seed_platform_history.SOURCE_SPECS`). `--from platform-csv` reads every CSV under this source's
+  `data/raw/_platform/<source>/{seed,incremental}/*.csv`; any other value is read as one arbitrary CSV.
+- `seed_tenant.py --all-existing-tenants [--dry-run]` -- enumerates every existing tenant via
+  `gateway-api`'s operator-authenticated `GET /tenants` (`SETUP-011`) -- never a direct read of the
+  `identity` schema, per CLAUDE.md's "no service reads another service's DB schema directly." Reuses
+  `GATEWAY_API_URL` (default `http://localhost:8000`, same env var/default `dashboard-web`'s
+  `downstream.py` already establishes) and a new `OPERATOR_TOKEN` env var, read the same way
+  `gateway-api`'s own `operator_auth.py` reads it -- the same shared operator secret already provisioned
+  in `infra/docker-compose.yml`/`infra/.env.example`, not a new one. For each tenant returned, writes a
+  full, independent copy of every row from all four CSV-backed sources. `gateway-api` unreachable (or a
+  non-2xx response) is a fatal CLI error, non-zero exit, before any tenant is written to -- never a
+  partial silent success.
+
+**Founder's resolved tenant-attachment decision (verbatim, 2026-09-15 backlog revision)**: copy the
+platform-wide historical CSV archive to **every existing tenant**, no demo-tenant special case. This
+ticket (`INGEST-010`) covers the operator-run, one-off backfill half of that decision (existing
+tenants, run manually). The provisioning-time-forward half -- giving a brand-new tenant the same
+history automatically at creation time -- is `INGEST-030`/`GW-030`, a separate, later ticket in this
+same sprint's chain, not built here.
+
+**Idempotency: "skip-then-append", not a literal SQL `UPSERT`.** `add_price_records`/`add_onchain_records`/
+`add_sentiment_records` do a plain `session.add_all` with no `ON CONFLICT` (confirmed by reading
+`postgres_repository.py` directly) -- adding a new upsert primitive to the repository was out of this
+ticket's minimal-diff scope and not needed. Instead, for each `(tenant_id, source)`,
+`seed_source_for_tenant` calls the existing `ConnectorRecordRepository.latest_event_time(tenant_id,
+source)` first and filters the loaded CSV rows to event-time strictly greater than that watermark (or
+keeps every row, if `latest_event_time` returns `None`) before calling the matching `add_*_records`
+method. Running the same CSV range twice against the same tenant is then a no-op on the second run --
+every row that would be written is already `<=` the resolved watermark. `--dry-run` runs this same
+filtering step but stops before the `add_*_records` call, reporting the row count that *would* be
+written instead.
+
+**`POST /internal/seed-platform-history` (`INGEST-030`, `src/app/routers/internal.py`)**: the
+provisioning-time-forward half of the founder's tenant-attachment decision above -- gives a brand-new
+tenant the same platform-wide history automatically at creation time, called by `gateway-api`
+immediately after a tenant is created (`GW-030`, sibling ticket in this sprint's chain, not yet built --
+this endpoint exists and is tested on its own before its caller lands). Body: `{"tenant_id": "<id>"}`
+(explicit field, not `X-Tenant-Id` -- this call happens before the new tenant has any issued API key).
+Calls `seed_tenant_platform_history` (`INGEST-010`, above) directly for the one named `tenant_id` -- no
+second CSV-parsing/DB-writing implementation, same skip-then-append idempotency mechanism: calling this
+endpoint twice for the same tenant writes zero additional rows on the second call, proven by the same
+`latest_event_time` watermark check `seed_source_for_tenant` already performs. Returns `200` with a
+per-source row-count summary (`{"row_counts": {source: count}}`) on success, including a tenant with no
+CSV data available (empty is a valid `200` answer, matching `GET /datasets`'s own convention). Any
+exception during the write path (e.g. a downstream Postgres failure mid-write) is caught and returned as
+a generic `503` -- no internal error detail/connection string ever leaked in the response body, mirroring
+`GET /health`'s own failure-response discipline.
+
+**Auth**: `X-Internal-Token` header checked against `INGESTION_INTERNAL_TOKEN`
+(`src/app/dependencies/internal_auth.py`'s `get_authenticated_internal_caller`) -- copied with
+attribution from `gateway-api`'s own `OPERATOR_TOKEN` env-var-compare dependency
+(`services/gateway-api/src/app/dependencies/operator_auth.py`'s `get_authenticated_operator`), same
+missing-header/unset-env-var/mismatched-token -> `401` behavior, but a distinct secret from
+`OPERATOR_TOKEN` -- this is a service-to-service credential (gateway-api calling ingestion-service on a
+tenant's behalf), not an operator's own credential. Disclosed limitation, same as `OPERATOR_TOKEN`'s own
+docstring note: one shared secret, no per-caller identity -- a real accepted MVP tradeoff, not a silent
+gap. `INGESTION_INTERNAL_TOKEN` is set identically on both `ingestion-service`'s and `gateway-api`'s
+`infra/docker-compose.yml` entries (and `infra/.env.example`) so the shared secret actually matches
+between the two services.
+
+**Sentiment source-naming decision**: the Kaggle seed's DB `source` value is written as the distinct
+`"kaggle_bitcoin_sentiments_21_24"`, not merged into the live Reddit connector's own
+`"reddit_vader_sentiment"` identity -- per `PROVENANCE.md`'s own explicit warning ("If the two sentiment
+series are ever combined for feature engineering, document that discontinuity explicitly -- don't let a
+report imply one continuous sentiment signal across the boundary"). The two series have different
+underlying sources (Kaggle news headlines vs. Reddit posts) and different score shapes (only a compound
+score exists in the Kaggle data, so `reddit_sid_pos`/`neg`/`neu` are written as `0.0` for these rows --
+there is no finer-grained score to recover from this dataset, disclosed here rather than silently
+fabricated). A tenant's `GET /datasets` will therefore show two separate sentiment sources, not one
+continuous series, which is the intended, honest representation of the discontinuity.
+
+**`PROVENANCE.md` caveats, carried forward into DB-based storage** (not lost in the move off CSVs):
+- **Price raw/processed boundary**: the price seed file (`seed_part1.csv`/`seed_part2.csv`) is NOT
+  purely raw -- it carries ~200 `ta`-library technical indicator columns computed in the original thesis
+  pipeline. `seed_platform_history.py`'s price loader drops every one of those columns, writing only the
+  same raw OHLCV shape the live connector's own `fetch()` produces (`open_time, open, high, low, close,
+  volume, close_time, quote_volume, trades, taker_buy_base, taker_buy_quote`) -- indicator computation
+  still belongs to the processing/feature-engineering layer (solution-design.md section 3.3), not this
+  backfill. `seed_part2.csv` additionally ships with no header row at all (a pre-existing data-quality
+  gap in the raw archive, confirmed by inspecting the file directly, not introduced by this ticket) --
+  the loader detects this and falls back to `seed_part1.csv`'s own column names, applied positionally.
+- **Kaggle sentiment discontinuity**: see the source-naming decision above.
+- **Licensing review not done**: none of Binance/blockchain.info/Reddit/Kaggle's terms have had a legal
+  review for this product's B2B report-generation use case (`PROVENANCE.md`'s own "Licensing / terms of
+  service" section) -- backfilling this data into a tenant's rows does not change that open item, and
+  the same "confirm terms before any client-facing report includes derived data" action item still
+  applies.
+
 **Crawl-run tracking** (`ConnectorRecordRepository.record_crawl_run`, `PostgresConnectorRecordRepository`,
 `INGEST-005`): one `crawl_runs` row per `fetch()` outcome in `connectors/base.py`'s DB-write path
 (`run_incremental`, when both `tenant_id`/`repository` are supplied) — success, empty-but-successful

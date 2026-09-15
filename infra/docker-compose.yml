@@ -107,6 +107,12 @@ services:
       # every operator-gated route 401s regardless of the token presented
       # (same live-UAT finding as above).
       OPERATOR_TOKEN: ${OPERATOR_TOKEN:-naive_first_operator_dev_token}
+      # INGEST-030: service-to-service shared secret this container's own
+      # (future, GW-030) caller uses to authenticate to ingestion-service's
+      # POST /internal/seed-platform-history. Must match ingestion-service's
+      # own INGESTION_INTERNAL_TOKEN entry below -- same shared-secret
+      # convention as OPERATOR_TOKEN above, distinct value/purpose.
+      INGESTION_INTERNAL_TOKEN: ${INGESTION_INTERNAL_TOKEN:-naive_first_ingestion_internal_dev_token}
       # GATEWAY_API_DOWNSTREAM_TIMEOUT_SECONDS: found via live E2E QA
       # (2026-09-01, post-INGEST-013) that the http_client.py default of 30s
       # is too short for a full first-crawl backfill proxied through this
@@ -209,6 +215,12 @@ services:
       # local dev" convention as POSTGRES_APP_PASSWORD/MINIO_ROOT_PASSWORD
       # above; see infra/.env.example for how to generate a real one.
       INGESTION_CREDENTIAL_ENCRYPTION_KEY: ${INGESTION_CREDENTIAL_ENCRYPTION_KEY:-KzEyHIA7xvThTmsJXBWZZej0qD4GMjl8tMV76KJXpAo=}
+      # INGEST-030: gates POST /internal/seed-platform-history's
+      # X-Internal-Token check. Same value as gateway-api's own
+      # INGESTION_INTERNAL_TOKEN entry above -- the shared secret must
+      # actually match between the two services for GW-030's caller to
+      # authenticate successfully.
+      INGESTION_INTERNAL_TOKEN: ${INGESTION_INTERNAL_TOKEN:-naive_first_ingestion_internal_dev_token}
     depends_on:
       postgres:
         condition: service_healthy

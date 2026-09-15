@@ -194,6 +194,43 @@ auth dependency, the same chicken-and-egg reasoning `SETUP-001` already applies)
   already covers this call site too, unchanged).
 - Registered on the same `setup.router` `SETUP-001` already registers -- no additional `main.py` change.
 
+**Platform-history seed hook (`GW-030`)**: `provision()` (`src/app/provisioning.py`) now also triggers
+`ingestion-service`'s `POST /internal/seed-platform-history` (**`INGEST-030`**, itself wrapping
+**`INGEST-010`**'s seed-write logic) for every newly created tenant, immediately after
+`api_key_repo.create_key` succeeds and before `provision()` returns. This is the one shared call site
+every tenant-creation front door already funnels through -- `scripts/provision_tenant.py`,
+`POST /setup/initialize` (`SETUP-002`), and `POST /tenants` (`SETUP-011`) -- so there is exactly one
+seed-trigger implementation, not one per front door.
+- **Synchronous, not fire-and-forget**: called in-line, in the same request/response cycle that creates
+  the tenant -- consistent with this service's existing "disclosed synchronous, not scaled yet" posture
+  for downstream calls (the same tradeoff `validation-service`'s own `POST /runs` carries). No background-
+  task infrastructure exists in this service, and this ticket does not add one.
+- **Degraded, never blocking**: the call is wrapped in a `try`/`except` catching both `httpx` transport
+  exceptions (timeout, connection refused, etc.) and a non-2xx response (via `response.raise_for_status()`,
+  caught as `httpx.HTTPError`) -- either failure is logged as a structured `tenant_seed_degraded` warning
+  (same `extra={...}` convention as this file's own `api_key_issued` log line: `event_type`, `outcome`,
+  `tenant_id`) and never re-raised. `provision()`'s return value (`(tenant, raw_key)`) and the calling
+  route's response to its client are completely unaffected by a seed failure -- tenant creation always
+  succeeds if the tenant + API key writes themselves succeed, regardless of `ingestion-service`'s
+  reachability.
+- **Client reuse, no second provider**: reuses `app.dependencies.http_client.get_ingestion_service_client`
+  (`GW-021`, already wired for `app.routers.operator`'s proxy routes) -- `provision()` is a plain function,
+  not a route handler, so it cannot use FastAPI's `Depends()` directly, and instead takes an optional
+  `ingestion_client: httpx.Client | None = None` parameter, defaulting to a freshly built client from that
+  same provider when the caller doesn't supply one (mirrors the existing pattern of `provision()` accepting
+  `tenant_repo`/`api_key_repo` as injectable parameters).
+- **`INGESTION_INTERNAL_TOKEN` (env var)**: sent as the `X-Internal-Token` header on the seed call, read
+  from the environment via `os.environ.get(...)` at call time (same pattern `http_client.py` already uses
+  for `INGESTION_SERVICE_URL`) -- must match `ingestion-service`'s own `INGESTION_INTERNAL_TOKEN`
+  (`INGEST-030`'s `get_authenticated_internal_caller`). Already wired in `infra/docker-compose.yml` and
+  `infra/.env.example` on both services' blocks.
+- **Idempotent by construction**: `INGEST-030`'s seed endpoint is already idempotent, so a retried/duplicate
+  seed call for the same tenant is safe -- no additional idempotency logic is added in `gateway-api`.
+- Tests: `tests/test_provisioning.py` (transport-level failure/success cases against `provision()`
+  directly) and `tests/test_tenant_creation_seeds_platform_history.py` (both `POST /tenants` and
+  `POST /setup/initialize` route-level proof of exactly-one-seed-call-per-tenant-creation, including the
+  structured degraded-outcome log line via `caplog`).
+
 **Aggregate system health (GW-022, narrow slice of `SETUP-020`)**: `src/app/routers/system.py` provides `GET /system/health` -- **no tenant/operator auth required**, since health status is not tenant-scoped or operator-sensitive data. Aggregates four independent checks into one response: this service's own DB connectivity (a small, deliberate duplication of `main.py`'s own `/health` handler body, not extracted into a shared helper -- refactoring that is a separate, out-of-scope change) plus one HTTP call each to `validation-service`, `reporting-service`, and `ingestion-service`'s own `/health` endpoints via their existing `Depends()`-injectable `httpx.Client` providers (`ValidationServiceClientDep`/`ReportingServiceClientDep`/`IngestionServiceClientDep`, GW-008/GW-018/GW-021). Response shape: `{"gateway-api": "ok"|"unhealthy", "validation-service": "ok"|"degraded"|"unreachable", "reporting-service": "...", "ingestion-service": "..."}`. A transport-level failure to reach a downstream (`_call_downstream`, reused from `runs.py`/GW-009, not reinvented) maps that one service to `"unreachable"`; a downstream `/health` itself reporting `503` maps to `"degraded"` -- neither ever raises out of the aggregate call, so one bad downstream can never fail the whole endpoint (proven in `tests/test_system_health.py`'s all-healthy/one-degraded/one-unreachable cases). **This is a deliberate stopgap, not `SETUP-020`'s full scope**: no recent-errors ring buffer, no run-throughput stats -- those remain `SETUP-021`/`SETUP-022`'s own scope, not duplicated here; this sprint pulled only the minimal slice needed to unblock `DASH-109`/`DASH-113`.
 
 **Cross-tenant validation-run throughput (SETUP-022)**: `src/app/routers/system.py` also provides `GET /system/runs-summary` -- **operator-authenticated** (`get_authenticated_operator`, GW-021, same gate `tenants.py`'s `GET /tenants` uses), fixed last-24h window, no configurable window (no alerting/threshold behavior). Response shape: `{"total": int, "completed_pct": float, "failed_pct": float, "running_pct": float}` -- counts only, no individual run id/tenant/status detail, cross-tenant-safe by construction. **Design decision, recorded here**: `validation-service`'s own `GET /runs` is tenant-scoped (requires `X-Tenant-Id`), and an operator caller has no tenant API key to present. Rather than exposing a tenant's raw key to the operator, or touching `services/validation-service/src/` (out of scope for Sprint 32, full stop), this endpoint enumerates every known tenant via `TenantRepositoryDep.list_tenants()` (already used by `tenants.py`, SETUP-011) and calls `validation-service`'s unmodified `GET /runs` once per tenant with a **locally-reconstructed** `X-Tenant-Id` header -- valid because `validation-service` trusts gateway-api's own attestation of tenant identity on every downstream call (`build_downstream_headers` itself never forwards a raw tenant API key either, see `app/dependencies/routing.py`); no tenant secret is read, held, or exposed anywhere in this path. Each tenant's `GET /runs` call is paginated (`limit=100`, looping `offset`) but capped at 5 pages (500 runs) per tenant -- a disclosed simplification bounding worst-case latency at realistic Compose-stack data volumes; a tenant with more runs than that in the window will have its aggregate undercounted, not the request stalling. Runs are filtered client-side to `created_at >= now - 24h` (no server-side date filter exists on `GET /runs`). **Status-vocabulary mapping**: `validation-service`'s real `status` values today are `"pending"`/`"completed"`/`"failed"` -- there is no `"running"` literal ever written (runs resolve synchronously in the same request that creates them). `running_pct` is computed as the `"pending"` count's share, the closest honest mapping to this ticket's originally-stated `{"running_pct"}` shape. Zero runs in the window renders every percentage as `0.0`, never a divide-by-zero. One unreachable/erroring tenant is skipped, not failed -- same "one bad downstream must not fail the whole aggregate" principle `GET /system/health` already established. Tests: `tests/test_runs_summary.py`.
