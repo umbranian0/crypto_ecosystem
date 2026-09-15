@@ -67,6 +67,45 @@ def _make_features(returns: pd.Series) -> pd.DataFrame:
     return frame
 
 
+def _fit_predict_and_explain(train: pd.Series, test: pd.Series) -> tuple[pd.Series, pd.Series]:
+    """Fits a brand-new `LGBMRegressor` on `train` only, predicts `test`, and
+    returns both the prediction Series and a feature-importance Series read
+    directly off that same fitted `LGBMRegressor` object (`.feature_importances_`)
+    -- no second/separate fit. `LightGBMBaseline.predict` (below) and MR-006's
+    `research/explainability.py::ExplainableLightGBM` both call this single
+    function, so there is exactly one fit per split regardless of which
+    caller is used -- never a refit to obtain the explainability artifact.
+
+    Only `train`/`test` (this call's own arguments) are ever read -- no
+    reference to any other split's data, matching the leakage-safety
+    argument `Baseline`'s own docstring makes for `train`-only fitting. A
+    fresh regressor is constructed here on every call; nothing is stored on
+    any instance or reused across calls.
+    """
+    train_features = _make_features(train).dropna()
+    train_target = train.loc[train_features.index]
+
+    model = lightgbm.LGBMRegressor(**_LGBM_PARAMS)
+    model.fit(train_features, train_target)
+
+    test_features = _make_features(test)
+    test_features = test_features.fillna(0.0)
+    predictions = model.predict(test_features)
+    pred_series = pd.Series(predictions, index=test.index)
+
+    # MR-006 (docs/tickets/MR-006.md): feature-importance-only explainability
+    # artifact, read straight off the fitted model this call already built --
+    # NOT a SHAP value (see this ticket's scope decision) and NOT a claim
+    # this model predicts real Bitcoin returns or generates a trading signal.
+    importances = pd.Series(
+        model.feature_importances_,
+        index=train_features.columns,
+        name="feature_importance",
+    )
+
+    return pred_series, importances
+
+
 class LightGBMBaseline:
     """`Baseline`-protocol-conforming LightGBM regressor.
 
@@ -84,19 +123,10 @@ class LightGBMBaseline:
     def predict(self, train: pd.Series, test: pd.Series) -> pd.Series:
         """Fits a brand-new `LGBMRegressor` on `train` only, predicts `test`.
 
-        Only `train`/`test` (this call's own arguments) are ever read -- no
-        reference to any other split's data, matching the leakage-safety
-        argument `Baseline`'s own docstring makes for `train`-only fitting.
-        A fresh regressor is constructed here on every call; none is
-        stored on `self` or reused across calls.
+        Delegates to `_fit_predict_and_explain` and discards the
+        explainability artifact -- this method's own observable behavior
+        (including the "no instance attribute is ever set" structural
+        invariant MR-004's own test asserts) is unchanged by MR-006.
         """
-        train_features = _make_features(train).dropna()
-        train_target = train.loc[train_features.index]
-
-        model = lightgbm.LGBMRegressor(**_LGBM_PARAMS)
-        model.fit(train_features, train_target)
-
-        test_features = _make_features(test)
-        test_features = test_features.fillna(0.0)
-        predictions = model.predict(test_features)
-        return pd.Series(predictions, index=test.index)
+        predictions, _ = _fit_predict_and_explain(train, test)
+        return predictions

@@ -175,3 +175,51 @@ corrected, post-fix numbers) — not evidence the leakage was harmless in genera
 lag-1 return doesn't route rows differently than the current-row return did here.
 
 See `docs/tickets/MR-005.md` for the full ticket.
+
+## Per-split explainability artifacts (MR-006, Sprint 43 — shipped, feature-importance-only, no SHAP)
+
+`research/explainability.py`'s `ExplainableLightGBM`/`ExplainableRegimeHMM` are `Baseline`-protocol
+Strategy wrappers (registered via `config.extra_baselines` exactly like the unwrapped MR-004/MR-005
+classes) that additionally capture a per-split explainability artifact, read directly off the same fitted
+object each split's `predict()` call already builds — no second/separate fit anywhere in this path.
+
+**Scope decision (binding, no SHAP, no new dependency)**: classic SHAP does not map cleanly onto an
+HMM-gated linear model — its `KernelExplainer` path would need an invented background-distribution/
+sampling scheme to apply to a model class that isn't a single differentiable/tree estimator, which this
+ticket explicitly declines to build. Both candidate models already expose interpretable structure with
+zero new dependency:
+- **`LightGBMBaseline` (MR-004)**: `LGBMRegressor.feature_importances_`, read off the same fitted
+  `LGBMRegressor` object `predict()` already builds.
+- **`RegimeHMMBaseline` (MR-005)**: (a) each per-state `LinearRegression`'s own fitted `.coef_`/
+  `.intercept_` (the linear model genuinely is its own explanation), plus (b) which HMM-decoded state was
+  active for each row of that split's test fold (the same lag-1-routed `test_state_series` the
+  post-MR-005-review leakage fix already produces — read directly, not recomputed).
+
+**Artifact shape**:
+- LightGBM: a `pd.Series` of `feature_importances_`, indexed by feature name.
+- RegimeHMM: a `dict` with `"state_coefficients"` (`{state: {"coef": [...], "intercept": ..., "features":
+  [...]}}`) and `"test_state_assignment"` (a `pd.Series`, indexed like that split's `test` fold, giving
+  the decoded active state per row).
+
+**Where it lives ("existing report pipeline" resolution)**: `services/reporting-service` (trigger #7) is
+not built yet, so "the existing report pipeline" is read as `research/`'s own `SplitResult`-shaped output
+convention. Each `ExplainableLightGBM`/`ExplainableRegimeHMM` instance accumulates one
+`ExplainabilityRecord` per split in `self.records`; `pair_with_split_results(split_results, wrapper)`
+zips `run_validation_protocol`'s own, unmodified `SplitResult` list with those records by `split_index`
+— a research-side sibling artifact attached to the existing result path, not a new persistence layer or
+an ad hoc file dump.
+
+**No `naive_first_engine` change was needed.** `research/models/gradient_boosting.py` and
+`research/models/regime_hmm.py` were each minimally refactored — their `predict()` method bodies were
+extracted into a private module-level `_fit_predict_and_explain` function returning
+`(predictions, artifact)`; `predict()` itself now just discards the artifact, so its own observable
+behavior (including the "no instance attribute is ever set" structural invariant MR-004/MR-005's own
+tests assert) is unchanged. No new dependency was added.
+
+**Test results**: `research/tests/test_explainability.py` — 7 new tests (no-refit proof via `.fit()`
+spies for both model shapes, artifact-shape assertions, `pair_with_split_results` correctness at both
+horizons for both model shapes, bit-identical-predictions check between the wrapper and the unwrapped
+baseline). Full `research/tests/` suite: 21 passed in 7.38s. `libs/naive_first_engine` suite unaffected:
+99 passed in 2.29s.
+
+See `docs/tickets/MR-006.md` for the full ticket.

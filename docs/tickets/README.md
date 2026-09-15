@@ -281,7 +281,7 @@ naive benchmark — never a standalone predictive-edge claim (see `research/READ
 | [MR-003](MR-003.md) | Documented interface for `research/` to eventually consume `validation-service`'s multi-source feature assembly; discloses no export endpoint exists yet | MDF-003 (done, Sprint 36) | done |
 | [MR-004](MR-004.md) | Gradient-boosting (LightGBM) `Baseline`, 1h/6h, light-compute-scoped | MR-001 (done), MR-003 (sequencing only) | done |
 | [MR-005](MR-005.md) | Regime-sensitive candidate: 2-state HMM gating a linear model, `Baseline`, 1h/6h, light-compute-scoped (Sprint 42) | MR-001 (done), MR-004 (done) | done |
-| MR-006 | Per-split explainability: feature-importance-only scope (no SHAP) — `LightGBMBaseline.feature_importances_` + `RegimeHMMBaseline` per-state coefficients/active-state assignment (see sprint-43.md) | MR-004 (done), MR-005 (done) | not started |
+| [MR-006](MR-006.md) | Per-split explainability: feature-importance-only scope (no SHAP) — `LightGBMBaseline.feature_importances_` + `RegimeHMMBaseline` per-state coefficients/active-state assignment (Sprint 43) | MR-004 (done), MR-005 (done) | done |
 
 ## Sprint 41 (docs/sprints/sprint-41.md, backlog: docs/product/backlog-model-research.md)
 
@@ -335,12 +335,24 @@ both MR-004's (LightGBM) and MR-005's (regime-HMM) fitted models — both now do
 the PM at planning time: feature-importance-only, no SHAP, no new dependency (`LGBMRegressor.
 feature_importances_` for MR-004; per-state `LinearRegression` coefficients plus per-row active-state
 assignment for MR-005, in place of SHAP, which doesn't map cleanly onto an HMM gate). See sprint-43.md's
-"Explicit scope decision for MR-006" section for the full reasoning. Not yet built — Tech Lead to break
-into ticket(s).
+"Explicit scope decision for MR-006" section for the full reasoning.
+
+**Outcome**: built as a research-side wrapper (`research/explainability.py`'s `ExplainableLightGBM`/
+`ExplainableRegimeHMM`, `Baseline`-protocol Strategy implementations), per sprint-43.md's stated
+preference — `libs/naive_first_engine` was never touched (the wrapper path worked cleanly; no escalation
+needed). `research/models/gradient_boosting.py` and `research/models/regime_hmm.py` were each minimally
+refactored (fit/predict logic extracted into a private `_fit_predict_and_explain` module-level function)
+so the explainability artifact is read off the exact same fitted object the existing `predict()` methods
+already build — zero refit, and `predict()`'s own observable behavior (including the "no instance
+attribute is ever set" structural invariant MR-004/MR-005's own tests assert) is unchanged. Suite counts
+personally re-run by the Tech Lead: `research/` 21 passed (7.38s, includes 7 new MR-006 tests), `libs/
+naive_first_engine` 99 passed (2.29s, unaffected — confirmed via empty `git status --porcelain
+libs/naive_first_engine`). See `docs/tickets/MR-006.md` for the full ticket, including QA's independent
+sign-off.
 
 | Ticket | Story | Module | Depends on | Status |
 |---|---|---|---|---|
-| MR-006 | Per-split explainability artifacts, feature-importance-only (no SHAP), covering `LightGBMBaseline` (MR-004) and `RegimeHMMBaseline` (MR-005) | research | MR-004 (done), MR-005 (done) | not started |
+| [MR-006](MR-006.md) | Per-split explainability artifacts, feature-importance-only (no SHAP), covering `LightGBMBaseline` (MR-004) and `RegimeHMMBaseline` (MR-005) | research | MR-004 (done), MR-005 (done) | done |
 
 ## Sprint 42 (docs/sprints/sprint-42.md, backlog: docs/product/backlog-model-research.md)
 

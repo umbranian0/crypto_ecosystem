@@ -86,13 +86,24 @@ Shipped: Sprint 42, `docs/tickets/MR-005.md`, light-compute-scoped (fixed 2-stat
 Rationale for priority: "Could" not "Should" — this is a materially harder modeling problem (regime detection itself needs care to avoid look-ahead) with higher research-time cost and a less certain path to even a clean negative result; sequenced after the simpler MR-004 boosting story to establish the research-to-report pipeline first.
 Depends on: MR-001, MR-004 (establishes the pipeline/report shape reused here)
 
-### MR-006 — Per-split explainability artifacts [Could]
+### MR-006 — Per-split explainability artifacts [Could] — **done (Sprint 43, `docs/tickets/MR-006.md`), scope narrowed to feature-importance-only (no SHAP) per sprint-43.md's explicit scope decision**
 **As a** future reader of a research run's report (internal: whoever is deciding whether a candidate model's marginal DM win is worth productionizing), **I want** feature-importance or SHAP values persisted per split alongside each split's metrics, **so that** the thesis's stated gap ("Explicabilidade consistente por split... Arquivo não guarda feature importance/SHAP por split," section 1.6) is closed for any new candidate model.
 
 Acceptance criteria:
-- [ ] Explainability artifacts are computed from the same per-split fitted model object already produced by the `Baseline.predict` call — no separate, unaudited refit.
-- [ ] Artifacts are stored/reported through the existing report pipeline (same reporting-service path as metrics), not a parallel ad hoc file dump.
-- [ ] Explicitly out of scope for MR-004/MR-005's initial "does it beat naive" question — this is additive instrumentation, not a precondition for those stories to close.
+- [x] Explainability artifacts are computed from the same per-split fitted model object already produced by the `Baseline.predict` call — no separate, unaudited refit.
+- [x] Artifacts are stored/reported through the existing report pipeline (same reporting-service path as metrics), not a parallel ad hoc file dump.
+- [x] Explicitly out of scope for MR-004/MR-005's initial "does it beat naive" question — this is additive instrumentation, not a precondition for those stories to close.
+
+**Scope reduction, disclosed explicitly**: shipped as feature-importance-only, not full SHAP support — `shap`
+was excluded as a new dependency (its `KernelExplainer` path has no natural fit for an HMM-gated model
+without inventing a background-distribution/sampling scheme). `LightGBMBaseline` exposes
+`LGBMRegressor.feature_importances_`; `RegimeHMMBaseline` exposes per-state `LinearRegression`
+`.coef_`/`.intercept_` plus per-row active-state assignment. See `research/README.md`'s "Per-split
+explainability artifacts (MR-006)" section and `docs/tickets/MR-006.md` for the full scope decision and
+artifact shapes — this backlog entry should not be read as implying full SHAP support shipped.
+
+Shipped: Sprint 43, `docs/tickets/MR-006.md`, `research/explainability.py` (research-side `Baseline`
+wrapper Strategy, no `libs/naive_first_engine` change, no new dependency).
 
 Rationale for priority: valuable but not required to answer the core research question (does anything beat naive); "Could" reflects it's an enhancement to reporting depth, sequenced after at least one candidate model exists to explain.
 Depends on: MR-004
