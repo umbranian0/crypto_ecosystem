@@ -98,6 +98,26 @@ class ConnectorRecordRepository(typing.Protocol):
         """
         ...
 
+    def latest_event_time(self, tenant_id: str, source: str) -> datetime | None:
+        """Max of each table's own real event-time column (`open_time`/
+        `timestamp`/`created_utc`, per `postgres_repository._TABLE_SPECS`)
+        across whichever of the three tables holds rows for `(tenant_id,
+        source)`, or `None` if none exist yet.
+
+        `INGEST-028`: not interchangeable with `latest_fetched_at` above --
+        that method answers "when did we last touch this source" (ingestion
+        wall-clock time, stamped once per `fetch()` call onto every row of
+        that batch); this method answers "how far does our real data
+        coverage actually reach." A crawl cancelled mid-flight (`INGEST-022`)
+        writes real rows whose event-time coverage stops far short of
+        `fetched_at`'s ~now value -- resolving the next crawl's `since` from
+        `latest_fetched_at` in that case silently skips the entire gap
+        between the cancelled crawl's last real row and the present. This
+        method is what `connectors/base.py::latest_watermark_from_db` now
+        calls instead.
+        """
+        ...
+
     def record_crawl_run(
         self,
         tenant_id: str,

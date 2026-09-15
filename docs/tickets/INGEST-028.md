@@ -3,7 +3,39 @@
 Sprint: none (out-of-band urgent bug fix, found via live-stack verification during Sprint 24, disclosed in
 `docs/tickets/DASH-116.md`). Backlog: none — this is a regression fix to already-shipped, not-yet-committed
 Sprint 23 code (`INGEST-021` through `INGEST-024`), not a new story.
-Status: **done**
+Status: **done** (Sprint 44) — genuinely re-implemented, tested, and live-verified 2026-09-15 after the
+prior false "done" status was corrected; QA independently verified (GO). See `docs/sprints/sprint-44.md`.
+
+**Outcome (Tech Lead, 2026-09-15)**: `latest_event_time` implemented on `ConnectorRecordRepository`
+(Protocol), `PostgresConnectorRecordRepository` (via `_TABLE_SPECS`), and `FakeConnectorRecordRepository`
+(via `_FAKE_TABLE_SPECS`); `latest_watermark_from_db` now calls it instead of `latest_fetched_at`, which
+is unchanged on all three surfaces. Diff: `services/ingestion-service/src/app/repositories/interfaces.py`,
+`.../postgres_repository.py`, `connectors/base.py`, `tests/fake_repository.py`, `tests/test_base.py`
+(regression test + 3 fixtures updated to real event-time columns), plus one collateral fixture fix in
+`tests/test_connectors_router.py` (`_fake_binance_fetch_capturing` needed a real `open_time` column once
+watermark resolution stopped reading `fetched_at`). Full suite: 142 passed, 2 skipped, 0 failed. Live-stack
+proof against the real `naive-first-ingestion-service`/`naive-first-postgres` containers: a cancelled
+crawl for tenant `qa-ingest028-before` wrote 10,000 real rows through `2018-10-10`, all stamped
+`fetched_at≈2026-09-15` (now) — before the fix, restarting resolved `since` to that `fetched_at` value and
+fetched 0 new rows (bug reproduced). After rebuilding/redeploying the container with the fix, restarting
+the identical crawl resolved `since` to `2018-10-10T05:00:00Z` (the true last event-time), fetched forward,
+and `psql`/`GET /datasets/.../series` both confirmed contiguous hourly coverage straight through the
+former gap boundary, with only small pre-existing Binance data holes elsewhere in the series (unrelated to
+this bug, none near the boundary).
+
+**QA verdict (independent `qa` subagent pass)**: **GO** for production. Independently re-read the diff
+across all five changed files (`interfaces.py`, `postgres_repository.py`, `connectors/base.py`,
+`fake_repository.py`, `test_base.py`), confirmed `_TABLE_SPECS`/`_FAKE_TABLE_SPECS` reuse on all three
+`latest_event_time` surfaces (no fourth hand-typed table list) and byte-for-byte-unchanged `latest_fetched_at`
+everywhere, independently re-ran the full test suite (142 passed, 2 skipped, 0 failed — matching), grepped
+the whole service for any stray `latest_fetched_at` call site still relying on old semantics (none found),
+scrutinized the new regression test and confirmed it is genuinely non-tautological (asserts both equality
+to the real event-time and inequality to the divergent `fetched_at`), and confirmed no cross-service/
+`naive_first_engine` import leakage. QA's one finding — the `docs/tickets/README.md` index row for
+INGEST-028 was missing at the time of its pass — has since been added (see that file's Sprint 44 section);
+no code or test defect was found. QA did not independently re-trigger a live crawl itself (treated the Tech
+Lead's documented before/after live reproduction above as sufficient, per its own stated verification
+budget), a disclosed, non-blocking gap in QA's own pass.
 
 ## Analysis
 

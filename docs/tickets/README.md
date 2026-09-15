@@ -2519,3 +2519,41 @@ names) rather than static copy; QA judged this non-blocking today because those 
 **Sprint 38 outcome**: both stories done, closing `backlog-multimodal-dataset-fusion.md`'s Must stories
 (MDF-001 through MDF-005 all now done). QA verdict: GO, two non-blocking follow-ups disclosed above for the
 requester/PM to number and file (not filed by this sprint itself, out of MDF-004/005's own scope).
+
+# Sprint 44 — services/ingestion-service (cancelled-crawl watermark data-loss bug fix)
+
+Source: `docs/sprints/sprint-44.md`, `docs/tickets/INGEST-028.md` (regression fix to already-shipped,
+not-yet-committed Sprint 23 cancellation code, `INGEST-021` through `INGEST-024`; disclosed via
+`docs/tickets/DASH-116.md`).
+
+| Ticket | Story | Depends on | Status |
+|---|---|---|---|
+| [INGEST-028](INGEST-028.md) | Restarted crawl for a previously-cancelled `(tenant_id, source)` resolves its `since` watermark from real last-covered event-time (`latest_event_time`, new), not wall-clock `fetched_at` — fixes a real, live-verified data-loss bug where a tenant's historical crawl gap was silently and permanently unrecoverable via the UI | none | done |
+
+**Correction to prior false status**: this ticket's Analysis/Design (root cause, chosen-vs-rejected fix)
+were already sound and reused as-is; every acceptance-criteria checkbox had previously been marked done
+with `Status: done` despite no `latest_event_time` method existing anywhere in
+`services/ingestion-service` (independently confirmed by grep before this sprint started). Sprint 44 reset
+the ticket to `in progress` and genuinely implemented/tested/live-verified every acceptance criterion from
+scratch — see the ticket's own Outcome note for the full diff/test/live-reproduction summary.
+
+**Genuinely done this sprint**: `latest_event_time(tenant_id, source) -> datetime | None` added to
+`ConnectorRecordRepository` (Protocol), `PostgresConnectorRecordRepository` (via existing `_TABLE_SPECS`),
+and `FakeConnectorRecordRepository` (via existing `_FAKE_TABLE_SPECS`) — no fourth hand-typed table list on
+any surface; `latest_fetched_at` unchanged (not removed, not repurposed) on all three. Full
+`services/ingestion-service` suite: 142 passed, 2 skipped, 0 failed (Tech Lead's own run and QA's
+independent re-run matched exactly). Live-stack reproduction against the real
+`naive-first-ingestion-service`/`naive-first-postgres` containers, both before the fix (bug reproduced: a
+cancelled crawl's restart resolved `since` to `fetched_at`≈now, fetched 0 new rows, ~8-year gap left
+unfetched) and after rebuilding/redeploying the container with the fix (restart correctly resolved `since`
+to the true last event-time, fetched forward, `psql`/`GET /datasets/.../series` both confirmed contiguous
+coverage through the former gap boundary). `services/ingestion-service/README.md` updated with the real
+watermark-resolution mechanism plus a disclosure that migration `0006`'s `fetched_at` index (`DBOPT-007`)
+is no longer used by any live query (not a drop recommendation, DBA-backlog follow-up).
+
+**QA verdict**: **GO** for production. QA independently re-read the diff, independently re-ran the full
+test suite (142 passed, 2 skipped, matching), grepped for any stray `latest_fetched_at` call site relying
+on old semantics (none found), scrutinized the new regression test for tautology (found genuine — asserts
+both equality to the real event-time and inequality to the divergent `fetched_at`), and confirmed no
+cross-service leakage. QA's one finding — this ticket-index row was missing at the time of its pass — has
+been added as part of closing out QA's finding; no code or test defect was found.

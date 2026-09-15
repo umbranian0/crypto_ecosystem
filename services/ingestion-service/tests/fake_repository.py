@@ -84,6 +84,23 @@ class FakeConnectorRecordRepository:
         ]
         return max(candidates) if candidates else None
 
+    def latest_event_time(self, tenant_id: str, source: str) -> datetime | None:
+        # INGEST-028: mirrors `PostgresConnectorRecordRepository.latest_event_time`
+        # -- reads each table family's own event-time column (per
+        # `_FAKE_TABLE_SPECS`) instead of `fetched_at`. A stored DataFrame
+        # missing the event-time column (e.g. a pre-INGEST-028 test fixture
+        # that only ever exercised `fetched_at`) is skipped rather than
+        # raising, matching a real table's columns always being fully
+        # populated -- this fake-only leniency has no real-repository
+        # equivalent.
+        candidates = [
+            records[time_column].max()
+            for attribute, time_column, _default_field in _FAKE_TABLE_SPECS
+            for (t, s, records) in getattr(self, attribute)
+            if t == tenant_id and s == source and not records.empty and time_column in records.columns
+        ]
+        return max(candidates) if candidates else None
+
     def record_crawl_run(
         self,
         tenant_id: str,

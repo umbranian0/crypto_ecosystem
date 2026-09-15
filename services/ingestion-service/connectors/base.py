@@ -103,18 +103,26 @@ def latest_watermark(incremental_dir: str | Path, timestamp_column: str, seed_wa
 def latest_watermark_from_db(
     repository: "ConnectorRecordRepository", tenant_id: str, source: str
 ) -> datetime | None:
-    """DB-backed sibling of `latest_watermark` (INGEST-003): the max
-    `fetched_at` already written for `(tenant_id, source)`, or `None` if
+    """DB-backed sibling of `latest_watermark` (INGEST-003): the max real
+    event-time already written for `(tenant_id, source)`, or `None` if
     nothing has been written yet -- the caller (`run_incremental`) is
     responsible for falling back to a seed watermark in that case, mirroring
     `latest_watermark`'s own "seed if nothing found" contract.
 
     Delegates the actual query to the repository (`ConnectorRecordRepository.
-    latest_fetched_at`) rather than running SQL here -- this module has no
+    latest_event_time`) rather than running SQL here -- this module has no
     storage-driver dependency, and shouldn't gain one just to resolve a
     watermark.
+
+    `INGEST-028`: previously called `latest_fetched_at`, which reads
+    ingestion wall-clock time, not real data coverage -- a crawl cancelled
+    mid-flight stamps `fetched_at` to ~now on rows whose real event-time
+    coverage stops far earlier, so resolving `since` from `fetched_at` in
+    that case silently skipped the gap between the cancelled crawl's last
+    real row and the present. `latest_event_time` fixes this by reading each
+    table's own event-time column instead.
     """
-    return repository.latest_fetched_at(tenant_id, source)
+    return repository.latest_event_time(tenant_id, source)
 
 
 def run_incremental(

@@ -17,18 +17,44 @@ Formerly `data-pipeline/`. See [../../docs/solution-design.md](../../docs/soluti
 
 **`ingestion` Postgres schema** (`INGEST-002`, `src/app/models.py` + `migrations/`): five tables, column-for-column per solution-design.md section 8.2 — `price_ohlcv`, `onchain_metric`, `sentiment_score` (each a TimescaleDB hypertable, partitioned on `open_time`/`timestamp`/`created_utc` respectively, primary key widened to include that column per the same TimescaleDB constraint `validation-service`'s `INF-010` hit), `connector_credentials` (ciphertext-only `bytea` columns — `INGEST-011` owns the actual encrypt/decrypt code), `crawl_runs`. Row-level security (`ENABLE`/`FORCE ROW LEVEL SECURITY` + a `tenant_isolation` policy) is on all five, byte-identical in shape to `validation-service`/`gateway-api`'s own RLS migrations. Alembic environment scoped to the `ingestion` schema (`version_table_schema="ingestion"`, the same `INF-005` fix `validation-service`/`gateway-api` already apply) so this service's `alembic_version` bookkeeping never collides with the other services sharing the same Postgres instance. `migrations/env.py` also issues `CREATE SCHEMA IF NOT EXISTS ingestion` itself (unlike its sibling services, whose schemas are pre-created by `infra/postgres-init/01-create-schemas.sql`) because that script does not yet list `ingestion` — folding it in there for consistency is a disclosed follow-up, out of this ticket's file scope (`services/ingestion-service/` only).
 
+**Watermark resolution (`INGEST-028`): `latest_event_time`, not `latest_fetched_at`.**
+`connectors/base.py::latest_watermark_from_db` (called by `run_incremental` and
+`app/routers/connectors.py::run_connector` to resolve the next crawl's `since`) calls
+`ConnectorRecordRepository.latest_event_time(tenant_id, source)`, which reads the `MAX(<event_time_column>)`
+(`open_time`/`timestamp`/`created_utc`, per `postgres_repository._TABLE_SPECS`) across whichever of
+`price_ohlcv`/`onchain_metric`/`sentiment_score` holds rows -- i.e. the real last-covered data point, not
+when the row was ingested. This replaced `latest_fetched_at` as the watermark-resolution mechanism because
+`fetched_at` is ingestion wall-clock time, stamped once per `fetch()` call onto every row of that batch
+(the causal-lag property, unchanged and still correct for its own purpose below) -- for a crawl cancelled
+mid-flight (`INGEST-022`/`INGEST-024`), that stamp reads ~"now" even though the real rows written only
+cover history up to whatever page the cancellation checkpoint stopped at. Resolving `since` from
+`fetched_at` in that case made the next crawl believe data coverage already reached "now" and silently
+skipped the entire real gap (reproduced live, ~77,000 rows in the reported case). `latest_event_time` is
+correct for every crawl outcome (completed, cancelled, failed) because it always answers "what real data
+do we actually have," never "when did we last touch this source."
+
+`latest_fetched_at` **remains** on `ConnectorRecordRepository` (Protocol, Postgres impl, fake) --
+unremoved, unrepurposed -- as a separate, still-valid concept: ingestion/causal-lag time (docs section
+1.6), just no longer the input to watermark resolution.
+
 **Hypertable `(tenant_id, source, fetched_at)` composite indexes** (`INGEST-018`/`DBOPT-007`,
 `migrations/versions/0006_add_hypertables_tenant_source_fetched_at_index.py`): `price_ohlcv`,
 `onchain_metric`, `sentiment_score` each gained `ix_<table>_tenant_source_fetched_at`, a composite
 btree on `(tenant_id, source, fetched_at)` (`fetched_at` trailing, not leading -- deliberate, see the
-migration's own docstring), issued against each hypertable's root table. Serves
+migration's own docstring), issued against each hypertable's root table. Originally served
 `PostgresConnectorRecordRepository.latest_fetched_at`'s `SELECT max(fetched_at) FROM <table> WHERE
-tenant_id = :tenant_id AND source = :source` query, called by `connectors/base.py`'s incremental-fetch
-path on every scheduled crawl -- `fetched_at` is not the partitioning column, so TimescaleDB chunk
-exclusion could not help this query before this index existed. Live-verified against the real Compose
-Postgres container: propagation to all pre-existing chunks confirmed for both `price_ohlcv` (472/472)
-and `onchain_metric` (922/922), and the query plan now uses a backward `Index Only Scan` per chunk
-instead of a full per-chunk `Seq Scan`/`Partial Aggregate`.
+tenant_id = :tenant_id AND source = :source` query when that was still the watermark-resolution path.
+Live-verified against the real Compose Postgres container: propagation to all pre-existing chunks confirmed
+for both `price_ohlcv` (472/472) and `onchain_metric` (922/922), and the query plan used a backward
+`Index Only Scan` per chunk instead of a full per-chunk `Seq Scan`/`Partial Aggregate`. **`INGEST-028`
+disclosure**: after that ticket switched watermark resolution to `latest_event_time`, this index's one
+live call site (`latest_fetched_at`) is no longer invoked by any query in this service -- the column it
+indexes (`fetched_at`) is still written and still serves its original causal-lag documentation purpose, so
+this is not a recommendation to drop the index without DBA review, just an honest disclosure so a future
+DBOPT pass doesn't have to rediscover it. `latest_event_time`'s own `MAX(event_time)` query needs no new
+index: each table's existing composite primary key (`tenant_id, source, event_time[, post_id]`) already
+leads with exactly `(tenant_id, source, event_time)`, the same index-only-scan-friendly shape this
+paragraph documents for the now-superseded `fetched_at` query.
 
 **`crawl_runs` composite index** (`INGEST-017`/`DBOPT-006`,
 `migrations/versions/0005_add_crawl_runs_tenant_source_fetched_at_index.py`): `ingestion.crawl_runs`

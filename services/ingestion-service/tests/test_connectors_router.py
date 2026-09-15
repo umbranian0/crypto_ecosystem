@@ -315,7 +315,14 @@ def _fake_binance_fetch_capturing(monkeypatch, rows: int = 1):
     was actually called with, for asserting the resolved watermark
     (INGEST-013)."""
     fetched_at = datetime(2026, 3, 1, tzinfo=timezone.utc)
-    records = pd.DataFrame({"symbol": ["BTCUSDT"] * rows, "open": [1.0] * rows})
+    # INGEST-028: watermark resolution now reads `open_time` (real event-time),
+    # not `fetched_at` -- give the fake fetch result a real `open_time` so
+    # tests asserting the resolved `since` for a *second* crawl reflect the
+    # actual watermark-resolution mechanism instead of the old fetched_at
+    # coincidence.
+    records = pd.DataFrame(
+        {"symbol": ["BTCUSDT"] * rows, "open": [1.0] * rows, "open_time": [fetched_at] * rows}
+    )
     seen_since: list[datetime] = []
 
     def _fetch(self, since, **_kwargs):

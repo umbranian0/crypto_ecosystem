@@ -117,7 +117,12 @@ def test_latest_watermark_from_db_returns_max_fetched_at() -> None:
     repository.add_price_records(
         "tenant-a",
         "fake_source",
-        pd.DataFrame({"fetched_at": [datetime(2026, 1, 1, tzinfo=timezone.utc), datetime(2026, 1, 5, tzinfo=timezone.utc)]}),
+        pd.DataFrame(
+            {
+                "open_time": [datetime(2026, 1, 1, tzinfo=timezone.utc), datetime(2026, 1, 5, tzinfo=timezone.utc)],
+                "fetched_at": [datetime(2026, 1, 1, tzinfo=timezone.utc), datetime(2026, 1, 5, tzinfo=timezone.utc)],
+            }
+        ),
     )
 
     result = latest_watermark_from_db(repository, "tenant-a", "fake_source")
@@ -128,7 +133,14 @@ def test_latest_watermark_from_db_returns_max_fetched_at() -> None:
 def test_run_incremental_resolves_watermark_from_db_when_repository_supplied(tmp_path: Path) -> None:
     repository = FakeConnectorRecordRepository()
     repository.add_price_records(
-        "tenant-a", "fake_source", pd.DataFrame({"fetched_at": [datetime(2026, 1, 5, tzinfo=timezone.utc)]})
+        "tenant-a",
+        "fake_source",
+        pd.DataFrame(
+            {
+                "open_time": [datetime(2026, 1, 5, tzinfo=timezone.utc)],
+                "fetched_at": [datetime(2026, 1, 5, tzinfo=timezone.utc)],
+            }
+        ),
     )
     connector = _FakeConnector(
         FetchResult(source="fake_source", fetched_at=datetime(2026, 1, 6, tzinfo=timezone.utc), records=pd.DataFrame())
@@ -145,6 +157,26 @@ def test_run_incremental_resolves_watermark_from_db_when_repository_supplied(tmp
     )
 
     assert connector.received_since == datetime(2026, 1, 5, tzinfo=timezone.utc)
+
+
+def test_latest_watermark_from_db_resolves_from_event_time_not_fetched_at_after_cancellation() -> None:
+    """INGEST-028 regression: a cancelled crawl's rows carry a real, early
+    event-time (`open_time`) but a wall-clock `fetched_at` stamped ~now --
+    the resolved watermark must equal the event-time value, never
+    `fetched_at`."""
+    repository = FakeConnectorRecordRepository()
+    real_last_event_time = datetime(2017, 9, 28, tzinfo=timezone.utc)
+    divergent_fetched_at = datetime(2026, 9, 1, tzinfo=timezone.utc)
+    repository.add_price_records(
+        "tenant-a",
+        "fake_source",
+        pd.DataFrame({"open_time": [real_last_event_time], "fetched_at": [divergent_fetched_at]}),
+    )
+
+    result = latest_watermark_from_db(repository, "tenant-a", "fake_source")
+
+    assert result == real_last_event_time
+    assert result != divergent_fetched_at
 
 
 def test_run_incremental_falls_back_to_seed_watermark_when_db_has_no_prior_rows(tmp_path: Path) -> None:
@@ -338,14 +370,18 @@ def test_run_incremental_two_tenants_have_independent_crawl_runs_and_watermarks(
         FetchResult(
             source="fake_source",
             fetched_at=tenant_a_last_fetched_at,
-            records=pd.DataFrame({"ts": [tenant_a_last_fetched_at], "value": ["tenant-a-row"]}),
+            records=pd.DataFrame(
+                {"ts": [tenant_a_last_fetched_at], "open_time": [tenant_a_last_fetched_at], "value": ["tenant-a-row"]}
+            ),
         )
     )
     connector_b = _FakeConnector(
         FetchResult(
             source="fake_source",
             fetched_at=tenant_b_last_fetched_at,
-            records=pd.DataFrame({"ts": [tenant_b_last_fetched_at], "value": ["tenant-b-row"]}),
+            records=pd.DataFrame(
+                {"ts": [tenant_b_last_fetched_at], "open_time": [tenant_b_last_fetched_at], "value": ["tenant-b-row"]}
+            ),
         )
     )
 

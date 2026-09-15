@@ -246,6 +246,24 @@ class PostgresConnectorRecordRepository:
                     candidates.append(max_value)
             return max(candidates) if candidates else None
 
+    def latest_event_time(self, tenant_id: str, source: str) -> datetime | None:
+        # INGEST-028: reads each table's own real event-time column (per
+        # `_TABLE_SPECS`) instead of `fetched_at` -- see
+        # `interfaces.ConnectorRecordRepository.latest_event_time`'s
+        # docstring for why the two are not interchangeable.
+        with _tenant_scoped_session(self._engine, tenant_id) as session:
+            candidates = []
+            for spec in _TABLE_SPECS:
+                time_column = getattr(spec.model, spec.event_time_column)
+                max_value = session.execute(
+                    select(func.max(time_column)).where(
+                        spec.model.tenant_id == tenant_id, spec.model.source == source
+                    )
+                ).scalar_one_or_none()
+                if max_value is not None:
+                    candidates.append(max_value)
+            return max(candidates) if candidates else None
+
     def record_crawl_run(
         self,
         tenant_id: str,
