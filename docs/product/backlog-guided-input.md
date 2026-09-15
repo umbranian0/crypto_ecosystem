@@ -37,32 +37,31 @@ another tenant, or doesn't exist — the exact failure mode this service's own R
 known gap ("A `run_id` for a run that does not exist... surfaces as whatever non-`201` status... no
 client-side existence check is performed before submitting").
 
-Acceptance criteria:
-- [ ] Exact current field: `run_id` on `monitoring.html`'s report-generation `<form>`
+Acceptance criteria (closed by `docs/tickets/DASH-128.md`, Sprint 40):
+- [x] Exact current field: `run_id` on `monitoring.html`'s report-generation `<form>`
   (`<input type="text" id="run_id" name="run_id" required>`, `POST /monitoring/reports/generate`,
   `operator.py`). Exact current input type: free-text `<input type="text">`.
-- [ ] New behavior: `GET /monitoring` (the page's existing render path, `operator.py`) fetches the tenant's
+- [x] New behavior: `GET /monitoring` (the page's existing render path, `operator.py`) fetches the tenant's
   own runs the same way `GET /runs` (`runs_list`, `runs.py`) already does — reusing that route's existing
   `_call_downstream`/`RunSummaryResponse` parsing (no second, near-identical `GET /runs` call implementation;
   implementation-plan.md section 9's DRY rule) — and passes them to `monitoring.html`, which renders
   `run_id` as a `<select>` with one `<option>` per run (label: id + status + created_at, so two runs aren't
   visually indistinguishable), replacing the free-text input.
-- [ ] If the tenant has zero runs, the dropdown is not rendered blank/empty — the form falls back to (or
+- [x] If the tenant has zero runs, the dropdown is not rendered blank/empty — the form falls back to (or
   keeps) the existing free-text input with an explanatory line ("No runs found yet — enter a run id
   directly, or submit a run first"), matching this service's own precedent of degrading to an honest empty
   state rather than hiding the whole feature (`datasets.html`'s "No ingested datasets yet" precedent).
-- [ ] A `GET /runs` transport failure or non-200 while building this page degrades the same way — falls back
+- [x] A `GET /runs` transport failure or non-200 while building this page degrades the same way — falls back
   to the free-text input, does not turn `GET /monitoring`'s otherwise-successful render into an error page
   (this trigger form is one section of a multi-section page, same non-blocking-degradation precedent
   `run_new_form`'s dataset-list fetch already sets).
-- [ ] **Previously-submitted-value preservation (DASH-120 precedent)**: if a report-generation submission is
-  rejected (e.g. a non-`201` from `reporting-service`/`gateway-api`) and the page re-renders with the
-  submitted `run_id` still present, that value must still be shown/selected even if it no longer appears in
-  the dropdown's current option list (run since deleted, or simply not in whatever page/limit of runs was
-  fetched) — inject it as an extra, clearly-labeled `<option>` (e.g. "previously entered: <id> (not in your
-  recent runs)") rather than silently dropping it to the placeholder, the same "never silently discard the
-  user's selection on error redisplay" rule DASH-120 fixed for the Stored-dataset dropdown.
-- [ ] No change to `POST /monitoring/reports/generate`'s accepted payload or to `GW-018`'s contract — this is
+- [x] **Previously-submitted-value preservation (DASH-120 precedent)**: `docs/tickets/DASH-128.md`'s Design
+  section found that `trigger_report_generation` never re-renders `monitoring.html` (its `hx-target` is the
+  small `#report-trigger-result` div only, never the `<form>`/`<select>`) — so the browser's own DOM keeps
+  the tenant's selection unconditionally on any rejection, with no server-side "inject a previously-entered
+  option" mechanism needed to satisfy this story's original literal wording. Proven, not assumed, by
+  `tests/test_monitoring.py::test_monitoring_report_form_selection_survives_a_rejected_submission`.
+- [x] No change to `POST /monitoring/reports/generate`'s accepted payload or to `GW-018`'s contract — this is
   a client-facing input-shape change only, not a new validation rule (the run's existence/ownership is still
   authoritatively checked downstream, exactly as today).
 

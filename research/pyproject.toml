@@ -1,0 +1,25 @@
+[project]
+name = "research"
+version = "0.1.0"
+description = "Phase 3 applied research (regime-sensitive models, broader model comparison, per-split explainability) tested under the same leakage-aware protocol against the naive benchmark. Not a service or shared lib -- no product code depends on this directory."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "pandas>=2.0",
+    "numpy>=1.24",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[dependency-groups]
+dev = [
+    "pytest>=7.4",
+]

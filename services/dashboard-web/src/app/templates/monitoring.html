@@ -112,7 +112,18 @@ validation -- it produces a report for a run that already exists.</p>
 {% else %}
 <form hx-post="/monitoring/reports/generate" hx-target="#report-trigger-result" hx-swap="innerHTML">
     <label for="run_id">Run id</label>
+    {% if tenant_runs %}
+    <select id="run_id" name="run_id" required>
+        {% for run in tenant_runs %}
+        <option value="{{ run.id }}">{{ run.id }} — {{ run.status }}, created {{ run.created_at }}</option>
+        {% endfor %}
+    </select>
+    {% else %}
     <input type="text" id="run_id" name="run_id" required>
+    {% if tenant_runs is not none %}
+    <p>No runs found yet -- enter a run id directly, or submit a run first.</p>
+    {% endif %}
+    {% endif %}
     <button type="submit">Generate a report</button>
 </form>
 <div id="report-trigger-result"></div>

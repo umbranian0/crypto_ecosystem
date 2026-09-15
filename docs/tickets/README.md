@@ -260,6 +260,29 @@ against real diffs (not just dev-agent self-reports) and re-run test suites.
   dashboard-web runs bare rather than in Compose) — not corrected in this pass, left as a known small
   cleanup item for a future docs pass.
 
+## Sprint 40 (docs/sprints/sprint-40.md, backlog: docs/product/backlog-guided-input.md + docs/product/backlog-model-research.md)
+
+Two independent, parallel-eligible stories, no file overlap: GI-001 (`services/dashboard-web`) and
+MR-002 (`research/`, first real code in that directory).
+
+| Ticket | Story | Module | Depends on | Status |
+|---|---|---|---|---|
+| [DASH-128](DASH-128.md) | GI-001: `monitoring.html` report-generation run id dropdown | dashboard-web | none | done |
+| [MR-002](MR-002.md) | Engineered feature set (rolling volatility/mean/std, lagged returns), leakage-safe per fold | research | none | done |
+
+### `research/` (MR-*) ticket tracking
+
+`research/` is Phase 3 applied research, tested under the same purged walk-forward protocol against the
+naive benchmark — never a standalone predictive-edge claim (see `research/README.md`).
+
+| Ticket | Story | Depends on | Status |
+|---|---|---|---|
+| [MR-002](MR-002.md) | Engineered feature set: `rolling_volatility`, `rolling_mean_return`, `rolling_std_return`, `lagged_returns` in `research/features.py` | none | done |
+| MR-003 | Multimodal fusion inputs feed into research candidates | MDF-003 (not started) | not started |
+| MR-004 | Candidate model wiring | MR-002 | not started |
+| MR-005 | DM-test comparison against naive | MR-004 | not started |
+| MR-006 | Per-split explainability | MR-004/MR-005 | not started |
+
 ## Sprint 39 (docs/sprints/sprint-39.md, backlog: docs/product/backlog-uat-findings.md)
 
 Ten UAT-findings stories in scope, all `services/dashboard-web`. Seven (UAT-003/004/006/007/008/012/013)

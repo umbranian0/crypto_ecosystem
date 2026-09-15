@@ -40,10 +40,10 @@ Depends on: none
 ### MR-002 — Engineered feature set: rolling volatility and rolling-return statistics [Should]
 **As a** research candidate model, **I want** a documented, leakage-safe feature-engineering function (rolling volatility, rolling mean/std of returns, lagged returns) computable per training fold only, **so that** candidate models in MR-004/MR-005 have engineered inputs beyond raw returns to test against naive, matching the thesis's explicit future-work gap ("dados exógenos... features engenheiradas," section 1.6).
 
-Acceptance criteria:
-- [ ] Feature functions live in `research/` (or a `research/features.py` module), not inside `naive_first_engine`, and take only a train-fold `Series` as input — no global fit.
-- [ ] Each function has a unit test proving it uses no data past its own fold boundary (e.g. asserting output length/window alignment against a synthetic series with a known future value that must not leak in).
-- [ ] A short note states explicitly this is a research question, not a guaranteed improvement: whether these features help is answered by MR-004/MR-005's DM-test results, not assumed here.
+Acceptance criteria (see `docs/tickets/MR-002.md` — done):
+- [x] Feature functions live in `research/` (or a `research/features.py` module), not inside `naive_first_engine`, and take only a train-fold `Series` as input — no global fit.
+- [x] Each function has a unit test proving it uses no data past its own fold boundary (e.g. asserting output length/window alignment against a synthetic series with a known future value that must not leak in).
+- [x] A short note states explicitly this is a research question, not a guaranteed improvement: whether these features help is answered by MR-004/MR-005's DM-test results, not assumed here.
 
 Rationale for priority: directly extends the thesis's own stated future-work table (section 1.6, "Comparação alargada de modelos" implies richer features too) and is a prerequisite for any non-trivial candidate model story; kept to "Should" not "Must" because MR-001 (methodology correctness) and the plug-in mechanism (MR-004) matter more first.
 Depends on: none

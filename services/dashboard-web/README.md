@@ -110,7 +110,11 @@ link (UAT-012)" below (320 unit tests passing, up from 289, plus the same 7 e2e)
 `UAT-014` (Sprint 39) add runs-list pagination controls, additive hour-based (1h/6h/24h) buckets on
 `/runs/horizon-summary`, and a new `/help/concepts` plain-language page respectively -- see "Runs list
 pagination (UAT-009)", "Horizon summary: hour-based buckets (UAT-010)", and "Plain-language concepts
-page (UAT-014)" below (341 unit tests passing, up from 320, plus the same 7 e2e).
+page (UAT-014)" below (341 unit tests passing, up from 320, plus the same 7 e2e). `DASH-128` (Sprint 40,
+GI-001) converts `/monitoring`'s "generate a report" `run_id` field from a free-text input into a
+`<select>` of the tenant's own run history, falling back to the original free-text input for a zero-runs
+tenant or a `GET /runs` transport failure -- see "Report generation: run picker (DASH-128/GI-001)" below
+(345 unit tests passing, up from 341, plus the same 7 e2e).
 
 Formerly `dashboard/`. See [../../docs/solution-design.md](../../docs/solution-design.md) section 3.6.
 
@@ -281,12 +285,15 @@ either response.
   `services/ingestion-service/scripts/set_connector_credentials.py` (CLI) in the meantime; no write form
   exists on this page this sprint, per the ticket's own unchanged read-only scope (solution-design.md
   8.9(a)).
-- `DASH-110`'s "generate a report" form does not offer a run picker -- the tenant types a `run_id`
-  manually (the same `POST /reports/generate` contract `GW-018` already exposes; no run-list-with-a-
-  "generate report" button integration exists yet). A `run_id` for a run that does not exist, or that
-  belongs to another tenant, surfaces as whatever non-`201` status `reporting-service`/`gateway-api`
-  themselves return, rendered via the same generic `error.html` -- no client-side existence check is
-  performed before submitting.
+- `DASH-128` closed the `DASH-110`-era gap above: `GET /monitoring`'s "generate a report" form now
+  renders `run_id` as a `<select>` of the tenant's own run history when at least one run was fetched
+  successfully, falling back to the original free-text `<input>` (with an explanatory line) for a
+  zero-runs tenant or a `GET /runs` transport failure -- see "Report generation: run picker
+  (DASH-128/GI-001)" below. `POST /monitoring/reports/generate`'s own request/response contract is
+  unchanged by this ticket (`run_id: str = Form("")`, `json={"run_id": run_id}` to `GW-018`, byte-
+  identical); a `run_id` for a run that does not exist, or that belongs to another tenant, still
+  surfaces as whatever non-`201` status `reporting-service`/`gateway-api` themselves return, rendered
+  via the same generic `error.html` -- no client-side existence check is performed before submitting.
 
 **Sprint 15**: `DASH-005` (runs list), deferred since Sprint 11, is now built (`DASH-005-01`) -- see
 "Runs list (DASH-005)" below. It was blocked on `DASH-005-GAP` (no `GET /runs` list endpoint existed on
@@ -1264,6 +1271,47 @@ recent crawl -- never a fabricated number, and never an implied prediction of re
   pre-existing, unrelated `test_run_detail_success_with_splits` failure from in-progress, uncommitted
   `RAV-003` work was present before this ticket's own changes and is outside this ticket's scope), plus
   the same 5 e2e (unaffected -- the Selenium suite never exercises `/monitoring`).
+
+## Report generation: run picker (DASH-128/GI-001)
+
+`GET /monitoring`'s "generate a report" form (`DASH-110` above) gained a `run_id` `<select>` populated
+from the tenant's own run history, replacing the plain free-text `<input>` -- the tenant no longer has
+to type/copy-paste a run id by hand for the common case.
+
+- **Data source**: `monitoring()` (`src/app/routers/operator.py`) fetches `tenant_runs` via `runs.py`'s
+  already-shipped `_fetch_all_runs` (`DASH-122`) -- the same helper `runs_list`/`run_detail` use for "the
+  tenant's full run history," imported and reused, not reimplemented (implementation-plan.md section 9's
+  DRY rule). Gated on `headers is not None`, the exact same condition already used for the crawl-status
+  panel's own `_fetch_crawl_statuses` call in this route -- no new auth mechanism.
+- **Rendering** (`monitoring.html`): `tenant_runs` a non-empty list -> one `<option>` per run, labeled
+  `"{id} — {status}, created {created_at}"`. `tenant_runs` an empty list (successful fetch, zero runs) or
+  `None` (fetch failed, `_fetch_all_runs`'s own `(None, response, transport_status)` shape) -> falls back
+  to the original free-text `<input type="text" id="run_id" name="run_id" required>`; the zero-runs case
+  additionally shows "No runs found yet -- enter a run id directly, or submit a run first." (same
+  precedent as `datasets.html`'s "No ingested datasets yet -- run a crawl first."). A `GET /runs`
+  transport failure/non-200 degrades this one form field only -- the rest of `/monitoring` renders
+  normally, matching `_fetch_crawl_statuses`'s own "one bad downstream must not fail the whole aggregate"
+  principle, not `runs_list`'s own whole-page `error.html` handling of the same failure shape (that
+  page's only job is the run list; `/monitoring` has several other independent panels).
+- **No contract change**: `POST /monitoring/reports/generate`'s handler signature
+  (`run_id: str = Form("")`) and its downstream call (`json={"run_id": run_id}` to `GW-018`'s `POST
+  /reports/generate`) are byte-unchanged by this ticket -- this is a form-rendering change only, the
+  route still accepts and forwards a bare string `run_id`, whether it came from the `<select>` or the
+  free-text fallback.
+- **Previously-submitted-value preservation (AC5)**: `POST /monitoring/reports/generate` only ever swaps
+  `#report-trigger-result` (`hx-target`/`hx-swap="innerHTML"` on the form, unchanged) -- it never
+  re-renders the `<form>`/`<select>` above it, success or failure. Because of that, a rejected
+  submission's already-selected `run_id` is preserved by the browser's own untouched DOM, with no
+  server-side "re-inject the submitted value" step needed (unlike `DASH-120`'s full-page `422` redisplay,
+  which does replace the whole form and therefore does need one). See `tests/test_monitoring.py::
+  test_monitoring_report_form_selection_survives_a_rejected_submission` for the structural proof (the
+  rejection fragment carries no `id="run_id"` element of any kind).
+- **Tests**: `tests/test_monitoring.py` adds four cases -- dropdown rendering with 2+ runs (id/status/
+  created_at all present), the zero-runs free-text fallback, the `GET /runs` transport-failure free-text
+  fallback (still a `200` page, never `error.html`), and the previously-submitted-value structural proof
+  above. Every other tenant-session test in this service that reaches `GET /monitoring` (`test_monitoring
+  .py`, `test_monitoring_triggers.py`, `test_crawl_progress.py`) now also stubs `/runs` -- the full
+  service suite passes with zero regressions as of this ticket.
 
 ## Settings: connector credential status (DASH-112)
 

@@ -377,6 +377,11 @@ def _monitoring_page_response(monkeypatch, client: TestClient, crawl_status: str
             )
         if request.url.path == "/diagnostics/recent-errors":
             return httpx.Response(200, json={"items": []})
+        if request.url.path == "/runs":
+            # DASH-128: `/monitoring` also fetches the tenant's own run
+            # history for the "Generate a report" form's dropdown -- not this
+            # file's own concern, an empty history is a valid stub here.
+            return httpx.Response(200, json={"items": [], "limit": 100, "offset": 0, "total": 0})
         raise AssertionError(f"unexpected request: {request.url.path}")  # pragma: no cover
 
     _patch_transport(monkeypatch, handler)

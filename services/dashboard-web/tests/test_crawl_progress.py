@@ -194,6 +194,11 @@ def test_monitoring_shows_honest_absence_for_blockchain_info_source(monkeypatch)
             )
         if request.url.path == "/diagnostics/recent-errors":
             return httpx.Response(200, json={"items": []})
+        if request.url.path == "/runs":
+            # DASH-128: `/monitoring` also fetches the tenant's own run
+            # history for the "Generate a report" form's dropdown -- not this
+            # test's own concern, an empty history is a valid stub here.
+            return httpx.Response(200, json={"items": [], "limit": 100, "offset": 0, "total": 0})
         raise AssertionError(f"unexpected request: {request.url.path}")  # pragma: no cover
 
     _patch_transport(monkeypatch, handler)
@@ -239,6 +244,8 @@ def test_monitoring_shows_row_count_for_binance_source(monkeypatch) -> None:
             )
         if request.url.path == "/diagnostics/recent-errors":
             return httpx.Response(200, json={"items": []})
+        if request.url.path == "/runs":
+            return httpx.Response(200, json={"items": [], "limit": 100, "offset": 0, "total": 0})
         raise AssertionError(f"unexpected request: {request.url.path}")  # pragma: no cover
 
     _patch_transport(monkeypatch, handler)

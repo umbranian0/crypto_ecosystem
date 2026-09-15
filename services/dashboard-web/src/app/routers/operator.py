@@ -174,7 +174,7 @@ from app.dependencies.operator_session import (
     cookie_secure,
 )
 from app.main import templates
-from app.routers.runs import _call_downstream, _render_error_for_status
+from app.routers.runs import _call_downstream, _fetch_all_runs, _render_error_for_status
 
 router = APIRouter()
 
@@ -409,6 +409,23 @@ def _fetch_crawl_statuses(client: httpx.Client, headers: dict[str, str]) -> list
     return statuses
 
 
+def _fetch_tenant_runs(client: httpx.Client, headers: dict[str, str]) -> list[dict] | None:
+    """DASH-128: feeds the "Generate a report" form's `run_id` `<select>`.
+    Reuses `runs.py`'s `_fetch_all_runs` (DASH-122) unmodified -- no second
+    `GET /runs` paging implementation -- and collapses its `(None, response,
+    transport_status)` failure shape to plain `None`, the same "one bad
+    downstream must not fail the whole aggregate" principle
+    `_fetch_crawl_statuses`/`_fetch_gateway_api_recent_errors` already
+    established in this module: a `GET /runs` failure degrades the report
+    form to its free-text fallback, it does not turn `/monitoring` into an
+    error page.
+    """
+    runs, _error_response, transport_status = _fetch_all_runs(client, headers)
+    if transport_status is not None or runs is None:
+        return None
+    return runs
+
+
 @router.get("/monitoring")
 def monitoring(
     request: Request,
@@ -441,6 +458,11 @@ def monitoring(
     as a login-to-view-as-operator prompt, same convention as the crawl-status
     panel's own login prompt.
 
+    DASH-128: also gathers `tenant_runs` (the tenant's own run history, via
+    `_fetch_tenant_runs`/`_fetch_all_runs`) feeding the "Generate a report"
+    form's `run_id` `<select>` below -- same `headers is not None` gate as
+    `crawl_statuses` above, same `None`-on-failure degrade-not-error shape.
+
     DASH-124: `crawl_statuses is None` by itself is ambiguous -- true both for
     an anonymous visitor (never fetched) and for a logged-in tenant whose
     `_fetch_crawl_statuses` call failed. The context below also passes
@@ -461,6 +483,7 @@ def monitoring(
         services = response.json()
 
         crawl_statuses = _fetch_crawl_statuses(client, headers) if headers is not None else None
+        tenant_runs = _fetch_tenant_runs(client, headers) if headers is not None else None
         gateway_api_recent_errors = (
             _fetch_gateway_api_recent_errors(client, operator_headers)
             if operator_headers is not None
@@ -481,6 +504,7 @@ def monitoring(
         {
             "services": services,
             "crawl_statuses": crawl_statuses,
+            "tenant_runs": tenant_runs,
             "recent_errors": recent_errors,
             "runs_summary": runs_summary,
             "has_tenant_session": headers is not None,
@@ -632,6 +656,27 @@ def trigger_report_generation(
     rendered via `_render_error_for_status`, not re-validated or
     re-interpreted at this layer (same "pass-through UI only" precedent
     `runs.py`'s `run_new_submit` already established for `RunRequest`).
+
+    DASH-128 design note (AC5, previously-submitted-value preservation): this
+    route's `hx-target="#report-trigger-result"`/`hx-swap="innerHTML"`
+    (`monitoring.html`) means its response body only ever replaces the small
+    result `<div>` below the form -- it never touches the `<form>` or the
+    `<select id="run_id">` inside it, success or failure. Unlike
+    `run_new_submit`'s full-page `422` redisplay (DASH-120), which has to
+    re-inject the submitted value server-side because that route re-renders
+    the whole form, there is structurally no response body from *this* route
+    that could reach the `<select>` at all -- the browser's own DOM keeps
+    whatever option the tenant had selected, unconditionally, because nothing
+    in the swapped fragment can overwrite it. This was judged sufficient
+    rather than adding a redundant "previously entered" `<option>` here: this
+    route has no rendering surface to inject one into, and `_fetch_all_runs`
+    already pages through the tenant's *entire* run history on `GET
+    /monitoring`'s own initial render, so a run present in the dropdown at
+    submit time was already listed unless it was created in the narrow
+    window between page load and submission -- a real but rare race, not the
+    common case this ticket's AC5 is chiefly guarding against (a rejected
+    submission silently reverting the visible selection). See
+    `tests/test_monitoring.py` for the rendered-HTML proof of this claim.
     """
     with httpx.Client(base_url=base_url, timeout=DOWNSTREAM_HTTP_TIMEOUT_SECONDS) as client:
         response, transport_status = _call_downstream(
