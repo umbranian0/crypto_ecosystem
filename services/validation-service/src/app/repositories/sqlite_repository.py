@@ -31,15 +31,34 @@ straight from a `db_path`, keep working unmodified.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from uuid import uuid4
 
 from naive_first_common.db import build_engine
 from sqlalchemy import Engine, func, select, update
 from sqlalchemy.orm import Session
 
-from app.models import Base, Run, SplitResult
-from app.repositories.interfaces import RunRecord, SplitResultRecord
+from app.models import Base, Run, SplitPoint, SplitResult
+from app.repositories.interfaces import RunRecord, SplitPointRecord, SplitResultRecord
+
+# VS-032: single named constant both `SplitPointRepository.get_points`
+# implementations (SQLite/Postgres, below and in postgres_repository.py) and
+# `scripts/prune_split_points.py` read -- no second hardcoded `90` anywhere
+# in this module's retention logic (Design section, RAV-006's own
+# acceptance criteria). Lives here (not postgres_repository.py) since
+# postgres_repository.py already imports several `_*` helpers from this
+# module -- one more import keeps the single-source-of-truth property
+# without a new shared module for one constant.
+SPLIT_POINT_RETENTION_DAYS = 90
+
+
+def _retention_cutoff() -> datetime:
+    # Reads the module-level `SPLIT_POINT_RETENTION_DAYS` global directly
+    # (not a default-argument capture, which Python binds once at function
+    # *definition* time) so a test that monkeypatches this module's
+    # attribute changes what this helper computes on its very next call --
+    # the "single source both mechanisms read" Test acceptance criterion.
+    return datetime.utcnow() - timedelta(days=SPLIT_POINT_RETENTION_DAYS)
 
 
 def _run_to_record(run: Run) -> RunRecord:
@@ -128,6 +147,34 @@ def _record_to_split_result(tenant_id: str, run_id: str, s: SplitResultRecord) -
         dm_pvalue=s.dm_pvalue,
         dm_verdict=s.dm_verdict,
         client_baseline_results=s.client_baseline_results,
+    )
+
+
+def _split_point_to_record(point: SplitPoint) -> SplitPointRecord:
+    return SplitPointRecord(
+        id=point.id,
+        run_id=point.run_id,
+        tenant_id=point.tenant_id,
+        split_index=point.split_index,
+        baseline_key=point.baseline_key,
+        timestamp=point.timestamp,
+        predicted=point.predicted,
+        actual=point.actual,
+        created_at=point.created_at,
+    )
+
+
+def _record_to_split_point(tenant_id: str, run_id: str, p: SplitPointRecord) -> SplitPoint:
+    return SplitPoint(
+        id=p.id,
+        run_id=run_id,
+        tenant_id=tenant_id,
+        split_index=p.split_index,
+        baseline_key=p.baseline_key,
+        timestamp=p.timestamp,
+        predicted=p.predicted,
+        actual=p.actual,
+        created_at=p.created_at,
     )
 
 
@@ -245,3 +292,38 @@ class SQLiteSplitResultRepository:
                 .all()
             )
             return [_split_result_to_record(row) for row in rows]
+
+
+class SQLiteSplitPointRepository:
+    """SQLite implementation of `SplitPointRepository` (VS-031)."""
+
+    def __init__(self, db_path: str, engine: Engine | None = None) -> None:
+        self._engine = engine if engine is not None else build_engine(f"sqlite:///{db_path}", Base)
+
+    def add_points(self, tenant_id: str, run_id: str, points: list[SplitPointRecord]) -> None:
+        rows = [_record_to_split_point(tenant_id, run_id, p) for p in points]
+        with Session(self._engine) as session:
+            session.add_all(rows)
+            session.commit()
+
+    def get_points(self, tenant_id: str, run_id: str, split_index: int) -> list[SplitPointRecord]:
+        with Session(self._engine) as session:
+            rows = (
+                session.execute(
+                    select(SplitPoint)
+                    .where(
+                        SplitPoint.run_id == run_id,
+                        SplitPoint.tenant_id == tenant_id,
+                        SplitPoint.split_index == split_index,
+                        # VS-032 defense-in-depth read-path cutoff (Design
+                        # section): a row past the retention window is never
+                        # served, even in the gap between two scheduled
+                        # `prune_split_points.py` runs.
+                        SplitPoint.created_at >= _retention_cutoff(),
+                    )
+                    .order_by(SplitPoint.timestamp)
+                )
+                .scalars()
+                .all()
+            )
+            return [_split_point_to_record(row) for row in rows]

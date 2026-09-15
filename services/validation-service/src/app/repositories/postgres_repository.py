@@ -52,11 +52,14 @@ from uuid import uuid4
 from sqlalchemy import Engine, func, select, update
 from sqlalchemy.orm import Session
 
-from app.models import Base, Run, SplitResult
-from app.repositories.interfaces import RunRecord, SplitResultRecord
+from app.models import Base, Run, SplitPoint, SplitResult
+from app.repositories.interfaces import RunRecord, SplitPointRecord, SplitResultRecord
 from app.repositories.sqlite_repository import (
+    _record_to_split_point,
     _record_to_split_result,
+    _retention_cutoff,
     _run_to_record,
+    _split_point_to_record,
     _split_result_to_record,
 )
 from naive_first_common.db import build_engine
@@ -189,3 +192,38 @@ class PostgresSplitResultRepository:
                 .all()
             )
             return [_split_result_to_record(row) for row in rows]
+
+
+class PostgresSplitPointRepository:
+    """Postgres implementation of `SplitPointRepository` (VS-031)."""
+
+    def __init__(self, url: str, engine: Engine | None = None) -> None:
+        self._engine = engine if engine is not None else build_engine(url, Base)
+
+    def add_points(self, tenant_id: str, run_id: str, points: list[SplitPointRecord]) -> None:
+        rows = [_record_to_split_point(tenant_id, run_id, p) for p in points]
+        with _tenant_scoped_session(self._engine, tenant_id) as session:
+            session.add_all(rows)
+            session.commit()
+
+    def get_points(self, tenant_id: str, run_id: str, split_index: int) -> list[SplitPointRecord]:
+        with _tenant_scoped_session(self._engine, tenant_id) as session:
+            rows = (
+                session.execute(
+                    select(SplitPoint)
+                    .where(
+                        SplitPoint.run_id == run_id,
+                        SplitPoint.tenant_id == tenant_id,
+                        SplitPoint.split_index == split_index,
+                        # VS-032: same defense-in-depth cutoff as
+                        # sqlite_repository.py's implementation -- shared
+                        # `_retention_cutoff` helper, not a second copy of
+                        # the `datetime.utcnow() - timedelta(...)` logic.
+                        SplitPoint.created_at >= _retention_cutoff(),
+                    )
+                    .order_by(SplitPoint.timestamp)
+                )
+                .scalars()
+                .all()
+            )
+            return [_split_point_to_record(row) for row in rows]

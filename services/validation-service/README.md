@@ -39,6 +39,7 @@ The route list below (path + method) is machine-checked against the live FastAPI
 - `GET /runs`
 - `GET /runs/{run_id}`
 - `GET /runs/{run_id}/splits`
+- `GET /runs/{run_id}/splits/{split_index}/points`
 - `GET /runs/{run_id}/features`
 
 **`GET /health` (OPS-005-01)**: performs a real, cheap connectivity check against the active repository backend (opens a connection via a memoized `Engine` -- `dependencies/repositories.py`'s `get_health_check_engine`, reusing the same URL-resolution helpers as the repository providers -- and runs `SELECT 1`), instead of returning a hardcoded status. On success: `200 {"status": "ok"}`, unchanged from before this ticket (additive, not breaking). On any connection/execution exception: `503 {"status": "unhealthy", "detail": "database unreachable"}` -- the detail is a fixed generic string, never the raw exception text, connection string, or credential. Redis connectivity is out of scope here (tracked separately, VS-014's producer-side concern).
@@ -50,6 +51,116 @@ The route list below (path + method) is machine-checked against the live FastAPI
 - **`GET /runs/{id}/splits` (VS-008, implemented)**: `src/app/routers/splits.py` -- deliberately its own router module (mounted at the same `/runs` prefix, wired in `src/app/main.py`), not added to `runs.py`, so it has no file overlap with VS-007/VS-009 (both editing `runs.py`). Tenant: `X-Tenant-Id` request header (VS-010; see above): `GET /runs/{id}/splits`. On success (`200`): a list of one entry per split, ordered by `split_index` ascending (`SplitResultRepository.get_splits`'s own responsibility per VS-003's binding decision -- the handler does not re-sort), each with the full `split_results` field set per VS-002's schema/mapping decision (see "Data model" below): `split_index`; boundaries `train_start`/`train_end`/`purge_start`/`purge_end`/`test_start`/`test_end`; `model_mae`/`rmse`/`smape`/`mase`/`da`/`f1`/`oos_r2` (the `"naive_last"` baseline); `naive0_mae`/`rmse`/`smape`/`mase`/`da`/`f1`/`oos_r2` (the `"naive0"` baseline); `dm_statistic`/`dm_pvalue`/`dm_verdict` (`"naive_last"`'s DM-test result). **Tenant isolation**: the run's ownership is checked first via `ValidationRunRepository.get_run` (defense in depth -- `SplitResultRepository.get_splits` is itself tenant-scoped, but a run absent for this tenant has no meaningful splits response either way); a nonexistent run and a run belonging to a different tenant both collapse into the same `404`, same stance as `GET /runs/{id}`. **`client_baseline` (VS-017)**: `ClientBaselineResult | null`, nested rather than flattened into a fifth near-duplicate 10-field group -- `null` whenever the run's `POST /runs` call had no `client_prediction_reference`; otherwise a nested object with the same 7 `MetricSet` fields plus `key`/`dm_statistic`/`dm_pvalue`/`dm_verdict`/**`disclaimer`**. `disclaimer` is the mandatory positioning text (`app.client_baseline.CLIENT_PREDICTION_AUDIT_DISCLAIMER`), present verbatim in every split entry that has a non-null `client_baseline` -- it states that this platform audits the *comparison* between the client-supplied series and the naive baselines under the leakage-aware protocol, and explicitly does **not** certify the *provenance* of the client's own predictions. **`has_client_model` (VS-029)**: both `RunDetailResponse` and `SplitResultResponse` also carry a plain `has_client_model: bool` -- a derived fact, not a second independent signal: on `SplitResultResponse` it is exactly `client_baseline_results is not None` for that split (`splits.py::get_splits`); on `RunDetailResponse` it is `any(...)` of that same condition across the run's own splits (`runs.py::get_run`, which now also depends on `SplitResultRepositoryDep` to compute it), `False` for a run with zero splits (still `pending`/`failed`). Exists so a caller (e.g. `dashboard-web`'s run-detail page, `DASH-125`) doesn't have to infer "was a real client model submitted" by checking every split's `client_baseline` itself.
 
 **Data model** (VS-002, extended VS-017): `runs` and `split_results` are defined once in `src/app/models.py` (SQLAlchemy 2.0 declarative, backend-agnostic) and shared by the repository layer and the Alembic migration (`alembic.ini` + `migrations/`) — no duplicate schema definitions. `naive_first_engine.protocol.run_validation_protocol` returns per-baseline results keyed by name (`"naive0"`, `"naive_last"`, plus one optional client-supplied entry keyed by its class name). `split_results.model_*` and `dm_*` map to the `"naive_last"` baseline (the persistence-floor benchmark and its DM-test result), and `split_results.naive0_*` maps to the `"naive0"` baseline's metrics directly — see `models.py`'s module docstring for the full rationale. **These two mandatory baselines are always computed by `run_validation_protocol` itself, unconditionally, regardless of whether a client prediction is supplied** — VS-017 never made `model_*`/`naive0_*`/`dm_*` conditional (`tests/test_naive_baselines_mandatory.py` proves this structurally, mirroring VS-012's own "structurally unreachable" test style). **VS-017's `split_results.client_baseline_results`** (nullable JSON column) is a *separate* column, not a repurposing of `model_*`/`dm_*` — it stores the optional third (client-supplied) baseline's full result (`{"key", "metrics": {...7 MetricSet fields...}, "dm_statistic", "dm_pvalue", "dm_verdict"}`) per split, `NULL` whenever no `client_prediction_reference` was supplied for that run (`migrations/versions/0003_add_client_baseline_results.py`).
+
+**Raw per-point predicted/actual persistence (`VS-031`)**: a new table, `split_points` (`src/app/models.py`'s
+`SplitPoint`, migration `migrations/versions/0011_add_split_points_table.py`), stores one row per
+`(split, baseline, test-window timestamp)` triple -- `id`, `run_id` (FK to `runs.id`), `tenant_id`
+(denormalized, same rationale as `SplitResult.tenant_id`), `split_index`, `baseline_key` (one of
+`"naive_last"`, `"naive0"`, or the client baseline's key -- `naive_first_engine.protocol`'s own
+`NAIVE0_KEY`/`NAIVE_LAST_KEY`/class-name convention, never a repurposed enum, per VS-017's precedent
+applied to this new axis), `timestamp`, `predicted`, `actual`, and `created_at` (copied from the owning
+run's own `created_at` at write time -- **not** `datetime.utcnow()` recomputed per row -- so VS-032's
+future age-based retention cutoff needs no join back to `runs` to filter). A separate table, not a
+JSON/array column on `split_results`: the retention mechanism (VS-032) needs to delete/filter
+individual rows by age, and a future paginated per-split read (RAV-007) needs `LIMIT`/`OFFSET`, neither
+of which a JSON blob column supports without loading the whole blob first. RLS is enabled and forced on
+`split_points` exactly matching `runs`/`split_results`'s `tenant_isolation` policy shape
+(`migrations/versions/0002_add_row_level_security.py`).
+
+`SplitPointRepository` (`src/app/repositories/interfaces.py`) is a `typing.Protocol` sibling to
+`SplitResultRepository` (a different row shape, volume profile, and retention lifecycle from
+`split_results` -- not a method bolted onto the existing repository): `add_points(tenant_id, run_id,
+points: list[SplitPointRecord]) -> None`, `get_points(tenant_id, run_id, split_index) -> list[SplitPointRecord]`.
+`SQLiteSplitPointRepository`/`PostgresSplitPointRepository` (`sqlite_repository.py`/`postgres_repository.py`)
+reuse the exact same `Session`/`_tenant_scoped_session` patterns their `SplitResultRepository` siblings
+already use -- no new session-management code. DI seam: `get_split_point_repository`/`SplitPointRepositoryDep`
+in `src/app/dependencies/repositories.py`, same shape as `get_split_result_repository`/`SplitResultRepositoryDep`.
+
+`POST /runs`'s existing handler (`create_run`, `src/app/routers/runs.py`) gains an additive second
+persistence step per split: for each of `naive_last` (model), `naive0`, and the client baseline (when
+`client_prediction_reference` was supplied), it builds `SplitPointRecord`s from the already-computed
+prediction `pd.Series` and the corresponding slice of the input `series` (the same series
+`run_validation_protocol` was already called with -- no second dataset load, no second `.predict()`
+call), and calls `split_point_repository.add_points(...)` alongside the existing
+`split_repository.add_splits(...)` call. `split_results`'s own persistence is byte-unchanged.
+
+**Retention/pruning policy (`VS-032`)**: `split_points` is unbounded-growth-by-construction (see the
+storage-growth estimate below), so a 90-day age-based retention bound ships in the same sprint as
+persistence, not deferred. Bound chosen: **90 days by `created_at`**, not "20 runs per tenant/dataset"
+(RAV-006's other permitted option) -- `created_at` is already denormalized onto every `split_points` row
+(copied from the owning run at write time, see above), so a plain `created_at >= cutoff` predicate is a
+single indexed comparison, with no per-tenant-per-dataset windowing query needed. Two enforcement
+mechanisms, both real and tested, not one documented/one stubbed:
+1. **`scripts/prune_split_points.py`** (new, standalone, operator/cron-run -- same shape as
+   `services/gateway-api/scripts/provision_tenant.py`/`services/ingestion-service/scripts/seed_tenant.py`):
+   `python scripts/prune_split_points.py [--older-than-days 90]`. Resolves the DB connection the same way
+   the running service does (`DATABASE_URL` if set and Postgres-shaped, else `VALIDATION_SERVICE_DB_PATH`,
+   both via `app.dependencies.repositories`'s existing URL-resolution helpers -- no second copy of that
+   logic), issues one `DELETE FROM split_points WHERE created_at < :cutoff`, and prints the number of rows
+   deleted. This is the primary mechanism -- it physically bounds the table's size regardless of whether
+   anyone ever queries it. Runnable standalone, no running app process required.
+2. **Query-time cutoff in `SplitPointRepository.get_points`** (`sqlite_repository.py`/
+   `postgres_repository.py`): a defense-in-depth read-path filter (`SplitPoint.created_at >=
+   now() - SPLIT_POINT_RETENTION_DAYS days`) so a read between two scheduled prune runs never serves data
+   past the retention bound -- this is also exactly what RAV-007 (VS-033, "reads respect the retention
+   cutoff") needs, satisfied here by construction.
+
+Both mechanisms read a single named constant, `SPLIT_POINT_RETENTION_DAYS = 90`
+(`src/app/repositories/sqlite_repository.py`, imported by `postgres_repository.py` and
+`scripts/prune_split_points.py` -- same "named constant, not a magic number" convention `MAX_SPLIT_COUNT`/
+`LAG1_AUTOCORR_THRESHOLD` already establish in this module); there is no second hardcoded `90` anywhere in
+this policy's code.
+
+**Storage-growth estimate** (formula: `rows = tenants × runs-per-tenant × splits-per-run ×
+test-window-length × baselines-per-split`), anchored to this service's own disclosed real numbers (RSS-005
+above: up to 38,597 splits/run is possible but `MAX_SPLIT_COUNT = 500` caps it; a `test_window` on the
+order of hundreds of rows per that same example) -- illustrative pilot-scale assumptions, not a
+guarantee (no pilot client exists yet):
+
+- 10 tenants
+- 20 runs/tenant within the 90-day retention window (the "20 runs" bound RAV-006 also permits, used here
+  only as a volume assumption, not as the enforcement mechanism -- see "Bound chosen" above)
+- 50 splits/run (well under the 500 cap)
+- 200-row test window
+- 2.3 baselines/split average (2 mandatory -- `naive_last`, `naive0` -- plus a client baseline on
+  ~30% of runs)
+
+`10 × 20 × 50 × 200 × 2.3 = 4,600,000` rows at steady state before the 90-day cutoff starts pruning. This
+ticket's own Design section originally quoted **~46,000,000** for this same assumption set -- re-deriving
+the arithmetic here found that number to be a 10x overstatement (`10 × 20 × 50 × 200 × 2.3` is 4.6 million,
+not 46 million); **4,600,000 is the corrected figure**, not the ticket's original one. Presented as an
+order-of-magnitude planning number, not a guarantee. Flagged explicitly: this volume (even at the
+corrected, smaller figure) is why RAV-007 (VS-033) must paginate/scope-by-split rather than returning a
+whole run's points in one response.
+
+This required threading the raw prediction `pd.Series` out of `naive_first_engine`: `BaselineResult`
+(`libs/naive_first_engine/src/naive_first_engine/report_schema.py`) gained an additive, optional
+`predictions: pd.Series | None = None` field, and `protocol.py`'s three `BaselineResult(...)`
+construction sites (naive0, naive_last, each `extra_baselines` entry) now populate it with the same
+`naive0_pred`/`naive_last_pred`/`pred` Series already computed in that loop -- no second `.predict()`
+call anywhere, no change to `run_validation_protocol`'s split -> baseline -> metrics -> DM-test order.
+`naive_first_engine`'s own regression suite (`tests/test_regression_1h.py`) passes unmodified, proving
+this additive field did not perturb metrics/DM-test computation.
+
+**`GET /runs/{run_id}/splits/{split_index}/points` (`VS-033`, implemented)**: `src/app/routers/splits.py`
+-- a natural extension of that same router (not a third router module), added alongside the existing
+`GET /runs/{id}/splits`. Tenant: `X-Tenant-Id` request header (VS-010; see above). Query params: `limit`
+(int, default 20, `ge=1, le=100`) and `offset` (int, default 0, `ge=0`) -- the same convention `GET /runs`
+(VS-022) established. On success (`200`): `{"items": [...], "limit": ..., "offset": ..., "total": ...}`,
+where `items` is a page of `SplitPointResponse` (`timestamp`, `predicted`, `actual`, `baseline_key`) --
+the single canonical shared shape in `naive_first_common.contracts` (ARCH-003), no hand-duplicated field
+list; the `{items, limit, offset, total}` envelope itself stays a local Pydantic model in `splits.py`,
+matching `RunListResponse`'s own "local envelope, shared item shape" precedent. **Existence/tenant
+check**: the run's ownership is checked first via `ValidationRunRepository.get_run` (`404` for a
+nonexistent or cross-tenant run); a `split_index` with no matching row in `split_results` also collapses
+into that same `404` -- `split_results` rows are never pruned, so checking against them distinguishes "no
+such split" from "this split's points were pruned or never persisted" without duplicating VS-032's
+retention logic here. **Retention-respecting empty shape**: a valid split whose points were pruned by
+VS-032's 90-day cutoff (or were never persisted, e.g. a pre-VS-031 run) returns `200` with `"items": []`/
+`"total": 0`, the same shape a genuinely zero-point split would produce -- never a `404`/`410`/error; this
+falls out by construction from `SplitPointRepository.get_points` already excluding pruned rows, no cutoff
+logic re-implemented in this router. Pagination is applied in-process over the already retention-filtered
+list (`SplitPointRepository.get_points` itself takes no `limit`/`offset`, unchanged by this ticket).
 
 **Storage backend (VS-004, VS-013)**: `src/app/repositories/sqlite_repository.py` provides `SQLiteValidationRunRepository`/`SQLiteSplitResultRepository`, the original interim implementations of VS-003's interfaces, backed by a file-based SQLite database (path from `VALIDATION_SERVICE_DB_PATH`, defaulting to `./validation.db`) so run/split state survives a process restart -- still the default for local dev and the unit-test suite (`tests/test_sqlite_repository.py`, ARCH-004's `db_path` fixture), unmodified by VS-013.
 

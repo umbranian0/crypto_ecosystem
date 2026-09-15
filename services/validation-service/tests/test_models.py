@@ -15,7 +15,7 @@ from sqlalchemy import create_engine, inspect
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.models import Base, Run, SplitResult
+from app.models import Base, Run, SplitPoint, SplitResult
 
 SERVICE_ROOT = Path(__file__).resolve().parent.parent
 
@@ -186,14 +186,17 @@ def test_alembic_upgrade_head_creates_matching_schema(tmp_path) -> None:
     engine = create_engine(f"sqlite:///{db_path}")
     inspector = inspect(engine)
     tables = set(inspector.get_table_names())
-    assert {"runs", "split_results"}.issubset(tables)
+    assert {"runs", "split_results", "split_points"}.issubset(tables)
 
     run_columns = {c["name"] for c in inspector.get_columns("runs")}
     split_columns = {c["name"] for c in inspector.get_columns("split_results")}
+    split_point_columns = {c["name"] for c in inspector.get_columns("split_points")}
 
     expected_run_columns = {c.name for c in Run.__table__.columns}
     expected_split_columns = {c.name for c in SplitResult.__table__.columns}
+    expected_split_point_columns = {c.name for c in SplitPoint.__table__.columns}
 
     assert run_columns == expected_run_columns
     assert split_columns == expected_split_columns
+    assert split_point_columns == expected_split_point_columns
     engine.dispose()

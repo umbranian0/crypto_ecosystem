@@ -114,6 +114,7 @@ def run_validation_protocol(series: pd.Series, config: ValidationConfig) -> list
         baseline_results[NAIVE0_KEY] = BaselineResult(
             metrics=_metric_set(test, naive0_pred, train, naive0_pred, config.horizon),
             dm_result=None,
+            predictions=naive0_pred,
         )
 
         errors_naive0 = test - naive0_pred
@@ -123,6 +124,7 @@ def run_validation_protocol(series: pd.Series, config: ValidationConfig) -> list
         baseline_results[NAIVE_LAST_KEY] = BaselineResult(
             metrics=_metric_set(test, naive_last_pred, train, naive0_pred, config.horizon),
             dm_result=dm_test(naive_last_errors, errors_naive0, horizon=config.horizon),
+            predictions=naive_last_pred,
         )
 
         for baseline in config.extra_baselines:
@@ -133,6 +135,7 @@ def run_validation_protocol(series: pd.Series, config: ValidationConfig) -> list
             baseline_results[key] = BaselineResult(
                 metrics=_metric_set(test, pred, train, naive0_pred, config.horizon),
                 dm_result=dm_test(errors_model, errors_naive0, horizon=config.horizon),
+                predictions=pred,
             )
 
         results.append(

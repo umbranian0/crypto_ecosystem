@@ -142,6 +142,7 @@ from app.dependencies.repositories import (
     DatasetSourceDep,
     EventPublisherDep,
     FeatureDatasetAssemblerDep,
+    SplitPointRepositoryDep,
     SplitResultRepositoryDep,
     ValidationRunRepositoryDep,
 )
@@ -151,7 +152,7 @@ from app.level_detection import (
     MEAN_OVER_STD_THRESHOLD,
     detect_price_level_series,
 )
-from app.repositories.interfaces import SplitResultRecord
+from app.repositories.interfaces import SplitPointRecord, SplitResultRecord
 
 router = APIRouter()
 
@@ -292,6 +293,7 @@ def create_run(
     dataset_source: DatasetSourceDep,
     run_repository: ValidationRunRepositoryDep,
     split_repository: SplitResultRepositoryDep,
+    split_point_repository: SplitPointRepositoryDep,
     event_publisher: EventPublisherDep,
     feature_dataset_assembler: FeatureDatasetAssemblerDep,
     connector_status_checker: ConnectorStatusCheckerDep,
@@ -464,11 +466,54 @@ def create_run(
 
         results = run_validation_protocol(series, run_config)
 
+        # VS-031: minted once per run, before this run's created_at is
+        # persisted -- see _persist_new_run above, run.created_at is already
+        # the value split_points.created_at must copy (Design section: "not
+        # datetime.utcnow() recomputed per row").
+        run_created_at = run.created_at
+
         split_records = []
+        split_point_records: list[SplitPointRecord] = []
         for split in results:
             model = split.baseline_results[NAIVE_LAST_KEY]
             naive0 = split.baseline_results[NAIVE0_KEY]
             dm_result = model.dm_result
+
+            # VS-031: raw per-point predicted/actual values, captured as a
+            # side effect of the already-computed BaselineResult.predictions
+            # Series (naive_first_engine.report_schema) -- never a second
+            # .predict() call. `actual` comes from the same input `series`
+            # this run's protocol call already consumed (predictions.index
+            # is a subset of series.index, the split's test window).
+            points_by_baseline_key = {
+                NAIVE_LAST_KEY: model,
+                NAIVE0_KEY: naive0,
+            }
+            if client_baseline_key is not None:
+                points_by_baseline_key[client_baseline_key] = split.baseline_results[
+                    client_baseline_key
+                ]
+            for baseline_key, baseline_result in points_by_baseline_key.items():
+                predictions = baseline_result.predictions
+                if predictions is None:
+                    continue
+                actual_values = series.loc[predictions.index]
+                for timestamp, predicted_value, actual_value in zip(
+                    predictions.index, predictions.to_numpy(), actual_values.to_numpy()
+                ):
+                    split_point_records.append(
+                        SplitPointRecord(
+                            id=uuid4().hex,
+                            run_id=run.id,
+                            tenant_id=tenant.tenant_id,
+                            split_index=split.split_index,
+                            baseline_key=baseline_key,
+                            timestamp=timestamp,
+                            predicted=float(predicted_value),
+                            actual=float(actual_value),
+                            created_at=run_created_at,
+                        )
+                    )
 
             client_baseline_results = None
             if client_baseline_key is not None:
@@ -524,6 +569,7 @@ def create_run(
             )
 
         split_repository.add_splits(tenant.tenant_id, run.id, split_records)
+        split_point_repository.add_points(tenant.tenant_id, run.id, split_point_records)
     except Exception as exc:
         # Returning here ends the request. `event_publisher.publish` below
         # is unreachable from this branch by construction -- it sits after

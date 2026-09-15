@@ -2600,3 +2600,17 @@ converts to a `503` rather than the ticket's stated `200`-with-zero-count for th
 occur against the real, committed `data/raw/_platform/` archive (all four source directories always
 exist) — flagged honestly by the dev agent in `docs/tickets/INGEST-030.md` rather than silently checked
 off, accepted as an out-of-sprint-scope edge case, not a defect blocking sign-off.
+
+# Sprint 46 — Raw per-point prediction storage, retention, and charting (RAV-006/007/008)
+
+Source: `docs/sprints/sprint-46.md`, `docs/product/backlog-run-analysis-visualization.md`
+(RAV-006/007/008). Strict dependency chain, no parallelization possible (each ticket's output is the
+next ticket's input): `VS-031 → VS-032 → VS-033 → GW-031 → DASH-129`.
+
+| Ticket | Story | Module | Depends on | Status |
+|---|---|---|---|---|
+| [VS-031](VS-031.md) | RAV-006 (persistence half): `split_points` table + repository + `POST /runs` wiring | validation-service (+ additive `naive_first_engine.report_schema.BaselineResult.predictions` field) | none | done |
+| [VS-032](VS-032.md) | RAV-006 (retention half): 90-day cutoff, prune script, storage-growth estimate | validation-service | VS-031 | done |
+| [VS-033](VS-033.md) | RAV-007 (validation-service half): `GET /runs/{id}/splits/{split_index}/points` + canonical `SplitPointResponse` contract | validation-service, libs/common | VS-031, VS-032 | done |
+| [GW-031](GW-031.md) | RAV-007 (gateway-api half): pass-through proxy for the new endpoint | gateway-api | VS-033 | todo |
+| [DASH-129](DASH-129.md) | RAV-008: predicted-vs-actual chart per split | dashboard-web | GW-031 | todo |

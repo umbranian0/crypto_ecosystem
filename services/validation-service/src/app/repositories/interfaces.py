@@ -131,6 +131,24 @@ class SplitResultRecord:
     client_baseline_results: dict | None = None
 
 
+@dataclass(frozen=True)
+class SplitPointRecord:
+    """Mirrors `app.models.SplitPoint`'s columns exactly (VS-031) -- same
+    separate-dataclass-from-SQLAlchemy-model rationale as `RunRecord`/
+    `SplitResultRecord` above (keeps this module storage-driver-free, AC3).
+    """
+
+    id: str
+    run_id: str
+    tenant_id: str
+    split_index: int
+    baseline_key: str
+    timestamp: datetime
+    predicted: float
+    actual: float
+    created_at: datetime
+
+
 @typing.runtime_checkable
 class ValidationRunRepository(typing.Protocol):
     """Repository for the `runs` table (backlog AC1 method set)."""
@@ -183,5 +201,25 @@ class SplitResultRepository(typing.Protocol):
     def get_splits(self, tenant_id: str, run_id: str) -> list[SplitResultRecord]:
         """Returns splits ordered by `split_index` (VS-008 AC3) -- ordering is
         this method's responsibility, not the caller's (see module docstring).
+        """
+        ...
+
+
+@typing.runtime_checkable
+class SplitPointRepository(typing.Protocol):
+    """Repository for the `split_points` table (VS-031) -- a sibling to
+    `SplitResultRepository`, not a method bolted onto it (different row
+    shape, different volume characteristics, different retention lifecycle
+    -- VS-032).
+    """
+
+    def add_points(self, tenant_id: str, run_id: str, points: list[SplitPointRecord]) -> None: ...
+
+    def get_points(
+        self, tenant_id: str, run_id: str, split_index: int
+    ) -> list[SplitPointRecord]:
+        """Returns only points with `created_at` within the retention window
+        (VS-032: `SPLIT_POINT_RETENTION_DAYS`, currently 90 days) --
+        enforced inside the SQLite/Postgres implementations, not the caller.
         """
         ...

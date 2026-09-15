@@ -152,3 +152,37 @@ class SplitResult(Base):
     # this table's own dm_statistic/dm_pvalue float columns above, which
     # store real NaN natively.
     client_baseline_results: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+
+class SplitPoint(Base):
+    """VS-031: one raw (timestamp, predicted, actual) triple per
+    (split, baseline) -- a separate table from `split_results`, not a JSON
+    column on it (see this ticket's Design section for the retention/
+    pagination rationale). One row per test-window instant per baseline per
+    split; a run with S splits, B baselines, and a T-length test window
+    produces S * B * T rows.
+    """
+
+    __tablename__ = "split_points"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: uuid.uuid4().hex)
+    run_id: Mapped[str] = mapped_column(String, ForeignKey("runs.id"), nullable=False)
+    # Denormalized, same rationale as SplitResult.tenant_id above (VS-002
+    # AC2): tenant-scope without a join, and a leaked/misrouted run_id can't
+    # be used to read another tenant's points.
+    tenant_id: Mapped[str] = mapped_column(String, nullable=False)
+    split_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    # One of "naive_last", "naive0", or the client baseline's key
+    # (naive_first_engine.protocol's NAIVE0_KEY/NAIVE_LAST_KEY/class-name
+    # convention) -- never a repurposed enum (VS-017 precedent, applied to
+    # this new axis).
+    baseline_key: Mapped[str] = mapped_column(String, nullable=False)
+    timestamp: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    predicted: Mapped[float] = mapped_column(Float, nullable=False)
+    actual: Mapped[float] = mapped_column(Float, nullable=False)
+    # Copied from the owning run's created_at at write time -- NOT
+    # datetime.utcnow() recomputed per row -- so VS-032's age-based
+    # retention cutoff needs no join back to `runs` to filter (Design
+    # section, the one denormalization this ticket adds beyond mirroring
+    # split_results' existing style).
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)

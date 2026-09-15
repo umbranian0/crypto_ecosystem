@@ -65,6 +65,13 @@ class BaselineResult:
 
     metrics: MetricSet
     dm_result: DMResult | None
+    # VS-031: optional raw prediction Series for this split/baseline, aligned
+    # to the test window's index -- populated (when set) from the same
+    # already-computed Naive0()/NaiveLast()/extra_baseline.predict() output
+    # protocol.py's loop uses to build `metrics` above, never a second,
+    # independent .predict() call. Default None keeps every pre-VS-031
+    # caller/test byte-identical (no behavior change unless a caller opts in).
+    predictions: pd.Series | None = None
 
 
 @dataclass(frozen=True)

@@ -338,3 +338,24 @@ class SplitResultResponse(BaseModel):
     # but per-split -- `client_baseline_results is not None` for this split,
     # the same condition `_client_baseline_response` already branches on.
     has_client_model: bool = False
+
+
+class SplitPointResponse(BaseModel):
+    """One `split_points` row (VS-031/VS-032/VS-033): a single per-timestamp
+    prediction/actual pair for one baseline within one split. The single
+    canonical shape for `GET /runs/{run_id}/splits/{split_index}/points`
+    (VS-033) -- `validation-service`'s router imports this rather than
+    hand-duplicating the field list (ARCH-003).
+
+    `baseline_key` identifies which baseline this point belongs to (e.g.
+    `"naive_last"`, `"naive0"`, or a client-supplied baseline's key) -- the
+    same string values `SplitResultRecord`'s `dm_verdict`-adjacent baseline
+    keys already use (`naive_first_engine.protocol.NAIVE0_KEY`/
+    `NAIVE_LAST_KEY`), not re-declared here since this is a wire contract,
+    not an engine-internal enum.
+    """
+
+    timestamp: datetime
+    predicted: float
+    actual: float
+    baseline_key: str

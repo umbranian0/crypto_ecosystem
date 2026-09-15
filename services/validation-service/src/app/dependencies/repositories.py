@@ -76,12 +76,18 @@ from app.feature_dataset import (
     IngestionServiceConnectorStatusChecker,
 )
 from app.models import Base
-from app.repositories.interfaces import SplitResultRepository, ValidationRunRepository
+from app.repositories.interfaces import (
+    SplitPointRepository,
+    SplitResultRepository,
+    ValidationRunRepository,
+)
 from app.repositories.postgres_repository import (
+    PostgresSplitPointRepository,
     PostgresSplitResultRepository,
     PostgresValidationRunRepository,
 )
 from app.repositories.sqlite_repository import (
+    SQLiteSplitPointRepository,
     SQLiteSplitResultRepository,
     SQLiteValidationRunRepository,
 )
@@ -151,6 +157,19 @@ def get_split_result_repository() -> SplitResultRepository:
         return PostgresSplitResultRepository(engine_url, engine=_get_engine(engine_url))
     db_path = _db_path()
     return SQLiteSplitResultRepository(db_path, engine=_get_engine(f"sqlite:///{db_path}"))
+
+
+def get_split_point_repository() -> SplitPointRepository:
+    # VS-031: same DI seam shape as get_split_result_repository above -- a
+    # sibling repository for the split_points table, swapping between
+    # SQLite/Postgres on the same DATABASE_URL condition, no new resolution
+    # logic.
+    database_url = _database_url()
+    if database_url and _is_postgres_url(database_url):
+        engine_url = _postgres_engine_url(database_url)
+        return PostgresSplitPointRepository(engine_url, engine=_get_engine(engine_url))
+    db_path = _db_path()
+    return SQLiteSplitPointRepository(db_path, engine=_get_engine(f"sqlite:///{db_path}"))
 
 
 def get_health_check_engine() -> Engine:
@@ -297,6 +316,7 @@ def get_connector_status_checker(
 
 ValidationRunRepositoryDep = Annotated[ValidationRunRepository, Depends(get_validation_run_repository)]
 SplitResultRepositoryDep = Annotated[SplitResultRepository, Depends(get_split_result_repository)]
+SplitPointRepositoryDep = Annotated[SplitPointRepository, Depends(get_split_point_repository)]
 DatasetSourceDep = Annotated[DatasetSource, Depends(get_dataset_source)]
 FeatureDatasetAssemblerDep = Annotated[
     FeatureDatasetAssembler, Depends(get_feature_dataset_assembler)

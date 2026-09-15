@@ -67,8 +67,10 @@ fired) schema-change cost for Epic B.
    (`dashboard-web` for rendering, `validation-service`/`gateway-api` for Epic B's new persistence/API surface),
    the same cross-cutting-prefix precedent `backlog-technical-upgrades.md` set with `ARCH-*`.
 2. Epic B (raw predicted-vs-actual charting) is sequenced strictly after Epic A and is **not** assumed to ship in
-   the same cycle — it requires a schema change, a storage-growth sizing conversation, and a new API surface, none
-   of which this backlog authorizes on its own (see RAV-006's explicit note to the Architect/Tech Lead).
+   the same cycle — it requires a schema change and a new API surface. **Updated 2026-09-15**: the founder has
+   now resolved the storage-growth/retention question that previously gated this epic — build per-point storage
+   together with a concrete, bounded retention policy in RAV-006 itself (see RAV-006's own acceptance criteria).
+   Epic B (RAV-006/007/008) is Should-priority, real committed scope, no longer Could/blocked.
 3. RAV-001 (chart-technology decision) blocks every other visualization story in Epic A and Epic C — none of them
    can be estimated until it resolves, so it is sequenced first and marked Must despite being a decision rather
    than a shippable feature.
@@ -214,45 +216,65 @@ Depends on: RAV-002, RAV-003
 
 ## Epic B — Raw predicted-vs-actual visualization (requires new backend capability — prerequisite, not assumed)
 
-### RAV-006 — Persist raw per-point predicted/actual values per split [Could]
+### RAV-006 — Persist raw per-point predicted/actual values per split, with a concrete retention policy [Should]
 **As** a future consumer of per-split detail (this visualization epic, and potentially `reporting-service` later),
 **I want** `validation-service` to persist each split's raw per-point predicted and actual values (for both
-`naive_last`/`model` and `naive0`, and `client_baseline` when present), **so that** a predicted-vs-actual chart
-becomes possible at all — today only the seven aggregated `MetricSet` fields per baseline are stored
+`naive_last`/`model` and `naive0`, and `client_baseline` when present), **together with** a real, bounded
+retention/pruning mechanism built in the same unit of work, **so that** a predicted-vs-actual chart becomes
+possible at all — today only the seven aggregated `MetricSet` fields per baseline are stored
 (`services/validation-service/src/app/models.py`'s `SplitResult` table has no such column, confirmed by reading
-it), so no story downstream of this one can render a real per-point chart without it.
+it), so no story downstream of this one can render a real per-point chart without it — and so that this new,
+potentially large per-point table never grows unbounded from day one.
+
+**Resolved (2026-09-15, founder decision)**: build per-point storage — but only together with a concrete
+retention/pruning policy in this same ticket, not deferred. The prior acceptance criterion allowing "none yet,
+revisit once storage growth is measured" as a valid answer is removed; this story is no longer blocked on a
+separate storage-sizing conversation before scheduling — the storage estimate and the retention policy are now
+both part of this ticket's own Definition of Done, decided up front rather than punted.
 
 Acceptance criteria:
 - [ ] A new, explicitly-scoped schema change (new table or JSON/array column, Tech Lead's call, not this backlog's)
       persists, per split per baseline, the aligned `(timestamp, predicted, actual)` triples the engine already
       computes in-memory during metric aggregation (`naive_first_engine`'s protocol) but currently discards after
       reducing to metrics.
-- [ ] This story's acceptance explicitly requires a written storage-growth estimate (rows = tenants × runs ×
-      splits × test-window-length × baselines-per-split) presented to the Architect/Tech Lead for sizing **before**
-      implementation — this is per-tenant, per-run, per-split, per-point data, potentially a large multiplier on
-      current row counts, and this backlog does not authorize skipping that sizing conversation.
+- [ ] A written storage-growth estimate (rows = tenants × runs × splits × test-window-length × baselines-per-split)
+      is still produced and presented to the Architect/Tech Lead as part of this ticket — kept from the prior
+      version of this story, not dropped.
+- [ ] **A concrete retention/pruning policy is specified and implemented as part of this same ticket, not left as
+      a TODO or comment.** Default shape (Tech Lead may choose a different bound if the storage estimate above
+      argues for it, but must state and implement one, not defer the decision): **keep per-point data only for
+      the most recent 90 days OR the most recent 20 runs per tenant/dataset combination, whichever is simpler to
+      implement correctly** — stated explicitly here so it is a real requirement, not an open question. The
+      mechanism enforcing this bound must be **one** of the following, and must be real and testable (a passing
+      test proving old per-point rows are actually gone or actually excluded, not merely a docstring claiming the
+      policy exists):
+      - a scheduled deletion/archival job, matching this platform's existing "standalone, operator-run" script
+        convention (`scripts/backfill_from_csv.py`/`seed_tenant.py`'s precedent) — e.g.
+        `scripts/prune_split_points.py --older-than-days 90` or equivalent, runnable via cron/operator invocation; or
+      - a query-time cutoff enforced in the repository/query layer (e.g. the per-point read path silently excludes
+        rows older than the bound, and a companion write-time or periodic delete keeps the table from growing
+        unbounded regardless of whether anyone ever queries it).
 - [ ] The change does not alter or weaken the existing leakage-aware protocol in any way — raw predictions are
       captured as a side-effect of the existing walk-forward computation, never by re-fitting or re-predicting
       outside a split's own train/test boundary.
 - [ ] No existing `SplitResultResponse`/`SplitResultRecord` field changes shape or meaning — this is additive only
       (new field/endpoint, not a repurposing of `model_*`/`naive0_*`, matching the precedent VS-017 already set for
       `client_baseline` as its own separate, additive column).
-- [ ] Retention/pruning policy for this new data is explicitly named (even if the answer is "none yet, revisit
-      once storage growth is measured") — not left undecided in the schema itself.
+- [ ] Test proves the retention policy actually bounds the table: a fixture with data older than the chosen
+      cutoff (by age or by run-count, matching whichever bound is implemented) is excluded from `RAV-007`'s read
+      path and/or physically removed by the chosen deletion mechanism — not just asserted as "the policy exists
+      in code," but exercised end-to-end.
 
-Rationale for priority: this is a real, non-trivial backend capability with a genuine storage-cost tradeoff, not a
-frontend-only chart story — Could, not Must/Should, until the Architect/Tech Lead confirms the storage sizing is
-acceptable at expected tenant/run volumes. Explicitly sequenced as this epic's prerequisite per this backlog's own
-framing note; nothing in Epic B can start before this closes.
+Rationale for priority: **Should**, not Must — real, founder-approved, unblocked scope (no longer gated on a
+separate storage-sizing conversation, which is now folded into this ticket's own acceptance criteria), and a
+genuine value-add for auditing individual splits, but Epic A (RAV-002–RAV-010, all Must/Should and already done)
+already delivers this backlog's core "audit a run visually" need without per-point data — this remains the
+highest-fidelity, highest-cost addition in the backlog, one step below the Must-tier stories that unlock the
+platform's baseline audit capability at all. Not Could: the founder has now explicitly authorized and scoped it,
+so it is real committed scope for an upcoming sprint, not a maybe.
 Depends on: none (but blocks RAV-007, RAV-008)
 
-**Status: BLOCKED, not scheduled into any sprint.** Sprint 26 (`docs/sprints/sprint-26.md`) confirmed this remains
-gated on the storage-growth sizing conversation (rows = tenants × runs × splits × test-window-length ×
-baselines-per-split) and a retention/pruning policy, per this story's own acceptance criteria — neither has
-happened. Same treatment already given to `DBOPT-008`. Do not schedule RAV-006/RAV-007/RAV-008 until that
-conversation concludes with an explicit go/no-go.
-
-### RAV-007 — Expose per-point predicted/actual values via the existing run/split API surface [Could]
+### RAV-007 — Expose per-point predicted/actual values via the existing run/split API surface [Should]
 **As** dashboard-web, **I want** a way to fetch the per-point values RAV-006 persists (a new field on
 `GET /runs/{id}/splits`, or a new `GET /runs/{id}/splits/{split_index}/points`-style endpoint — Tech Lead's call),
 **so that** a chart can be built against real data rather than an assumption that it already exists.
@@ -268,12 +290,17 @@ Acceptance criteria:
 - [ ] Given the potential row volume flagged in RAV-006, this endpoint supports pagination or a per-split fetch
       granularity (not "return every point for every split in a run in one response") — sized in coordination with
       RAV-006's storage estimate, not assumed to be small.
+- [ ] Reads through this endpoint respect RAV-006's retention/pruning cutoff — a request for a split whose
+      per-point data has already been pruned returns the same collapsed-empty shape a zero-row split would, not an
+      error, and never implies the data never existed.
 
-Rationale for priority: cannot be estimated or built before RAV-006 lands; Could, matching RAV-006's priority,
-since there is no value in an API for data that doesn't exist yet.
+Rationale for priority: cannot be estimated or built before RAV-006 lands; **Should**, matching RAV-006's revised
+priority now that the founder has authorized and scoped that prerequisite — there is still no value in an API for
+data that doesn't exist yet, but it is no longer speculative/Could-tier scope now that RAV-006 itself is real,
+committed work.
 Depends on: RAV-006
 
-### RAV-008 — Predicted-vs-actual chart per split [Could]
+### RAV-008 — Predicted-vs-actual chart per split [Should]
 **As** dashboard-web, **I want** a chart plotting a chosen split's actual values against the model's and Naive0's
 predicted values over the test window, **so that** a tenant can visually see where a model tracked, over-shot, or
 under-shot actual outcomes during that split's out-of-sample period.
@@ -288,10 +315,10 @@ Acceptance criteria:
 - [ ] Same status-neutral color constraint as every other chart in this backlog.
 - [ ] Test: chart renders correct point-for-point series for a fixture split's per-point data.
 
-Rationale for priority: highest-fidelity chart in this backlog but fully blocked on RAV-006/RAV-007; Could until
-those close, and even then it should be re-evaluated for real tenant demand once Epic A ships and gets feedback —
-building the most expensive chart first, before cheaper Epic A charts are validated with real users, would be
-premature.
+Rationale for priority: highest-fidelity chart in this backlog, still blocked on RAV-006/RAV-007 landing first
+(sequencing dependency, not a priority downgrade); **Should**, matching RAV-006/RAV-007 now that the founder has
+authorized that prerequisite work — Epic A (already done) validated real tenant demand for the cheaper charts
+first, so this is the natural next increment once its two dependencies close, not speculative scope.
 Depends on: RAV-007
 
 ## Epic C — Run-list-level trend view (optional, per task framing)

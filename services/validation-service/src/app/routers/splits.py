@@ -29,22 +29,60 @@ supplied for this run); otherwise `_client_baseline_response` builds the
 nested `ClientBaselineResult`, embedding the mandatory positioning
 disclaimer verbatim so it is present in the actual response body, not only
 defined as an unused Python constant.
+
+VS-033: `GET /runs/{run_id}/splits/{split_index}/points` added to this same
+file (a natural extension of this router's existing splits concern, not a
+disjoint one) -- per-split, paginated point drill-down, deliberately not a
+field on `GET /runs/{id}/splits` above (payload-size rationale, this ticket's
+Design section). `SplitPointResponse` is imported from
+`naive_first_common.contracts` (ARCH-003), same single-canonical-shape
+convention as `SplitResultResponse`. The `{items, limit, offset, total}`
+envelope (`SplitPointsResponse`) stays local to this router, matching
+`RunListResponse`'s own "local envelope, shared item shape" precedent
+(runs.py). A `split_index` with no matching `split_results` row collapses
+into the same 404 as a nonexistent/cross-tenant run (no distinct error
+shape); a valid split whose points were pruned or never persisted returns
+`200` with empty `items`/`total: 0` -- this falls out by construction from
+`SplitPointRepository.get_points` already excluding pruned rows (VS-032).
 """
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 
 from naive_first_common import TenantContext, get_tenant_context
-from naive_first_common.contracts import ClientBaselineResult, SplitResultResponse
+from naive_first_common.contracts import (
+    ClientBaselineResult,
+    SplitPointResponse,
+    SplitResultResponse,
+)
 
 from app.client_baseline import CLIENT_PREDICTION_AUDIT_DISCLAIMER
 from app.dependencies.repositories import (
+    SplitPointRepositoryDep,
     SplitResultRepositoryDep,
     ValidationRunRepositoryDep,
 )
 
 router = APIRouter()
+
+
+class SplitPointsResponse(BaseModel):
+    """VS-033 response envelope for `GET /runs/{run_id}/splits/{split_index}/
+    points`: `items` is the current page (`SplitPointResponse`, imported from
+    `naive_first_common.contracts`, never redefined here); `limit`/`offset`
+    echo back the resolved query params; `total` is the unpaginated,
+    retention-filtered count of this split's points. Local to this router,
+    not a shared contract -- same "local envelope, shared item shape"
+    precedent `RunListResponse` (runs.py) already established for
+    `RunSummaryResponse`.
+    """
+
+    items: list[SplitPointResponse]
+    limit: int
+    offset: int
+    total: int
 
 
 def _client_baseline_response(client_baseline_results: dict | None) -> ClientBaselineResult | None:
@@ -120,3 +158,56 @@ def get_splits(
         )
         for split in splits
     ]
+
+
+@router.get("/runs/{run_id}/splits/{split_index}/points", response_model=SplitPointsResponse)
+def get_split_points(
+    run_id: str,
+    split_index: int,
+    run_repository: ValidationRunRepositoryDep,
+    split_repository: SplitResultRepositoryDep,
+    split_point_repository: SplitPointRepositoryDep,
+    tenant: TenantContext = Depends(get_tenant_context),
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+) -> SplitPointsResponse:
+    """VS-033: per-split point drill-down, deliberately not a field on
+    `GET /runs/{id}/splits` -- see this ticket's Design section (payload-size
+    rationale).
+
+    Run-ownership check first, same collapsed-404 stance `get_splits` already
+    uses above (module docstring). A `split_index` with no matching row in
+    `split_results` also collapses into this same 404 -- `split_results` rows
+    are never pruned (only `split_points` are, VS-032), so checking against
+    them is how this handler tells "no such split" apart from "this split's
+    points were pruned or never persisted" without duplicating any retention
+    logic here.
+    """
+    run = run_repository.get_run(tenant.tenant_id, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="run not found")
+
+    splits = split_repository.get_splits(tenant.tenant_id, run_id)
+    if not any(split.split_index == split_index for split in splits):
+        raise HTTPException(status_code=404, detail="run not found")
+
+    # VS-032: already retention-filtered by this call -- no cutoff logic
+    # duplicated here (Design section). Pagination is applied in-process
+    # since SplitPointRepository.get_points has no limit/offset parameter
+    # (VS-031/VS-032's own signature, unchanged by this ticket).
+    points = split_point_repository.get_points(tenant.tenant_id, run_id, split_index)
+
+    return SplitPointsResponse(
+        items=[
+            SplitPointResponse(
+                timestamp=point.timestamp,
+                predicted=point.predicted,
+                actual=point.actual,
+                baseline_key=point.baseline_key,
+            )
+            for point in points[offset : offset + limit]
+        ],
+        limit=limit,
+        offset=offset,
+        total=len(points),
+    )
