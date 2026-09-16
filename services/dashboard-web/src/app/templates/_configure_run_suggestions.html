@@ -1,0 +1,27 @@
+{# AI-004-02: finished HTMX-swapped fragment for `POST /assistant/configure-run`.
+   Never sets a real `run_new.html` form field's `value` attribute server-side --
+   each suggestion only carries its plain-language label/value/explanation and an
+   "Apply suggestion -- please confirm" button that calls `run_new.html`'s own
+   `applyRunSuggestion(field, value)` (defined there) on click. That click is the
+   only place a field's value and its `.suggestion-badge` are ever set together. #}
+<div class="configure-run-suggestions{{ ' configure-run-suggestions-degraded' if result.degraded else '' }}">
+    {% if result.degraded or not result.suggestions %}
+    <p class="form-status form-status-warn">Suggestions are currently unavailable -- you can still fill
+    out the form below yourself.</p>
+    {% else %}
+    <ul class="configure-run-suggestion-list">
+        {% for suggestion in result.suggestions %}
+        <li class="configure-run-suggestion">
+            <span class="configure-run-suggestion-label">{{ suggestion.field }}</span>:
+            <span class="configure-run-suggestion-value">{{ suggestion.value }}</span>
+            <br>
+            <small>{{ suggestion.explanation }}</small>
+            <button type="button"
+                    onclick="applyRunSuggestion('{{ suggestion.field }}', '{{ suggestion.value|e }}')">
+                Apply suggestion -- please confirm
+            </button>
+        </li>
+        {% endfor %}
+    </ul>
+    {% endif %}
+</div>

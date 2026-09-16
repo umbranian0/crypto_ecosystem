@@ -2348,3 +2348,64 @@ tenant's question about their own stored validation-run history.
   markets (CLAUDE.md's core positioning constraint) -- proven by
   `test_assistant_form_renders_positioning_copy_and_requires_session`'s literal string assertion and
   `test_assistant_html_static_copy_contains_no_banned_term`'s banned-term scan of the static template.
+
+## AI-assisted features (AI-004)
+
+**Status: implemented (Sprint 51, tickets AI-004-01/AI-004-02).** `POST /assistant/configure-run`
+(added to the existing `src/app/routers/assistant.py` module -- the same "AI-assist surface" file
+AI-003's routes already live in, not a second router module) adds an optional conversational helper
+that suggests values for a subset of `run_new.html`'s ("Submit a run") existing fields, based on a
+tenant's plain-language free-text description of what they want to validate.
+
+- **What it does**: `run_new.html` gained an additive, collapsed-by-default "Get help filling this out"
+  widget (`<div id="configure-run-widget">`, entirely outside `<form id="run-form">`'s tag boundaries)
+  with a free-text `<textarea>` and a "Get suggestions" button that HTMX-posts the tenant's answer to
+  `POST /assistant/configure-run`, swapping the response into `<div id="configure-run-suggestions">`.
+  `app.assistant.configure_run.generate_run_suggestions` builds a versioned prompt
+  (`app.assistant.configure_run_prompt.build_configure_run_prompt`) and calls the model via the same
+  `naive_first_ai_assist.client.get_assist_client()` seam AI-003 uses -- no second client. A response is
+  parsed (`parse_suggestion_lines`) into individual field suggestions, each rendered in
+  `_configure_run_suggestions.html` with its own "Apply suggestion -- please confirm" button. Clicking
+  that button (client-side JS, `applyRunSuggestion` in `run_new.html`) is the *only* place a real form
+  field's value is ever set from a suggestion -- never on page load, never by the server-rendered
+  fragment itself -- and that same click simultaneously reveals a `.suggestion-badge` reading "Suggested
+  value applied -- please review before submitting" next to that field, so an applied suggestion is
+  never visually indistinguishable from DASH-006's own "no pre-filled defaults" rule for a normal typed
+  value. The user always sees and can edit the value before clicking "Submit run"; the conversational
+  flow never auto-submits and never itself calls `/runs/new`.
+- **What it does not do**: it is a client-side/form-assist layer only -- it never constructs a
+  `RunRequest` and never calls `POST /runs` (`routers/runs.py`'s `run_new_submit`, DASH-006's original
+  single construction site, has zero diff across both AI-004 tickets, confirmed by `git diff`). It may
+  only suggest exactly six fields (`horizon`, `purge_gap_hours`, `train_window`, `test_window`, `step`,
+  `label`), enforced in code by `parse_suggestion_lines`' fixed allowed-field set, not just by prompt
+  wording -- it never suggests a `dataset_id`/`dataset_reference_*` value, since the model has no
+  knowledge of a tenant's actual ingested datasets and any such suggestion would be a fabricated claim.
+  It cannot suggest, imply, or expose a path to disabling/omitting/shortening the purge gap or omitting
+  the naive baselines -- `configure_run_prompt.py`'s own instructions text explicitly forbids this,
+  proven by a fixed-string test reading that template's actual content, and `RunRequest` itself still
+  exposes neither as optional. It never claims a suggested value is "optimal"/"best"/"correct" --
+  `app.assistant.fact_check.contains_overstated_certainty_claim` (extending the same `fact_check.py`
+  module AI-003's `contains_banned_term` already lives in -- same-service reuse, not a duplicate module)
+  guards every model response before it is parsed, alongside the existing `contains_banned_term` guard
+  reused unchanged from AI-003.
+- **Graceful degradation**: an unconfigured `AssistClient`, a model-call failure (one retry, then
+  fallback, mirroring AI-002/AI-003's own shape), or a response that fails either guard all return
+  `degraded=True` with an empty suggestion list -- never an exception, never a `5xx`, never a hang.
+  `_configure_run_suggestions.html` renders a fixed "Suggestions are currently unavailable -- you can
+  still fill out the form below yourself." message in that case, and the plain `run-form` below it is
+  completely unaffected and remains fully submittable regardless of whether the widget was ever used.
+- **Where the model runs**: the same hosted open-weights inference API AI-002/AI-003 already call
+  (ADR-0011) -- no local model, no new container, no new credential.
+- **Env vars**: none new -- reuses `NARRATIVE_API_URL`/`NARRATIVE_API_KEY`/`NARRATIVE_API_TIMEOUT_SECONDS`
+  unchanged via `get_assist_client()`, already disclosed in `infra/README.md`/`docker-compose.yml` since
+  Sprint 50 (checked, not assumed, per this sprint's own Decision 1).
+- **Tests**: `services/dashboard-web/tests/test_configure_run.py` (prompt-content guard tests, banned-
+  term/overstated-certainty rejection, allowed-field-set enforcement, degradation paths, route-level
+  `200`-even-on-model-failure) and `services/dashboard-web/tests/test_run_new_configure_widget.py`
+  (widget markup lives outside `<form id="run-form">`, no server-set `value=` on any real field in
+  `_configure_run_suggestions.html`, degraded-case fixed message, badge/value applied together).
+- **Positioning**: `configure_run_prompt.py`'s instructions forbid the same banned terms
+  (`signal`/`buy`/`sell`/`profit`/`trade`/`recommendation`) and forbid recommending any action, matching
+  AI-002/AI-003's positioning constraint; this feature never claims predictive capability and is framed
+  throughout as configuration help for a validation run, never guidance toward a better-performing
+  prediction.

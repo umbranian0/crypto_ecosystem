@@ -23,6 +23,19 @@ hang beyond the same bounded `httpx` timeout `libs/ai_assist`'s client
 already enforces. Renders `_assistant_answer.html`, the HTMX-swapped fragment
 `assistant.html`'s form targets (same pattern `_crawl_trigger_result.html`/
 `_report_trigger_result.html` established, DASH-110).
+
+AI-004-01: `POST /assistant/configure-run` is the model-calling half of the
+conversational configure-run helper -- a dedicated route, never fused into
+`routers/runs.py`'s `POST /runs` (ADR-0011). It makes no downstream call at
+all (no dataset knowledge is needed or suggested), only one model call
+(`app.assistant.configure_run.generate_run_suggestions`, via the same
+`get_assist_client()`). It never constructs a `RunRequest` and never calls
+`POST /runs` -- it only renders `_configure_run_suggestions.html`, a fragment
+listing suggested field values for the tenant to review and apply themselves
+(AI-004-02 wires the "Apply suggestion" JS and refines this fragment's visual
+design; this ticket's version already renders the suggestion list with
+"suggested value based on your answer, please confirm" wording and never sets
+a real form field's value server-side).
 """
 
 from __future__ import annotations
@@ -31,6 +44,7 @@ import httpx
 from fastapi import APIRouter, Form, Request
 from naive_first_ai_assist.client import get_assist_client
 
+from app.assistant.configure_run import generate_run_suggestions
 from app.assistant.generation import answer_question
 from app.assistant.retrieval import fetch_context
 from app.dependencies.downstream import DownstreamHeadersDep, GatewayApiUrlDep
@@ -58,3 +72,16 @@ def assistant_ask(
     answer = answer_question(question, context, get_assist_client())
 
     return templates.TemplateResponse(request, "_assistant_answer.html", {"answer": answer})
+
+
+@router.post("/assistant/configure-run")
+def assistant_configure_run(
+    request: Request,
+    headers: DownstreamHeadersDep,
+    answer: str = Form(...),
+):
+    result = generate_run_suggestions(answer, get_assist_client())
+
+    return templates.TemplateResponse(
+        request, "_configure_run_suggestions.html", {"result": result}
+    )

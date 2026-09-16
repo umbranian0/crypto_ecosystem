@@ -14,6 +14,26 @@ finding. Compute a returns series before validating if you want a meaningful aud
 {% if error %}
 <p class="error">{{ error }}</p>
 {% endif %}
+
+<div id="configure-run-widget" class="configure-run-widget">
+    <details>
+        <summary>Get help filling this out</summary>
+        <p>Describe what you're trying to validate, in plain language -- this only suggests values for
+        you to review, it never submits the form below on its own.</p>
+        <label for="configure-run-answer">Describe what you're trying to validate</label>
+        <textarea id="configure-run-answer" name="answer" rows="3"
+                  placeholder="e.g. I want to validate 24-step-ahead BTC return predictions with a safe purge gap."></textarea>
+        <button type="button"
+                hx-post="/assistant/configure-run"
+                hx-include="#configure-run-answer"
+                hx-target="#configure-run-suggestions"
+                hx-swap="innerHTML">
+            Get suggestions
+        </button>
+        <div id="configure-run-suggestions"></div>
+    </details>
+</div>
+
 <form method="post" action="/runs/new" id="run-form" novalidate>
     <label for="dataset_id">
         Dataset id
@@ -34,6 +54,7 @@ finding. Compute a returns series before validating if you want a meaningful aud
     <input type="text" id="label" name="label" maxlength="200"
            placeholder="weekly audit"
            value="{{ values.label if values else '' }}">
+    <span id="label-suggestion-badge" class="suggestion-badge" hidden>Suggested value applied -- please review before submitting</span>
 
     <fieldset>
         <legend>Dataset reference (provide exactly one)</legend>
@@ -125,6 +146,7 @@ finding. Compute a returns series before validating if you want a meaningful aud
     <input type="number" id="horizon" name="horizon" min="1" required
            placeholder="1"
            value="{{ values.horizon if values else '' }}">
+    <span id="horizon-suggestion-badge" class="suggestion-badge" hidden>Suggested value applied -- please review before submitting</span>
     <p class="field-hint" id="horizon-unit-hint" aria-live="polite"></p>
 
     <p><a href="/help/concepts">What are purge gap and walk-forward windows?</a></p>
@@ -138,6 +160,7 @@ finding. Compute a returns series before validating if you want a meaningful aud
     <input type="number" id="purge_gap_hours" name="purge_gap_hours" min="0" required
            placeholder="0"
            value="{{ values.purge_gap_hours if values else '' }}">
+    <span id="purge_gap_hours-suggestion-badge" class="suggestion-badge" hidden>Suggested value applied -- please review before submitting</span>
 
     <label for="train_window">
         Train window
@@ -148,6 +171,7 @@ finding. Compute a returns series before validating if you want a meaningful aud
     <input type="number" id="train_window" name="train_window" min="1" required
            placeholder="6"
            value="{{ values.train_window if values else '' }}">
+    <span id="train_window-suggestion-badge" class="suggestion-badge" hidden>Suggested value applied -- please review before submitting</span>
 
     <label for="test_window">
         Test window
@@ -158,6 +182,7 @@ finding. Compute a returns series before validating if you want a meaningful aud
     <input type="number" id="test_window" name="test_window" min="1" required
            placeholder="2"
            value="{{ values.test_window if values else '' }}">
+    <span id="test_window-suggestion-badge" class="suggestion-badge" hidden>Suggested value applied -- please review before submitting</span>
 
     <label for="step">
         Step
@@ -168,10 +193,29 @@ finding. Compute a returns series before validating if you want a meaningful aud
     <input type="number" id="step" name="step" min="1" required
            placeholder="2"
            value="{{ values.step if values else '' }}">
+    <span id="step-suggestion-badge" class="suggestion-badge" hidden>Suggested value applied -- please review before submitting</span>
 
     <p class="form-status" id="run-form-status" role="status"></p>
     <button type="submit">Submit run</button>
 </form>
+<script>
+// AI-004-02: applies a suggested value from `_configure_run_suggestions.html`
+// into the real `run-form` field. Only called by an explicit "Apply
+// suggestion" button click -- never on page load or fragment swap -- so a
+// field's `value` is only ever set client-side, in the same operation that
+// reveals the field's `.suggestion-badge`.
+function applyRunSuggestion(fieldName, value) {
+    var field = document.getElementById(fieldName);
+    var badge = document.getElementById(fieldName + "-suggestion-badge");
+    if (!field) {
+        return;
+    }
+    field.value = value;
+    if (badge) {
+        badge.hidden = false;
+    }
+}
+</script>
 <script>
 (function () {
     var form = document.getElementById("run-form");

@@ -192,7 +192,7 @@ chat turn — sequenced after AI-002 (a simpler, batch-time narrative generation
 prompt-grounding/fact-checking pattern this story reuses.
 Depends on: AI-001, AI-002 (establishes the fact-grounding/validation pattern reused here)
 
-### AI-004 — Conversational configuration guidance for submitting a validation run [Could]
+### AI-004 — Conversational configuration guidance for submitting a validation run [Could] — done (Sprint 51, tickets AI-004-01/AI-004-02)
 **As a** dashboard-web user filling out the "Submit a run" form (`GET/POST /runs/new`, DASH-006), **I
 want** an optional conversational helper that asks plain-language questions ("how far ahead do you want
 to check predictions?" instead of "horizon") and maps my answers to the existing `RunRequest` form
@@ -229,7 +229,7 @@ problem CLAUDE.md warns against — kept to "Could," last in sequence, revisit p
 are in production and real usage data exists.
 Depends on: AI-001
 
-### AI-005 — Document the AI-assist boundary in `services/dashboard-web/README.md` and
+### AI-005 — done (all slices: reporting-service Sprint 49, dashboard-web/AI-003 Sprint 50, dashboard-web/AI-004 Sprint 51, see docs/tickets/AI-005-dashboard-web-ai004.md) — Document the AI-assist boundary in `services/dashboard-web/README.md` and
 `services/reporting-service/README.md` [Must]
 **As a** future reader of either service's README (PM, Tech Lead, or a future session), **I want** each
 service's README updated with an explicit "AI-assisted features" section stating what the LLM component

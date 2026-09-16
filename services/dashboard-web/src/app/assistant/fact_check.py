@@ -12,11 +12,17 @@ specific term) without touching the other.
 `is_out_of_scope` is a small, deterministic keyword heuristic (guardrail, not
 full NLU, same precedent as AI-002's `fact_check.py` docstring) run *before*
 any model call -- an out-of-scope question never reaches the hosted API.
+
+AI-004-01: `contains_overstated_certainty_claim` extends this same "guardrail
+check on generated copy" concern (Design section) rather than a new module --
+a simple substring match on `OVERSTATED_CERTAINTY_TERMS`, same precedent as
+`contains_banned_term`'s own simplicity.
 """
 
 from __future__ import annotations
 
 BANNED_TERMS = ("signal", "buy", "sell", "profit", "trade", "recommendation")
+OVERSTATED_CERTAINTY_TERMS = ("optimal", "best", "correct")
 
 # Future-tense/speculative cues, combined with a price-direction cue, flag a
 # question as asking this assistant to predict rather than explain past
@@ -40,6 +46,19 @@ def contains_banned_term(text: str) -> str | None:
     """
     lowered = text.lower()
     for term in BANNED_TERMS:
+        if term in lowered:
+            return term
+    return None
+
+
+def contains_overstated_certainty_claim(text: str) -> str | None:
+    """Returns the first overstated-certainty term found (case-insensitive
+    substring match) in `text`, or `None` if none are present -- guards
+    against the model claiming a suggested configuration value is
+    "optimal"/"best"/"correct" (AI-004-01 ticket Design section).
+    """
+    lowered = text.lower()
+    for term in OVERSTATED_CERTAINTY_TERMS:
         if term in lowered:
             return term
     return None

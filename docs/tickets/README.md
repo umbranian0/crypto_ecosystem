@@ -15,6 +15,64 @@ sprint-49.md. Sprint 50 sequences AI-003 (now unblocked: AI-001 and AI-002 both 
 AI-005 dashboard-web slice, closing the full AI-005 story across both services — see sprint-50.md.
 AI-004 remains deliberately last per the backlog's own priority rationale, not yet scoped.
 
+## Sprint 51 (docs/sprints/sprint-51.md, backlog: docs/product/backlog-ai-integration-ux.md)
+
+AI-004 (Could) then AI-005 (Must, dashboard-web slice, AI-004 portion), sequenced strictly one-then-the-
+other. AI-004 split into two sequential tickets (same-module-scoped-to-one-concern rule): AI-004-01
+(backend: dedicated `POST /assistant/configure-run` route + suggestion generation/guardrails) then
+AI-004-02 (frontend: `run_new.html` widget, depends on AI-004-01's response shape). ADR-0011 binds the
+model call to its own dedicated route, never fused into `POST /runs/new`/`run_new_submit`.
+
+| Ticket | Story | Module | Depends on | Status |
+|---|---|---|---|---|
+| [AI-004-01](AI-004-01.md) | Conversational configure-run backend: `POST /assistant/configure-run`, prompt template forbidding purge-gap/baseline-skip suggestions, banned-term + overstated-certainty guards, graceful degradation | dashboard-web | AI-001 (done) | done |
+| [AI-004-02](AI-004-02.md) | `run_new.html` conversational widget: suggested values visibly distinct from a default, additive-only, never auto-submits | dashboard-web | AI-004-01 | done |
+| [AI-005](AI-005-dashboard-web-ai004.md) (dashboard-web slice, AI-004 portion) | Document the AI-004 boundary in `services/dashboard-web/README.md`; closes AI-005 across all three shipped dashboard-web AI-assist features | dashboard-web | AI-004-02 | done |
+
+**Outcome**: `services/dashboard-web/src/app/assistant/configure_run_prompt.py` (new) --
+`build_configure_run_prompt`, versioned instructions forbidding banned terms, overstated-certainty
+claims, and any suggestion to disable/omit/shorten the purge gap or omit the naive baselines, scoped to
+exactly six suggestible fields (`horizon`, `purge_gap_hours`, `train_window`, `test_window`, `step`,
+`label`) -- `dataset_id`/`dataset_reference_*` are never suggested (the model has no knowledge of a
+tenant's real ingested datasets). `app/assistant/configure_run.py` (new) -- `RunFieldSuggestion`/
+`ConfigureRunResult` dataclasses, `parse_suggestion_lines` (enforces the allowed-field set in code, not
+just in the prompt), `generate_run_suggestions` (one-retry-then-fallback, mirrors `generation.py`'s
+AI-003 shape, guarded by both `contains_banned_term` (reused unchanged from AI-003's `fact_check.py`)
+and the new `contains_overstated_certainty_claim` added to that same module). `routers/assistant.py`
+gained `POST /assistant/configure-run` (extends the existing AI-assist router module, not a second
+file) -- confirmed via `git diff` that it never constructs a `RunRequest` and never calls `POST /runs`.
+`run_new.html` gained an additive "Get help filling this out" widget entirely outside `<form
+id="run-form">`'s tag boundaries (confirmed via diff read) -- a free-text textarea, an HTMX
+"Get suggestions" button, and a hidden `.suggestion-badge` per suggestible field. `_configure_run_
+suggestions.html` (new) never sets a real field's `value` server-side; the client-side
+`applyRunSuggestion(field, value)` function (new inline script in `run_new.html`) is the only place a
+suggested value and its "Suggested value applied -- please review before submitting" badge are ever set,
+and only on an explicit user click. Degraded/no-suggestion responses render a fixed "Suggestions are
+currently unavailable" message, and `run-form` remains fully interactive regardless.
+`services/dashboard-web/src/app/routers/runs.py` and `templates/run_new.html`'s pre-existing form/script
+logic are confirmed byte-unchanged outside the new additive section (`git diff` read directly by the
+Tech Lead, not just the dev agents' self-reports). No new env var/container/`libs/*` package -- reuses
+`get_assist_client()`/`NARRATIVE_API_URL`/`NARRATIVE_API_KEY`/`NARRATIVE_API_TIMEOUT_SECONDS` unchanged,
+already disclosed in `infra/README.md` since Sprint 50. `services/dashboard-web/README.md` gained the
+"AI-assisted features (AI-004)" section; `docs/product/backlog-ai-integration-ux.md`'s AI-004 and AI-005
+entries marked done. **Full `services/dashboard-web` suite, personally re-run by the Tech Lead**: 386
+passed, 7 deselected (pre-existing e2e skips), 0 failed (up from 363 pre-sprint) -- zero regressions.
+
+**QA verdict (independent `qa` subagent pass, raised after all three tickets Tech-Lead-verified done)**:
+**GO**. Independently re-ran the full `services/dashboard-web` suite and reproduced the exact count (386
+passed, 7 deselected, 0 failed). Independently confirmed `routers/runs.py`'s empty diff and zero
+`RunRequest(` occurrences in any AI-004 file, the widget's structural isolation outside `<form
+id="run-form">` (regex-isolated the form body directly), that `_configure_run_suggestions.html` never
+sets a real field's `value` server-side, `configure_run_prompt.py`'s literal instruction text forbidding
+purge-gap/naive-baseline-skip suggestions, the six-field allowlist enforced in code (not just in the
+prompt), both guardrails (`contains_banned_term`/`contains_overstated_certainty_claim`) wired into
+`generate_run_suggestions`'s actual call path before any suggestion is returned, and all degradation
+paths (unconfigured client, model error, guard rejection) returning `200`/`degraded=True` with no
+exception. Confirmed README/backlog/ticket-index documentation accuracy against the real diff. One
+non-blocking, already-disclosed gap noted: no client-side `hx-on::response-error` handler for a true
+network-level HTMX failure (only the server-side `degraded=True` path is tested) -- low severity, does
+not touch leakage protocol or positioning, flagged as an optional follow-up, not a blocker.
+
 ## Sprint 50 (docs/sprints/sprint-50.md, backlog: docs/product/backlog-ai-integration-ux.md)
 
 AI-003 (Should) then AI-005 (Must, dashboard-web slice), sequenced strictly one-then-the-other — same
@@ -378,6 +436,20 @@ against real diffs (not just dev-agent self-reports) and re-run test suites.
   No code-level blockers found. Minor cosmetic doc drift flagged (a stale note elsewhere implying
   dashboard-web runs bare rather than in Compose) — not corrected in this pass, left as a known small
   cleanup item for a future docs pass.
+
+## Sprint 52 (docs/sprints/sprint-52.md, backlog: docs/product/backlog-model-research.md)
+
+MR-012 and MR-013 run as two parallel, independent tracks (no dependency edge between them, no file
+overlap — see sprint-52.md's sequencing decision), then MR-014 documents both once they land. MR-012
+widens the real-data window MR-008/MR-009 used; MR-013 adds a new sklearn-only stacking-ensemble
+`Baseline` combining `LightGBMBaseline` + `RegimeHMMBaseline`, with the GRU/Transformer `torch`-dependency
+deferral recorded (not authorized) in MR-014.
+
+| Ticket | Story | Module | Depends on | Status |
+|---|---|---|---|---|
+| [MR-012](MR-012.md) | Widen the real-data window MR-008/MR-009 used, re-run at 1h/6h/24h, no new model code | research | MR-008 (done), MR-009 (done) | not started |
+| [MR-013](MR-013.md) | Sklearn-only stacking ensemble of LightGBMBaseline + RegimeHMMBaseline, train-fold-only meta-learner, explicit leakage guard | research | MR-004 (done), MR-005 (done), MR-008 (done), MR-009 (done) | not started |
+| [MR-014](MR-014.md) | Document MR-012/MR-013 outcomes in research/README.md + ticket index, including GRU/Transformer deferral decision | research | MR-012, MR-013 | not started |
 
 ## Sprint 47 (docs/sprints/sprint-47.md, backlog: docs/product/backlog-model-research.md)
 
