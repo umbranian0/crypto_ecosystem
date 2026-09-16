@@ -318,3 +318,85 @@ this real, bounded window. No profitability or price-prediction claim follows fr
 (CLAUDE.md).
 
 See `docs/tickets/MR-009.md` for the full ticket.
+
+## Widened real-data window + sklearn stacking ensemble (MR-012/MR-013, Sprint 52)
+
+Two independent, parallel tracks against the real `binance_price_btcusdt_1h` series (same research tenant
+`271d391dd7bf4213b3e5fb8ea6636563` MR-008/MR-009 used) — MR-012 widens the date-range bound to include more
+market regimes, MR-013 adds a genuinely new sklearn-only Strategy implementation. Documented jointly here
+per MR-014.
+
+**MR-012 (Sprint 52, `docs/tickets/MR-012.md`) — widened window, same models, all three horizons**:
+`LightGBMBaseline` (MR-004) and `RegimeHMMBaseline` (MR-005), unmodified, re-run via
+`research/tests/test_real_data_mr012.py` against a wider bounded window than MR-008/MR-009 used.
+
+- **Widened date-range bound (disclosed)**: `start="2024-08-08T09:00:00"`, `end="2026-08-07T09:00:00"` — a
+  ~730-day (~2-year) window ending at the same timestamp MR-008/MR-009 used, extended backward to include
+  the 2024-2025 halving-cycle regime shift MR-008's 209-day window did not cover. Not the full ~78,500-row/
+  9-year history (still declined for compute-budget reasons, consistent with MR-008's own precedent).
+  Returned **17,496 rows/returns** (~3.5x MR-008's 5,026-row window).
+- **`ValidationConfig`**: `train_window=500, test_window=50, step=250` (identical to MR-008/MR-009);
+  `purge_gap=6` for horizon=1/6, `purge_gap=24` for horizon=24 — unchanged, no narrowing.
+- **Measured runtime**: 4 passed in 36.33s (Tech-Lead-verified re-run), well under the 5-minute ceiling.
+- **Split count**: 68 splits per horizon (actual, not the ticket's ~60-67 estimate).
+- **Observed DM-vs-Naive0 verdict counts**:
+  - 1h `LightGBMBaseline`: `{'better': 0, 'worse': 19, 'no significant difference': 49}`
+  - 1h `RegimeHMMBaseline`: `{'better': 2, 'worse': 4, 'no significant difference': 62}`
+  - 6h `LightGBMBaseline`: `{'better': 0, 'worse': 14, 'no significant difference': 54}`
+  - 6h `RegimeHMMBaseline`: `{'better': 2, 'worse': 3, 'no significant difference': 63}`
+  - 24h `LightGBMBaseline`: `{'better': 0, 'worse': 4, 'no significant difference': 64}`
+  - 24h `RegimeHMMBaseline`: `{'better': 0, 'worse': 0, 'no significant difference': 68}`
+
+Neither model beats Naive0 in a stable, significant way even on a window covering a materially different
+market regime — a third independent real-data confirmation of the thesis's core finding.
+
+See `docs/tickets/MR-012.md` for the full ticket.
+
+**MR-013 (Sprint 52, `docs/tickets/MR-013.md`) — sklearn-only stacking ensemble, new Strategy
+implementation**: `research/models/stacking_ensemble.py`'s `StackingEnsembleBaseline` is a new
+`Baseline`-protocol Strategy implementation combining `LightGBMBaseline` + `RegimeHMMBaseline` via an
+`sklearn.linear_model.Ridge` meta-learner, registered via `config.extra_baselines` exactly like every other
+baseline.
+
+- **Leakage guard (a new failure mode relative to MR-004/MR-005)**: the meta-learner must never see a base
+  model's in-sample training predictions. `predict(train, test)` splits `train` itself, in time order
+  (first ~80% / last ~20%, never shuffled), fits fresh base-model instances on the base-fit portion only,
+  gets each base model's genuinely out-of-sample predictions on the holdout portion, and fits `Ridge` on
+  those. Fresh base-model instances are then re-fit on the *full* `train` to produce the final `test`
+  predictions (standard stacking practice — meta-learner trained on out-of-fold predictions, base learners
+  refit on full training data for inference). A fresh meta-learner and fresh base-model instances are
+  constructed on every `predict()` call — no instance state persisted.
+- **Leakage-guard unit test**: `test_meta_learner_fits_on_holdout_out_of_sample_predictions_not_in_sample`
+  monkeypatches both base models with a deliberately-overfit fake (perfect in-sample memorization, a
+  constant for genuinely unseen rows) and spies on `Ridge.fit()`'s actual `X`/`y` — asserting the
+  meta-learner's target has the holdout portion's length/index (not the base-fit portion's) and its
+  features are the fake's out-of-sample constant (not memorized in-sample values). This would fail against
+  a naively-in-sample-fit implementation; Tech-Lead-verified by tracing the control flow directly, not by
+  trusting the docstring.
+- **Meta-learner choice**: `sklearn.linear_model.Ridge`. **Zero new `research/pyproject.toml`
+  dependency** — `scikit-learn` was already a dependency (`git diff research/pyproject.toml` empty,
+  confirmed).
+- **Real-data run**: reused MR-012's already-landed widened window verbatim (17,496 returns, 68 splits per
+  horizon, no second fetch).
+- **Observed DM-vs-Naive0 verdict counts**:
+  - 1h (`purge_gap=6`): `{'better': 0, 'worse': 5, 'no significant difference': 63}`
+  - 6h (`purge_gap=6`): `{'better': 2, 'worse': 6, 'no significant difference': 60}`
+  - 24h (`purge_gap=24`): `{'better': 0, 'worse': 1, 'no significant difference': 67}`
+
+The stacking ensemble does not beat Naive0 in a stable, significant way at any horizon — a fourth
+independent real-data confirmation of the thesis's core finding, not a failed story: combining two
+already-tested non-beating candidates does not manufacture an edge neither had individually.
+
+See `docs/tickets/MR-013.md` for the full ticket.
+
+**GRU/Transformer deferral (dated record, 2026-09-16)**: a `torch`/`tensorflow`-based GRU/Transformer
+candidate remains explicitly deferred per the backlog's own header — this sprint did not authorize adding
+either dependency. Any future GRU/Transformer work requires its own explicit requester/PM sign-off,
+separate from this sprint.
+
+**Hard gate restated (binding, CLAUDE.md)**: no README, UI copy, or customer-facing claim resulting from
+MR-012 or MR-013 asserts the system predicts Bitcoin prices or generates a trading signal — both are
+leakage-safe research baselines run through the existing, unmodified protocol; the "no improvement" result
+does not change that positioning either way.
+
+See `docs/tickets/MR-014.md` for the documentation ticket itself.

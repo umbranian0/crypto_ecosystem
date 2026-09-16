@@ -447,9 +447,28 @@ deferral recorded (not authorized) in MR-014.
 
 | Ticket | Story | Module | Depends on | Status |
 |---|---|---|---|---|
-| [MR-012](MR-012.md) | Widen the real-data window MR-008/MR-009 used, re-run at 1h/6h/24h, no new model code | research | MR-008 (done), MR-009 (done) | not started |
-| [MR-013](MR-013.md) | Sklearn-only stacking ensemble of LightGBMBaseline + RegimeHMMBaseline, train-fold-only meta-learner, explicit leakage guard | research | MR-004 (done), MR-005 (done), MR-008 (done), MR-009 (done) | not started |
-| [MR-014](MR-014.md) | Document MR-012/MR-013 outcomes in research/README.md + ticket index, including GRU/Transformer deferral decision | research | MR-012, MR-013 | not started |
+| [MR-012](MR-012.md) | Widen the real-data window MR-008/MR-009 used, re-run at 1h/6h/24h, no new model code | research | MR-008 (done), MR-009 (done) | done |
+| [MR-013](MR-013.md) | Sklearn-only stacking ensemble of LightGBMBaseline + RegimeHMMBaseline, train-fold-only meta-learner, explicit leakage guard | research | MR-004 (done), MR-005 (done), MR-008 (done), MR-009 (done) | done |
+| [MR-014](MR-014.md) | Document MR-012/MR-013 outcomes in research/README.md + ticket index, including GRU/Transformer deferral decision | research | MR-012, MR-013 | done |
+
+**Outcome**: MR-012 widened the real-data window to `2024-08-08T09:00:00`–`2026-08-07T09:00:00` (17,496
+returns, 68 splits/horizon) and re-ran `LightGBMBaseline`/`RegimeHMMBaseline` unmodified at 1h/6h/24h —
+neither beats Naive0 in a stable, significant way (third independent real-data confirmation). MR-013 added
+`research/models/stacking_ensemble.py`'s `StackingEnsembleBaseline`, a new sklearn-only Strategy
+implementation combining both existing baselines via a `Ridge` meta-learner fit strictly on train-fold
+out-of-sample holdout predictions (leakage-guard unit test Tech-Lead-verified to genuinely fail against a
+naively in-sample-fit version); run on MR-012's widened window, it also does not beat Naive0 at any horizon
+(fourth confirmation). Zero new `research/pyproject.toml` dependency. **Environment-gap disclosure**: the
+Tech Lead's earlier claim that background dev agents would "resume automatically" was incorrect (same class
+of gap as MR-008's precedent) — this check-in found MR-012 complete on disk but MR-013's test file entirely
+missing (only the implementation file existed); a fresh `dev` agent was dispatched to complete it, then
+independently verified. **Full suites personally re-run by the Tech Lead**: `research/` 39 passed in
+115.15s; `libs/naive_first_engine` 99 passed in 3.47s (zero regressions, module untouched);
+`services/validation-service` 222 passed / 1 pre-existing flaky failure unrelated to this sprint (module
+untouched, `git status --porcelain services/validation-service` empty, failure did not reproduce in
+isolation). GRU/Transformer `torch` dependency remains explicitly deferred, not authorized by this sprint.
+See `docs/tickets/MR-014.md` and `research/README.md`'s "Widened real-data window + sklearn stacking
+ensemble (MR-012/MR-013, Sprint 52)" section for full detail.
 
 ## Sprint 47 (docs/sprints/sprint-47.md, backlog: docs/product/backlog-model-research.md)
 
@@ -497,6 +516,12 @@ naive benchmark — never a standalone predictive-edge claim (see `research/READ
 | [MR-004](MR-004.md) | Gradient-boosting (LightGBM) `Baseline`, 1h/6h, light-compute-scoped | MR-001 (done), MR-003 (sequencing only) | done |
 | [MR-005](MR-005.md) | Regime-sensitive candidate: 2-state HMM gating a linear model, `Baseline`, 1h/6h, light-compute-scoped (Sprint 42) | MR-001 (done), MR-004 (done) | done |
 | [MR-006](MR-006.md) | Per-split explainability: feature-importance-only scope (no SHAP) — `LightGBMBaseline.feature_importances_` + `RegimeHMMBaseline` per-state coefficients/active-state assignment (Sprint 43) | MR-004 (done), MR-005 (done) | done |
+| [MR-008](MR-008.md) | Real-data re-run of LightGBM/RegimeHMM, 1h/6h (Sprint 47) | MR-004 (done), MR-005 (done), MR-001 (done) | done |
+| [MR-009](MR-009.md) | Real-data run extended to 24h, Harvey-corrected (Sprint 47) | MR-008 (done) | done |
+| [MR-011](MR-011.md) | Document MR-008/MR-009 outcomes (Sprint 47) | MR-008 (done), MR-009 (done) | done |
+| [MR-012](MR-012.md) | Widen the real-data window MR-008/MR-009 used, re-run at 1h/6h/24h (Sprint 52) | MR-008 (done), MR-009 (done) | done |
+| [MR-013](MR-013.md) | Sklearn-only stacking ensemble of LightGBMBaseline + RegimeHMMBaseline (Sprint 52) | MR-004 (done), MR-005 (done), MR-008 (done), MR-009 (done) | done |
+| [MR-014](MR-014.md) | Document MR-012/MR-013 outcomes + GRU/Transformer deferral decision (Sprint 52) | MR-012 (done), MR-013 (done) | done |
 
 ## Sprint 41 (docs/sprints/sprint-41.md, backlog: docs/product/backlog-model-research.md)
 

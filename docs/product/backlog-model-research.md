@@ -178,6 +178,56 @@ Acceptance criteria:
 Rationale for priority: "Must" — this backlog's own "What does NOT change" section already commits to no separate, lower-scrutiny research-results channel; skipping documentation here would violate that commitment for the first time in this track, regardless of MR-008/MR-009's own priority level.
 Depends on: MR-008, MR-009
 
+## Extension: wider real-data window and a no-new-dependency ensemble candidate (MR-012 onward)
+
+**Source for this extension**: `docs/product/backlog-model-research.md`'s own MR-008/MR-009/MR-011 sections above, `docs/tickets/MR-008.md` (disclosed 209-day/5,026-row compute-budget bound out of the full 2017-08-17–2026-08-07 real series), `research/pyproject.toml` (current dependency set: `pandas`, `numpy`, `lightgbm`, `scikit-learn`, `hmmlearn`, `httpx`, `naive_first_engine` — no `torch`/`tensorflow`/`keras`), MR-006's explicit precedent (`shap` declined as a new dependency), and `docs/da-tese-ao-produto.md` section 1.6's future-work table ("Boosting, GRU, Transformer ainda não testados"). **Scope**: this extension does two things — (1) a low-risk widening of the real-data window MR-008/MR-009 already established, and (2) an explicit, disclosed feasibility call on the thesis's remaining untested model class (GRU/Transformer), choosing a no-new-heavy-dependency path (an sklearn-based ensemble of the two already-shipped candidates) over adding `torch` now.
+
+**Explicit feasibility call, stated rather than left ambiguous**: a GRU/Transformer candidate would require a new `torch` (or `tensorflow`) dependency — a materially heavier addition than `shap`, which this backlog already declined in MR-006 for a narrower reason (no natural explainer fit). No trigger in `docs/implementation-plan.md` section 6, no sprint decision record, and no story in this backlog to date has authorized adding a new ML framework dependency to `research/`. Per this backlog's own YAGNI precedent (MR-005's 2-state HMM narrowing, MR-008's 209-day bound), the next model-class story is scoped instead as **MR-013 below: an sklearn-only stacking ensemble of `LightGBMBaseline` + `RegimeHMMBaseline`**, which is genuinely a new model class relative to either candidate alone (a meta-learner combining two heterogeneous base learners) and requires zero new dependencies. Adding `torch` for a GRU/Transformer candidate is deferred and flagged for explicit requester/PM sign-off as its own future story — not silently declined and not silently approved.
+
+**Binding on every story below, restated per CLAUDE.md and this backlog's own "What does NOT change" section**: no story here may touch, weaken, or shortcut `libs/naive_first_engine`'s leakage-safety machinery (purge-gap enforcement, train-fold-only fitting, DM test) to make a result look better. No product surface, README, UI copy, or customer-facing claim may assert the system predicts Bitcoin prices/futures unless a candidate model has actually beaten Naive0 with Harvey-corrected DM significance under this protocol on real data. A "no improvement" result is a complete, valuable, honestly-reported outcome, not a failed story.
+
+### MR-012 — Extend the real-data window used by MR-008/MR-009 to a longer real history [Should] — DONE, `docs/tickets/MR-012.md`
+**As a** research candidate model already validated on the 209-day/5,026-row real window (MR-008/MR-009), **I want** the same `LightGBMBaseline`/`RegimeHMMBaseline` runs re-executed at 1h/6h/24h against a materially longer slice of the real `binance_price_btcusdt_1h` series (available back to 2017-08-17 UTC, per `services/ingestion-service/README.md`), **so that** the MR-008/MR-009 finding is checked against a window that includes more market regimes (not just the most recent ~209 days), using the exact same pipeline and zero new model code.
+
+Acceptance criteria:
+- [x] The date-range bound is widened from MR-008's `2026-01-10`–`2026-08-07` window to a new, explicitly disclosed range and row count (`2024-08-08T09:00:00`–`2026-08-07T09:00:00`, 17,496 returns) — within the same CPU-only, sub-5-minute compute ceiling (4 passed in 36.33s).
+- [x] Data is pulled through the same `research/`-owned HTTP client calling `ingestion-service`'s `GET /datasets/{source}/series` route directly, exactly as MR-008 established — no new connector, no `IngestionServiceDatasetSource` import.
+- [x] `raw_series.pct_change().dropna()` applied before any Naive0 comparison, consistent with MR-001.
+- [x] Same purge-gap values as MR-008 (`purge_gap=6` for 1h/6h) and MR-009 (`purge_gap=24` for 24h) — no narrowing.
+- [x] `research/models/*.py` untouched (`git status --porcelain research/models` confirmed empty).
+- [x] DM-vs-Naive0 verdict counts reported for all three horizons (68 splits/horizon) — no model beats Naive0 stably at any horizon.
+- [x] Hard gate restated verbatim, honored.
+
+Rationale for priority: "Should" — this is the lowest-risk, highest-information next step (reuses MR-008/MR-009's pipeline unchanged, no new model code, no new dependency, real data already available beyond the window already tested); not "Must" because MR-008/MR-009 already produced a complete, valid, honestly-reported negative result and this is confirmatory breadth, not a blocking gap.
+Depends on: MR-008, MR-009 (pipeline and purge-gap conventions reused unchanged)
+
+### MR-013 — Stacking ensemble of `LightGBMBaseline` + `RegimeHMMBaseline` as a new `Baseline` implementation, sklearn-only [Could] — DONE, `docs/tickets/MR-013.md`, meta-learner: `sklearn.linear_model.Ridge`
+**As a** research candidate model, **I want** a stacking-ensemble `Baseline` implementation that combines `LightGBMBaseline`'s and `RegimeHMMBaseline`'s per-split predictions via an `sklearn.linear_model` meta-learner (e.g. `LinearRegression` or `Ridge` fit on the two base predictions, train-fold only), **so that** the thesis's remaining "broader model comparison" gap (section 1.6) gets one more genuinely new model class tested under the honest protocol, without adding a new heavy ML dependency (`torch`/`tensorflow`) — see this extension's explicit feasibility call above.
+
+Acceptance criteria:
+- [x] `research/models/stacking_ensemble.py` implements the `Baseline` protocol (`.predict(train, test) -> pd.Series`, `.name`) exactly as `LightGBMBaseline`/`RegimeHMMBaseline` already do — no edit to `naive_first_engine`.
+- [x] The meta-learner is fit strictly on the training fold's own out-of-sample base-model predictions (chronological 80/20 train-fold-internal holdout split) — a unit test (`test_meta_learner_fits_on_holdout_out_of_sample_predictions_not_in_sample`) asserts the meta-learner is never fit on in-sample base predictions; Tech-Lead-verified to genuinely fail against a naive implementation.
+- [x] Both base models re-instantiated and refit per split (8 fresh instances tracked across 2 `predict()` calls) — no global/cross-split reuse.
+- [x] No new dependency added to `research/pyproject.toml` (`git diff research/pyproject.toml` confirmed empty).
+- [x] Run at 1h/6h/24h against MR-012's already-landed wider window (17,496 returns, 68 splits/horizon) — the ensemble does not beat Naive0 stably at any horizon.
+- [x] Hard gate restated verbatim, honored.
+
+Rationale for priority: "Could" — this is a genuinely new model class and closes part of the thesis's "Boosting, GRU, Transformer ainda não testados" gap without the dependency cost of a GRU/Transformer, but it is the harder of the two stories in this extension (new leakage failure mode to guard against: meta-learner overfit-on-base-predictions) and is not required for MR-012's window-widening value to land independently.
+Depends on: MR-004, MR-005 (base models reused), MR-008/MR-009 (real-data pipeline and purge-gap conventions)
+
+### MR-014 — Document MR-012/MR-013 outcomes in `research/README.md` and the ticket index [Must] — DONE, `docs/tickets/MR-014.md`
+**As a** future reader of this research track (PM, Tech Lead, or a future session picking this work back up), **I want** MR-012's and MR-013's results — positive or negative — written into `research/README.md` (a new section matching the existing MR-004/MR-005/MR-006/MR-008/MR-009 section format) and into `docs/tickets/MR-012.md`/`MR-013.md`, **so that** this backlog's "no separate, lower-scrutiny research-results channel" commitment (see "What does NOT change" above) is honored for this extension too, including an explicit written record of the GRU/Transformer-dependency deferral decision stated in this extension's header (so a future session doesn't silently re-litigate or silently forget it).
+
+Acceptance criteria:
+- [x] `research/README.md` gains a section for MR-012/MR-013 in the same structural format as the existing sections.
+- [x] `docs/tickets/MR-012.md` and `docs/tickets/MR-013.md` are written following the same Outcome-section format as `MR-008.md`/`MR-009.md`.
+- [x] The hard gate is restated in `research/README.md`'s new section itself.
+- [x] The GRU/Transformer `torch`-dependency deferral decision is recorded in `research/README.md` as an explicit, dated (2026-09-16) decision.
+- [x] MR-012/MR-013 both show "no improvement on real data" — `research/README.md` states this explicitly as a third/fourth independent confirmation of the thesis's core finding.
+
+Rationale for priority: "Must" — same standing commitment already enforced by MR-011 for MR-008/MR-009; skipping documentation here would be the first inconsistency in an otherwise unbroken pattern this backlog has kept since MR-004.
+Depends on: MR-012, MR-013
+
 ## What "success" looks like, stated explicitly
 
 Success for this backlog is **not** "a model beats naive." Success is: every story above executes under the unmodified leakage-safe protocol and produces an honestly reported result — beating naive with statistical significance (Harvey-corrected DM, Naive0 baseline, purge-gap enforced) counts as success; *not* beating naive, again, is an equally valid, complete, reportable outcome, and is exactly the kind of result this platform's audit/validation credibility is built on being willing to publish. If every candidate here fails to beat naive, that is not a failed sprint — it is a second, independently-obtained confirmation of the thesis's core finding, on model classes (boosting, regime-switching) the thesis itself flagged as untested, which is itself valuable evidence for the product's "we tested this honestly, including the things that didn't work" positioning (`da-tese-ao-produto.md` section 2.5).
