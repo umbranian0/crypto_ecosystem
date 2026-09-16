@@ -152,7 +152,9 @@ class PostgresValidationRunRepository:
                 session.execute(
                     select(Run)
                     .where(Run.tenant_id == tenant_id)
-                    .order_by(Run.created_at.desc())
+                    # VS-034: same deterministic id-descending tie-break as
+                    # sqlite_repository.py's list_runs.
+                    .order_by(Run.created_at.desc(), Run.id.desc())
                     .limit(limit)
                     .offset(offset)
                 )

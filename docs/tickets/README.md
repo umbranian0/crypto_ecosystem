@@ -2917,3 +2917,25 @@ services/validation-service` empty). Recommend a separate follow-up ticket; not 
 
 See `docs/tickets/MR-015.md` for the full ticket and `research/README.md`'s "GRU sequence-model candidate,
 new `torch` dependency (MR-015, Sprint 53)" section for full detail.
+
+# Out-of-band bug fix — VS-034 (flaky `GET /runs` ordering test)
+
+Sprint: none. Fixes the pre-existing `test_runs_list_endpoint.py` ordering flake disclosed in Sprint 53's
+"Known gaps" above (MR-015 module untouched, confirmed pre-existing). Not a new story — a determinism fix
+to already-shipped VS-022 (`ValidationRunRepository.list_runs`) code.
+
+| Ticket | Story | Module | Depends on | Status |
+|---|---|---|---|---|
+| [VS-034](VS-034.md) | Deterministic `id`-descending tie-break added to `list_runs`'s `ORDER BY created_at DESC` on both SQLite and Postgres repositories, closing the ordering flake | validation-service | none | done |
+
+Root cause confirmed by reading `sqlite_repository.py`/`postgres_repository.py::list_runs` — both ordered
+solely by `Run.created_at.desc()`, no tie-break, and `datetime.utcnow()`'s resolution let sequential
+`create_run` calls in the same test collide on an identical `created_at`, leaving row order for tied rows
+undefined per SQL semantics. Fixed by adding `Run.id.desc()` as a secondary sort key on both repositories
+(no schema/migration change — `id` is already the primary key). A second, latent instance of the same
+class of bug was found and fixed in the same pass: `test_limit_and_offset_paginate_correctly_across_a_
+seeded_set_larger_than_one_page` (25 rapidly-seeded runs) also implicitly assumed real-clock `created_at`
+stays strictly increasing across all 25 inserts — fixed with a monkeypatched strictly-increasing fake
+clock in that test, no production code change. Full `services/validation-service` suite (224 tests)
+verified clean by the Tech Lead across 3 independent re-runs after both fixes; the dev agent separately
+verified 5/5 clean. See `docs/tickets/VS-034.md` for the full ticket.

@@ -16,9 +16,46 @@ seeding fixture data directly through the repository.
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
+
 from fastapi.testclient import TestClient
 
 SPLIT_CONFIG = {"train_window": 100, "test_window": 20, "step": 10}
+
+
+def _fixed_utcnow_datetime(fixed_now: datetime) -> type:
+    """Builds a `datetime` subclass whose `utcnow()` always returns
+    `fixed_now`, for monkeypatching `sqlite_repository`'s module-level
+    `datetime` name (VS-034 -- reproduces a `created_at` collision
+    deterministically instead of relying on real-clock timing).
+    """
+
+    class _FixedDatetime(datetime):
+        @classmethod
+        def utcnow(cls):
+            return fixed_now
+
+    return _FixedDatetime
+
+
+def _increasing_utcnow_datetime(start: datetime) -> type:
+    """Builds a `datetime` subclass whose `utcnow()` returns a strictly
+    increasing timestamp on each successive call (start + an incrementing
+    seconds counter), for monkeypatching `sqlite_repository`'s module-level
+    `datetime` name (VS-034 -- guarantees `created_at` strictly increases in
+    seed order by construction, instead of relying on real-clock timing
+    across rapid sequential `create_run` calls).
+    """
+    counter = {"n": 0}
+
+    class _IncreasingDatetime(datetime):
+        @classmethod
+        def utcnow(cls):
+            value = start + timedelta(seconds=counter["n"])
+            counter["n"] += 1
+            return value
+
+    return _IncreasingDatetime
 
 
 def _client_and_repo(tmp_path, monkeypatch):
@@ -58,6 +95,40 @@ def test_tenant_with_three_runs_sees_exactly_its_own_in_created_at_desc_order(tm
     assert returned_ids == list(reversed(run_ids))
 
 
+def test_tied_created_at_breaks_ties_by_id_descending_deterministically(tmp_path, monkeypatch):
+    """VS-034 regression test: reproduces the tie-break scenario without
+    relying on real-clock timing -- `datetime.utcnow` is monkeypatched to
+    return a single fixed value for every `create_run` call, so all three
+    seeded runs get an identical `created_at`. Pre-fix (`order_by` on
+    `created_at` alone), SQLite has no defined order for these tied rows;
+    post-fix, `id` descending is the only remaining sort key, so the order
+    is fully determined and must be reproduced identically across repeated
+    `GET /runs` calls.
+    """
+    client, repo = _client_and_repo(tmp_path, monkeypatch)
+
+    fixed_now = datetime(2026, 1, 1, 12, 0, 0)
+    monkeypatch.setattr(
+        "app.repositories.sqlite_repository.datetime",
+        _fixed_utcnow_datetime(fixed_now),
+    )
+
+    run_ids = [_seed_run(repo, "tenant-1", f"dataset-{i}") for i in range(3)]
+    expected_order = sorted(run_ids, reverse=True)
+
+    first_response = client.get("/runs", headers={"X-Tenant-Id": "tenant-1"})
+    second_response = client.get("/runs", headers={"X-Tenant-Id": "tenant-1"})
+
+    assert first_response.status_code == 200, first_response.text
+    assert second_response.status_code == 200, second_response.text
+
+    first_ids = [item["id"] for item in first_response.json()["items"]]
+    second_ids = [item["id"] for item in second_response.json()["items"]]
+
+    assert first_ids == expected_order
+    assert second_ids == expected_order
+
+
 def test_second_tenants_runs_never_appear_in_first_tenants_results(tmp_path, monkeypatch):
     """Non-tautological cross-tenant test (ticket's own flagged highest-risk
     case): asserts by run id, not merely by count, in both directions.
@@ -88,6 +159,11 @@ def test_second_tenants_runs_never_appear_in_first_tenants_results(tmp_path, mon
 
 def test_limit_and_offset_paginate_correctly_across_a_seeded_set_larger_than_one_page(tmp_path, monkeypatch):
     client, repo = _client_and_repo(tmp_path, monkeypatch)
+
+    monkeypatch.setattr(
+        "app.repositories.sqlite_repository.datetime",
+        _increasing_utcnow_datetime(datetime(2026, 1, 1, 12, 0, 0)),
+    )
 
     run_ids = [_seed_run(repo, "tenant-1", f"dataset-{i}") for i in range(25)]
     expected_desc_order = list(reversed(run_ids))

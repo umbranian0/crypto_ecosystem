@@ -252,7 +252,11 @@ class SQLiteValidationRunRepository:
                 session.execute(
                     select(Run)
                     .where(Run.tenant_id == tenant_id)
-                    .order_by(Run.created_at.desc())
+                    # VS-034: `id` is a secondary, descending tie-break for
+                    # rows sharing an identical `created_at` (utcnow()
+                    # resolution can collide across rapid create_run calls)
+                    # -- guarantees a deterministic total order.
+                    .order_by(Run.created_at.desc(), Run.id.desc())
                     .limit(limit)
                     .offset(offset)
                 )
