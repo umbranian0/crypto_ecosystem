@@ -410,6 +410,28 @@ curl http://localhost:8002/health
 Expected: `{"status":"ok"}` (a real `SELECT 1` against the `reporting` schema through
 `reporting-service`'s own memoized `Engine`, RS-007).
 
+## reporting-service narrative generation (AI-002)
+
+Three new env vars this ticket introduces for `reporting-service`'s AI-generated report-narrative
+feature (`services/reporting-service/src/app/narrative/`, ADR-0011), added to the
+`reporting-service` Compose entry above alongside its existing `DATABASE_URL`/`REDIS_URL`/
+`VALIDATION_SERVICE_URL` entries — **not yet set to a real value in dev**, since no real hosted
+narrative-model API key exists yet:
+
+- `NARRATIVE_API_URL` (from `NARRATIVE_API_URL`, unset by default) — hosted, OpenAI-compatible
+  chat-completions HTTPS endpoint base URL.
+- `NARRATIVE_API_KEY` (from `NARRATIVE_API_KEY`, unset by default, deliberately **no** default
+  value — no real key exists yet) — bearer credential for that endpoint.
+- `NARRATIVE_API_TIMEOUT_SECONDS` (from `NARRATIVE_API_TIMEOUT_SECONDS`, default `10`) — bounds
+  the model call so a hung provider can't hang `app.subscriber`'s consume loop.
+
+`app.narrative.client.get_narrative_client()` returns `None` whenever `NARRATIVE_API_URL`/
+`NARRATIVE_API_KEY` aren't both set — an unconfigured deployment (every environment today,
+including this Compose file) degrades cleanly to today's table-only reports, no error, no crash.
+No new container/Compose service is added by this ticket (ADR-0011: hosted API over HTTPS only,
+no local model-serving container) — this section only discloses env vars added to the existing
+`reporting-service` entry above.
+
 ## dashboard-web (SETUP-030)
 
 `dashboard-web` compose entry: `build.context` is `../services/dashboard-web`
@@ -465,6 +487,17 @@ Start it (brings up `gateway-api` first via `depends_on`):
 docker compose -f infra/docker-compose.yml build dashboard-web
 docker compose -f infra/docker-compose.yml up -d dashboard-web
 ```
+
+## dashboard-web assistant (AI-003)
+
+`dashboard-web`'s Compose entry above also gains the same three `NARRATIVE_API_URL`/
+`NARRATIVE_API_KEY`/`NARRATIVE_API_TIMEOUT_SECONDS` env vars the "reporting-service narrative
+generation (AI-002)" section above already introduced — not a second, new credential, the same
+hosted endpoint `reporting-service` already points at, consumed here via `libs/ai_assist`'s
+`get_assist_client()` (AI-003-REFACTOR) backing `POST /assistant/ask` (AI-003). Not yet set to a
+real value in dev, same as `reporting-service`'s entry; `get_assist_client()` returns `None` when
+unset, and `POST /assistant/ask` degrades to a fixed "assistant is currently unavailable" answer
+rather than erroring.
 
 Verify the container is up on its own:
 

@@ -170,6 +170,15 @@ services:
       # hostname inside the Docker network (see reporting-service's own
       # README), never through gateway-api.
       VALIDATION_SERVICE_URL: ${REPORTING_SERVICE_VALIDATION_SERVICE_URL:-http://validation-service:8000}
+      # AI-002: narrative-generation model-calling client, only ever reached
+      # from app.subscriber's run.completed path (never POST /reports/
+      # generate). NARRATIVE_API_KEY has no default -- no real key exists
+      # yet; get_narrative_client() returns None (table-only reports,
+      # unchanged behavior) when unset. See infra/README.md's
+      # "reporting-service narrative generation (AI-002)" section.
+      NARRATIVE_API_URL: ${NARRATIVE_API_URL:-}
+      NARRATIVE_API_KEY: ${NARRATIVE_API_KEY:-}
+      NARRATIVE_API_TIMEOUT_SECONDS: ${NARRATIVE_API_TIMEOUT_SECONDS:-10}
     depends_on:
       postgres:
         condition: service_healthy
@@ -254,6 +263,15 @@ services:
       # addressed. Zero code change needed; only this Compose-level
       # override, same pattern GATEWAY_API_VALIDATION_SERVICE_URL uses.
       GATEWAY_API_URL: ${DASHBOARD_WEB_GATEWAY_API_URL:-http://gateway-api:8000}
+      # AI-003: reuses the exact same hosted-model env vars reporting-service's
+      # AI-002 entry above already introduced (`libs/ai_assist`'s
+      # `get_assist_client()` defaults) -- the same hosted endpoint/credential,
+      # not a second one. NARRATIVE_API_KEY has no default -- get_assist_client()
+      # returns None (assistant degrades to "unavailable") when unset. See
+      # infra/README.md's "dashboard-web assistant (AI-003)" section.
+      NARRATIVE_API_URL: ${NARRATIVE_API_URL:-}
+      NARRATIVE_API_KEY: ${NARRATIVE_API_KEY:-}
+      NARRATIVE_API_TIMEOUT_SECONDS: ${NARRATIVE_API_TIMEOUT_SECONDS:-10}
     depends_on:
       # Not a hard `condition: service_healthy` dependency -- dashboard-web's
       # own downstream HTTP calls already degrade to error.html/

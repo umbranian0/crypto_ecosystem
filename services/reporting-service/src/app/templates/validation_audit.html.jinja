@@ -152,5 +152,10 @@ outcomes above.
     question this audit did not answer.</li>
 </ul>
 {% endif %}
+{% if narrative_html %}
+<h2>7. AI-generated summary of the results above</h2>
+<p><em>AI-generated summary of the results above.</em></p>
+<p>{{ narrative_html }}</p>
+{% endif %}
 </body>
 </html>

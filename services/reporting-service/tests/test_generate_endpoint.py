@@ -302,6 +302,25 @@ def test_generate_report_for_failed_run_still_generates_status_only_report(
     assert "has not completed" in persisted.content
 
 
+def test_generate_report_never_includes_ai_narrative_block(
+    client: TestClient, fake_repository: FakeReportRepository
+) -> None:
+    """AI-002 Implementation acceptance criteria: `POST /reports/generate`'s
+    behavior/output is byte-identical to pre-ticket -- no narrative ever
+    appears from this route, since `report_generation.py` never passes a
+    `narrative_client` to `generate_validation_audit_report`.
+    """
+    response = client.post(
+        "/reports/generate",
+        json={"run_id": RUN_OWNED_BY_A},
+        headers={"X-Tenant-Id": TENANT_A},
+    )
+
+    assert response.status_code == 201
+    persisted = fake_repository.created[0]
+    assert "AI-generated summary" not in persisted.content
+
+
 def test_generate_report_missing_tenant_header_returns_401_before_any_downstream_call(
     client: TestClient, fake_validation_service: FakeValidationService
 ) -> None:

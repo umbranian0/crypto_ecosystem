@@ -27,5 +27,17 @@ class ReportRenderer(ABC):
     """
 
     @abstractmethod
-    def render(self, run: RunDetailResponse, splits: list[SplitResultResponse]) -> str:
+    def render(
+        self,
+        run: RunDetailResponse,
+        splits: list[SplitResultResponse],
+        *,
+        narrative_html: str | None = None,
+    ) -> str:
+        """`narrative_html` (AI-002): an optional, already-generated,
+        already-fact-checked LLM narrative paragraph to render alongside the
+        table. `None` (the default) renders byte-identical output to before
+        AI-002 -- no narrative block appears. Never generated here; this
+        interface only renders whatever it's handed.
+        """
         raise NotImplementedError

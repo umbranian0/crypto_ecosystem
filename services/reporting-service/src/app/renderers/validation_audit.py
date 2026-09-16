@@ -39,6 +39,12 @@ _env = Environment(
 
 
 class ValidationAuditRenderer(ReportRenderer):
-    def render(self, run: RunDetailResponse, splits: list[SplitResultResponse]) -> str:
+    def render(
+        self,
+        run: RunDetailResponse,
+        splits: list[SplitResultResponse],
+        *,
+        narrative_html: str | None = None,
+    ) -> str:
         template = _env.get_template("validation_audit.html.jinja")
-        return template.render(run=run, splits=splits)
+        return template.render(run=run, splits=splits, narrative_html=narrative_html)

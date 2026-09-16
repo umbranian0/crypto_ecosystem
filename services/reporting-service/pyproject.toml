@@ -15,10 +15,12 @@ dependencies = [
     "httpx>=0.27",
     "jinja2>=3.1",
     "naive_first_common",
+    "naive_first_ai_assist",
 ]
 
 [tool.uv.sources]
 naive_first_common = { path = "../../libs/common", editable = true }
+naive_first_ai_assist = { path = "../../libs/ai_assist", editable = true }
 
 [build-system]
 requires = ["hatchling"]

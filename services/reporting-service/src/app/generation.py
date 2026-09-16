@@ -27,6 +27,8 @@ from typing import Callable
 import httpx
 from naive_first_common.contracts import RunDetailResponse, SplitResultResponse
 
+from app.narrative.client import NarrativeClient
+from app.narrative.generation import generate_narrative_html
 from app.renderers.base import ReportRenderer
 from app.renderers.factory import get_report_renderer
 from app.repositories.interfaces import ReportRecord, ReportRepository
@@ -90,11 +92,20 @@ def generate_validation_audit_report(
     client: httpx.Client,
     repository: ReportRepository,
     renderer_factory: Callable[[str], ReportRenderer] = get_report_renderer,
+    narrative_client: NarrativeClient | None = None,
 ) -> ReportRecord:
     """Fetches `run_id`'s detail + splits from validation-service (scoped to
     `tenant_id` via the `X-Tenant-Id` header, sourced only from the caller's
     already-resolved tenant identity -- never a raw inbound header value),
     renders a `"validation_audit"` report, and persists it.
+
+    `narrative_client` (AI-002, default `None`): when provided, an
+    AI-generated narrative paragraph is generated (fact-checked, gracefully
+    degrading to no narrative on any failure) and rendered alongside the
+    table. Default `None` keeps every existing caller -- in particular
+    `POST /reports/generate`'s router -- byte-identical to pre-AI-002
+    behavior; only `app.subscriber`'s `run.completed` event handler passes a
+    real client.
     """
     headers = {"X-Tenant-Id": tenant_id}
 
@@ -106,8 +117,12 @@ def generate_validation_audit_report(
     _raise_for_error(splits_response, run_id)
     splits = [SplitResultResponse(**item) for item in splits_response.json()]
 
+    narrative_html = None
+    if narrative_client is not None:
+        narrative_html = generate_narrative_html(run, splits, narrative_client)
+
     renderer = renderer_factory(_VALIDATION_AUDIT_KIND)
-    content = renderer.render(run, splits)
+    content = renderer.render(run, splits, narrative_html=narrative_html)
 
     return repository.create_report(
         tenant_id=tenant_id,

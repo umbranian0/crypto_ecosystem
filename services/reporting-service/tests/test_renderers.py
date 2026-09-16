@@ -140,3 +140,31 @@ def test_running_run_with_no_splits_renders_status_only_report():
     assert "running" in html
     assert "has not completed" in html
     assert DISCLAIMER_TEXT in html
+
+
+def test_narrative_html_none_renders_byte_identical_output_to_no_narrative_call(tmp_path):
+    """AI-002 Test acceptance criteria: `narrative_html=None` (the default)
+    must produce byte-identical output to calling `render` without that
+    keyword at all -- proves adding the optional parameter didn't change
+    today's table-only output for any existing caller.
+    """
+    run = _make_run(status="completed")
+    splits = [_make_split(0, "better", -3.1, 0.01)]
+
+    html_without_kwarg = ValidationAuditRenderer().render(run, splits)
+    html_with_none = ValidationAuditRenderer().render(run, splits, narrative_html=None)
+
+    assert html_without_kwarg == html_with_none
+    assert "AI-generated summary" not in html_without_kwarg
+
+
+def test_narrative_html_present_renders_labeled_block():
+    run = _make_run(status="completed")
+    splits = [_make_split(0, "better", -3.1, 0.01)]
+
+    html = ValidationAuditRenderer().render(
+        run, splits, narrative_html="This is the AI narrative paragraph text."
+    )
+
+    assert "AI-generated summary of the results above" in html
+    assert "This is the AI narrative paragraph text." in html

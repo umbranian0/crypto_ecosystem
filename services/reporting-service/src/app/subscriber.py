@@ -31,6 +31,7 @@ import redis
 from app.dependencies.http_client import get_validation_service_client
 from app.dependencies.repositories import get_report_repository
 from app.generation import GenerationError, generate_validation_audit_report
+from app.narrative.client import NarrativeClient, get_narrative_client
 from app.repositories.interfaces import ReportRepository
 
 logger = logging.getLogger(__name__)
@@ -103,6 +104,7 @@ def handle_event(
     fields: dict[str, str],
     client: httpx.Client,
     repository: ReportRepository,
+    narrative_client: NarrativeClient | None = None,
 ) -> None:
     """Processes one `run.completed` stream entry's already-decoded field
     dict. Never raises -- every failure mode (malformed event, defense-in-
@@ -136,6 +138,7 @@ def handle_event(
             run_id=run_id,
             client=client,
             repository=repository,
+            narrative_client=narrative_client,
         )
     except GenerationError as exc:
         logger.warning("report generation failed for run %s (tenant %s): %s", run_id, tenant_id, exc)
@@ -147,6 +150,7 @@ def run_subscriber(
     repository: ReportRepository,
     *,
     max_events: int | None = None,
+    narrative_client: NarrativeClient | None = None,
 ) -> None:
     """Blocking consume loop. `max_events` (test-only seam) stops the loop
     after that many stream entries have been read and processed, so tests
@@ -168,7 +172,7 @@ def run_subscriber(
         for _stream_key, entries in response:
             for entry_id, fields in entries:
                 try:
-                    handle_event(fields, client, repository)
+                    handle_event(fields, client, repository, narrative_client)
                 finally:
                     redis_client.xack(_STREAM_KEY, _GROUP_NAME, entry_id)
                     processed += 1
@@ -181,8 +185,14 @@ def main() -> None:
     redis_client = get_redis_client()
     client = get_validation_service_client()
     repository = get_report_repository()
+    narrative_client = get_narrative_client()
+    if narrative_client is None:
+        logger.info(
+            "reporting-service subscriber: NARRATIVE_API_URL/NARRATIVE_API_KEY not set -- "
+            "generated reports will be table-only, no AI narrative"
+        )
     logger.info("reporting-service subscriber: listening on stream %r", _STREAM_KEY)
-    run_subscriber(redis_client, client, repository)
+    run_subscriber(redis_client, client, repository, narrative_client=narrative_client)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,8 @@
+{# AI-003: HTMX-swapped answer fragment -- same pattern
+   `_crawl_trigger_result.html`/`_report_trigger_result.html` established
+   (DASH-110). `answer.text` already carries its own deterministic citation
+   footer (`app.assistant.generation._citation_footer`) when non-degraded --
+   this template renders it verbatim, it never derives a citation itself. #}
+<div class="assistant-answer{{ ' assistant-answer-degraded' if answer.degraded else '' }}">
+    <p style="white-space: pre-line">{{ answer.text }}</p>
+</div>

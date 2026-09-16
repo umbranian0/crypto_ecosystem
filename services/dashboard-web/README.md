@@ -2272,3 +2272,79 @@ drill-down from `run_detail.html`'s existing per-split table, not a replacement 
 - **Full suite**: 354 unit passed (up from ~347), 7 e2e passed (Selenium, actually run this ticket --
   Chrome + Selenium Manager were available in this environment), zero regressions to the existing
   login -> submit -> view loop.
+
+## AI-assisted features (AI-003)
+
+**Status: implemented (Sprint 50).** `GET /assistant`/`POST /assistant/ask` (`src/app/routers/
+assistant.py`, new module, same "one fresh module per distinct concern" precedent `operator.py`/
+`settings.py` already established) add an optional natural-language Q&A assistant answering a
+tenant's question about their own stored validation-run history.
+
+- **What it does**: `GET /assistant` renders a question form (`assistant.html`), gated behind
+  `DownstreamHeadersDep` like every other authenticated route in this service even though it makes no
+  downstream call itself. `POST /assistant/ask` runs a fixed, bounded retrieval pattern --
+  `app.assistant.retrieval.fetch_context` calls `gateway-api`'s `GET /runs?limit=10`, and, only for the
+  single most recent run in that list (if any), `GET /runs/{id}` and `GET /runs/{id}/splits` -- so it
+  is at most three calls, and zero beyond `GET /runs` for a tenant with no runs yet. Every call is
+  `DownstreamHeadersDep`-scoped to the caller's own tenant, the same header seam DASH-003 established,
+  never a direct database read. Retrieval reuses `runs.py`'s existing `_call_downstream` helper rather
+  than a fourth near-identical try/except (this ticket's own DRY check note). One model call
+  (`app.assistant.generation.answer_question`) follows, and the fragment `assistant.html`'s form
+  targets is rendered via HTMX (`_assistant_answer.html`, the same swapped-fragment pattern DASH-110's
+  `_crawl_trigger_result.html`/`_report_trigger_result.html` established).
+- **What it does not do**: it never predicts prices or markets -- `app.assistant.fact_check
+  .is_out_of_scope` refuses a question asking for a future price direction (e.g. "will Bitcoin go up
+  next week") or containing "predict"/"forecast" with a fixed refusal message, *before* any model call
+  is made (proven by `test_out_of_scope_question_is_refused_without_any_model_call`, which also asserts
+  zero model calls occurred). It never surfaces another tenant's data -- every retrieval call is scoped
+  to the caller's own session-derived `Authorization` header, proven by
+  `test_cross_tenant_leak_guard_answers_only_reflect_the_calling_tenants_own_data` (VS-024 precedent:
+  two real tenant sessions, distinct mocked `gateway-api` responses, asserted by real run id in both
+  directions). It never ships an answer without a citation to the real run id(s)/split(s) it drew from
+  -- the citation footer is built deterministically from the actual retrieved
+  `RunDetailResponse`/`SplitResultResponse` data (`app.assistant.generation._build_citations`), never
+  trusted to the model's own generated text, proven by
+  `test_citation_footer_names_the_real_mocked_run_and_split`. It degrades to a fixed "The assistant is
+  currently unavailable. Please try again shortly." message -- never a crash, never a hang -- on an
+  unconfigured `AssistClient` (`get_assist_client()` returning `None`), on any
+  `AssistClientError` from the model call (one retry, then fallback, mirroring `reporting-service`'s
+  AI-002 `generate_narrative_html` one-retry-then-fallback shape), or when a generated answer itself
+  fails the post-generation banned-term guard (`app.assistant.fact_check.contains_banned_term`, an
+  exact module-local copy of AI-002's own six-word list, deliberately not shared -- see
+  `libs/ai_assist/README.md`'s "Does not own" note for why only the hosted-API client was extracted,
+  not this guardrail). These four degrade paths are covered by
+  `test_unconfigured_assist_client_degrades_gracefully`,
+  `test_model_call_error_degrades_gracefully_no_exception_no_hang`, and
+  `test_banned_term_in_generated_answer_degrades_to_unavailable`.
+- **Where the model runs**: a hosted open-weights inference API over HTTPS (ADR-0011), the same
+  endpoint `reporting-service`'s AI-002 narrative feature already calls -- no local model, no new
+  container, no second credential.
+- **Shared seam**: the `AssistClient` Adapter/Strategy contract now lives in `libs/ai_assist`
+  (`naive_first_ai_assist.client`, `AI-003-REFACTOR`), extracted once this feature needed the same
+  hosted, OpenAI-compatible chat-completions HTTPS client `reporting-service`'s AI-002 already had --
+  both services import the same package (`get_assist_client()`) rather than each hand-rolling its own
+  hosted-API client. Prompt-building (`app.assistant.prompt_template`) and the banned-term/out-of-scope
+  fact-check logic (`app.assistant.fact_check`) stay in this service, structurally different per caller
+  (AI-003's free-text Q&A vs. AI-002's fixed per-run summary) and deliberately not extracted, per the
+  same README's "Does not own" note. Tests never make a live network call -- `libs/ai_assist`'s own
+  suite uses `httpx.MockTransport`, and this service's tests monkeypatch
+  `app.routers.assistant.get_assist_client` directly with a fake `AssistClient`.
+- **Tests**: `services/dashboard-web/tests/test_assistant.py` --
+  `test_assistant_form_renders_positioning_copy_and_requires_session`,
+  `test_assistant_html_static_copy_contains_no_banned_term`,
+  `test_out_of_scope_question_is_refused_without_any_model_call` (out-of-scope refusal, no model call),
+  `test_cross_tenant_leak_guard_answers_only_reflect_the_calling_tenants_own_data` (cross-tenant-leak
+  guard), `test_citation_footer_names_the_real_mocked_run_and_split` (citation), `test_banned_term_in
+  _generated_answer_degrades_to_unavailable`, `test_model_call_error_degrades_gracefully_no_exception
+  _no_hang`, and `test_unconfigured_assist_client_degrades_gracefully` (degradation), plus
+  `test_zero_runs_tenant_makes_no_retrieval_call_beyond_get_runs_and_states_no_data` (bounded-call
+  contract for a tenant with no run history).
+- **Env vars**: `NARRATIVE_API_URL`/`NARRATIVE_API_KEY`/`NARRATIVE_API_TIMEOUT_SECONDS`, reused
+  unchanged (not a new var set) via `libs/ai_assist`'s `get_assist_client()` defaults, since this
+  service shares the same hosted endpoint/credential AI-002 already uses -- see `infra/README.md`'s
+  disclosure section for the operational/credential-handling details.
+- **Positioning**: `assistant.html`'s static copy and every generated-answer path state plainly that
+  this assistant explains a tenant's own stored validation run history and does not predict prices or
+  markets (CLAUDE.md's core positioning constraint) -- proven by
+  `test_assistant_form_renders_positioning_copy_and_requires_session`'s literal string assertion and
+  `test_assistant_html_static_copy_contains_no_banned_term`'s banned-term scan of the static template.

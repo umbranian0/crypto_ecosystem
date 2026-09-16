@@ -104,6 +104,64 @@ also out of scope this sprint (HTML only, backlog decision 3).
   ticket (RS-GAP)** -- no container/service entry runs it automatically; it must be started by hand
   (or by a future infra ticket) alongside the FastAPI app.
 
+## AI-assisted features (AI-002)
+
+**Status: implemented (AI-002), documented here per AI-005.** `app.narrative.client` (`NarrativeClient`/
+`NarrativeClientError`/`HostedApiNarrativeClient`/`get_narrative_client`) now lives in `libs/ai_assist`
+(`naive_first_ai_assist.client`) as of AI-003-REFACTOR — this module re-exports those names unchanged,
+it does not reimplement them.
+
+**What it does**: an optional, AI-generated plain-language narrative paragraph summarizing a
+*completed* run's own persisted metrics and DM verdict. It is generated only from RS-006's `run.
+completed` Redis Streams subscriber (`src/app/subscriber.py`) — **never** from `POST /reports/
+generate`'s synchronous route, which has no latency budget for a model round-trip and remains
+byte-identical to its pre-AI-002 behavior for every caller. `generate_validation_audit_report`
+(`src/app/generation.py`) exposes this as an optional `narrative_client: NarrativeClient | None =
+None` keyword parameter (default `None`, backward compatible); only the subscriber constructs and
+passes a real client (via `get_narrative_client()`).
+
+**What it explicitly does not do**:
+- No new data source. `app/narrative/prompt_template.py`'s `build_prompt(run, splits)` is fed only
+  the same already-persisted `split_results`/run aggregate metrics the results table already
+  renders — no live call to any prediction API, no raw tenant upload content.
+- Never overrides or reinterprets the table or DM verdict. The existing table/verdict/disclaimer
+  markup is unchanged; the narrative is additive and rendered in a separately labeled block.
+- Never ships an unchecked claim. `app/narrative/fact_check.py`'s `contains_banned_term` (rejects
+  "signal"/"buy"/"sell"/"profit"/"trade"/directive "recommendation" language) and
+  `is_directionally_consistent` (rejects a "beat naive" claim the real DM verdicts don't support)
+  both gate every candidate paragraph in `app/narrative/generation.py::generate_narrative_html`
+  before it ever reaches the renderer; a rejected paragraph is regenerated once, then dropped
+  (`None`) rather than shipped.
+- Degrades to today's table-only report on any failure: an unconfigured deployment
+  (`get_narrative_client()` returns `None` when `NARRATIVE_API_URL`/`NARRATIVE_API_KEY` aren't
+  set), a model call error/timeout (`NarrativeClientError`), or a fact-check rejection all collapse
+  to `narrative_html=None` — no exception escapes to the subscriber loop or the caller.
+
+**Where it runs**: a hosted, OpenAI-compatible chat-completions HTTPS endpoint (ADR-0011,
+`docs/adr/0011-ai-assist-model-serving.md`) — no local model (no Ollama/llama.cpp), no new
+`infra/docker-compose.yml` container/service.
+
+**Design**: `NarrativeClient` (`src/app/narrative/client.py`) is a one-method Adapter/Strategy
+Protocol (`generate(prompt: str) -> str`). `HostedApiNarrativeClient` is the only implementation
+that touches `httpx`/the network; every test in this service exercises a fake implementation
+(`FakeNarrativeClient`) instead — no live network access or credentials required to run the suite.
+`app/narrative/prompt_template.py` is a versioned, checked-in template module
+(`PROMPT_TEMPLATE_VERSION`), not a runtime-built string.
+
+**Tests**: banned-term and directional-consistency (fact-grounding) cases live in
+`services/reporting-service/tests/narrative/test_fact_check.py`. Client behavior (mocked transport,
+no live network call) is in `tests/narrative/test_client.py`; prompt construction in
+`tests/narrative/test_prompt_template.py`; the fact-check-gate/regenerate/fallback orchestration
+(including the banned-term-over-rendered-HTML case and the graceful-degradation-on-client-error
+case) in `tests/narrative/test_generation.py` and `tests/narrative/test_generation_integration.py`.
+`tests/test_generate_endpoint.py::test_generate_report_never_includes_ai_narrative_block` proves
+`POST /reports/generate` never emits a narrative.
+
+**Env vars**: `NARRATIVE_API_URL`, `NARRATIVE_API_KEY`, `NARRATIVE_API_TIMEOUT_SECONDS` (default
+`10`) — see [`../../infra/README.md`](../../infra/README.md)'s "reporting-service narrative
+generation (AI-002)" section for the disclosure/operational details (all unset by default in
+every environment today, so no deployment currently calls the hosted endpoint).
+
 ## Routes
 
 The route list below (path + method) is machine-checked against the live FastAPI app by

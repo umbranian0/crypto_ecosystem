@@ -75,6 +75,7 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 # (SETUP-012) also imports `_call_downstream`/`_render_error_for_status`
 # from `runs`, so it is imported alongside `settings`/`setup`.
 from app.routers import (  # noqa: E402
+    assistant,
     auth,
     help,
     operator,
@@ -93,6 +94,7 @@ app.include_router(settings_environment.router)
 app.include_router(settings_tenants.router)
 app.include_router(setup.router)
 app.include_router(help.router)
+app.include_router(assistant.router)
 
 
 @app.get("/")

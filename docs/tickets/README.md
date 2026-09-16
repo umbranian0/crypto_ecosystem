@@ -11,8 +11,61 @@ AI-004 (all depend on its serving-pattern recommendation); it is sequenced as it
 sprint-48.md's own reasoning. AI-005 (Must, documentation) depends on whichever of AI-002/003/004 ship
 and closes out that later sprint. See sprint-48.md for the full sequencing rationale. Sprint 49 sequences
 AI-002 (next unblocked story) followed by an AI-005 partial slice (reporting-service README only) — see
-sprint-49.md. AI-003 remains blocked on AI-002 shipping the fact-grounding pattern it reuses; AI-004
-remains deliberately last per the backlog's own priority rationale.
+sprint-49.md. Sprint 50 sequences AI-003 (now unblocked: AI-001 and AI-002 both done) followed by the
+AI-005 dashboard-web slice, closing the full AI-005 story across both services — see sprint-50.md.
+AI-004 remains deliberately last per the backlog's own priority rationale, not yet scoped.
+
+## Sprint 50 (docs/sprints/sprint-50.md, backlog: docs/product/backlog-ai-integration-ux.md)
+
+AI-003 (Should) then AI-005 (Must, dashboard-web slice), sequenced strictly one-then-the-other — same
+precedent as Sprint 49's AI-002 → AI-005 pairing. AI-003 depends on AI-001 (done) and AI-002 (done,
+established the fact-grounding/validation pattern reused here). ADR-0011 binds AI-003's model call to a
+new dedicated `dashboard-web` route (never an existing hot-path route) and requires the Tech Lead to
+explicitly re-check the `libs/ai_assist` extraction trigger against AI-002's actual shipped code once
+AI-003 is scoped — not a default to "always stays inline." Retrieval is limited to gateway-api's existing
+public endpoints only; no new gateway-api endpoint is in this sprint's scope unless a real gap is found
+and flagged.
+
+| Ticket | Story | Module | Depends on | Status |
+|---|---|---|---|---|
+| [AI-003-REFACTOR](AI-003-refactor-ai-assist.md) | Extract `libs/ai_assist` (`AssistClient` Adapter) from `reporting-service`'s AI-002 client — real second-duplication trigger, checked against AI-002's actual shipped code, not assumed | libs/ai_assist, reporting-service (re-export only) | none | done |
+| [AI-003](AI-003.md) | Natural-language Q&A over a tenant's own stored run data via a new `POST /assistant/ask` route, retrieval scoped to gateway-api's existing public endpoints, citation-required, refusal-on-out-of-scope, cross-tenant-leak-guard test (VS-024 precedent) | dashboard-web | AI-001 (done), AI-002 (done), AI-003-REFACTOR (done) | done |
+| [AI-005](AI-005.md) (dashboard-web slice) | Document the AI-assist boundary in `services/dashboard-web/README.md` for AI-003's actual landed behavior; closes the full AI-005 story (reporting-service slice done Sprint 49) | dashboard-web | AI-003 | done |
+
+**Outcome**: `libs/ai_assist` (new package, `naive_first_ai_assist`) ships `AssistClient` Protocol +
+`AssistClientError` + `HostedApiAssistClient` + `get_assist_client()`, extracted verbatim from
+`reporting-service`'s `NarrativeClient` family once AI-003 needed the identical hosted, OpenAI-compatible
+chat-completions HTTPS client — the real second-duplication trigger ADR-0011 named, checked against the
+actual code (not assumed either way). `reporting-service/src/app/narrative/client.py` is now a thin
+backward-compatible re-export; zero reporting-service test files edited, zero behavior change. `services/
+dashboard-web` gained `src/app/assistant/` (`prompt_template.py`, `fact_check.py`, `retrieval.py`,
+`generation.py`) + `src/app/routers/assistant.py` (`GET /assistant`, `POST /assistant/ask`) +
+`assistant.html`/`_assistant_answer.html`. Retrieval is a fixed 0-3-call bound (`GET /runs?limit=10`,
+then `GET /runs/{id}`/`GET /runs/{id}/splits` only for the single most recent run) via
+`DownstreamHeadersDep`; out-of-scope questions (future-price/prediction cues) are refused before any
+model call; every non-degraded answer carries a deterministic citation footer built from real retrieved
+run/split ids, never trusted to model text; three independent degrade paths (unconfigured client, model
+error after one retry, banned-term rejection) all fall back to a fixed "assistant is currently
+unavailable" message, no exception, no hang. No new `gateway-api` endpoint — `services/gateway-api`
+confirmed untouched. `infra/docker-compose.yml`/`infra/README.md` disclose the (reused, not new)
+`NARRATIVE_API_URL`/`NARRATIVE_API_KEY`/`NARRATIVE_API_TIMEOUT_SECONDS` env vars on the `dashboard-web`
+entry. `services/dashboard-web/README.md` gained the "AI-assisted features (AI-003)" section (AI-005);
+`services/reporting-service/README.md`'s AI-002 section got a one-line update noting the client now
+lives in `libs/ai_assist`. **Full suites, personally re-run by the Tech Lead**: `services/reporting-
+service` 68 passed; `libs/ai_assist` 8 passed; `services/dashboard-web` 363 passed, 7 deselected (e2e,
+up from 354 pre-sprint) — zero regressions in any suite. `git diff --stat` confirmed `runs.py` and every
+other pre-existing `dashboard-web` route file byte-unchanged, and `services/gateway-api` fully untouched.
+
+**QA verdict (independent `qa` subagent pass, raised after all three tickets Tech-Lead-verified done)**:
+**GO**. Independently reproduced all three suite counts exactly (`libs/ai_assist` 8, `services/reporting-
+service` 68, `services/dashboard-web` 363/7-deselected), independently traced `retrieval.py`'s fixed
+0-3-call bound, `is_out_of_scope`'s before-any-model-call ordering, the cross-tenant-leak-guard test's
+real per-header mocked-response wiring, the deterministic citation footer, and the bounded no-exception/
+no-hang failure paths. Confirmed `services/gateway-api` and `runs.py` both byte-unchanged, `libs/ai_assist`
+has zero `services/*` imports, positioning/banned-term rules honored throughout. One non-blocking note: a
+rare transient-failure edge case (run list succeeds, run detail fetch fails) reports "no recorded
+validation runs yet" instead of a more precise transient-error message — safe/honest degrade, not a
+defect, not fixed this sprint.
 
 ## Sprint 48
 
@@ -32,8 +85,41 @@ read route.
 
 | Ticket | Story | Module | Depends on | Status |
 |---|---|---|---|---|
-| [AI-002](AI-002.md) | Report narrative generation: LLM-produced, fact-checked, clearly-labeled plain-language summary of a run's own metrics/DM verdict, via hosted open-weights API called from the `run.completed` subscriber | reporting-service | AI-001 (done) | in-progress |
-| [AI-005](AI-005.md) (partial: reporting-service README only) | Document the AI-assist boundary in `services/reporting-service/README.md` for whichever of AI-002's deliverables ship this sprint | reporting-service | AI-002 | todo |
+| [AI-002](AI-002.md) | Report narrative generation: LLM-produced, fact-checked, clearly-labeled plain-language summary of a run's own metrics/DM verdict, via hosted open-weights API called from the `run.completed` subscriber | reporting-service | AI-001 (done) | done |
+| [AI-005](AI-005.md) (partial: reporting-service README only) | Document the AI-assist boundary in `services/reporting-service/README.md` for whichever of AI-002's deliverables ship this sprint | reporting-service | AI-002 | done |
+
+**Outcome**: `services/reporting-service/src/app/narrative/` (new package: `client.py` — `NarrativeClient`
+Adapter/Strategy Protocol + `HostedApiNarrativeClient` (hosted OpenAI-compatible HTTPS endpoint,
+ADR-0011) + `get_narrative_client()`; `prompt_template.py` — versioned `build_prompt(run, splits)`;
+`fact_check.py` — `contains_banned_term`/`is_directionally_consistent`; `generation.py` —
+`generate_narrative_html`, regenerate-once-then-fallback-to-`None`). `app/generation.py`'s
+`generate_validation_audit_report` gained a backward-compatible `narrative_client: NarrativeClient |
+None = None` parameter; `POST /reports/generate` (`app/routers/report_generation.py`) has a
+confirmed-empty diff and never passes one — only `app/subscriber.py`'s `run.completed` handler
+constructs a real client, per ADR-0011's binding safe-extension-point rule.
+`app/renderers/base.py`/`validation_audit.py` and `templates/validation_audit.html.jinja` gained an
+additive, clearly-labeled ("AI-generated summary of the results above") narrative block, byte-identical
+output when `narrative_html=None`. `infra/docker-compose.yml`/`infra/README.md` disclose the three new
+env vars (`NARRATIVE_API_URL`/`NARRATIVE_API_KEY`/`NARRATIVE_API_TIMEOUT_SECONDS`, no default
+baked-in key) on the existing `reporting-service` entry — no new container/service. No `libs/ai_assist`
+created. `services/reporting-service/README.md` gained the "AI-assisted features (AI-002)" section
+(AI-005). **Full `services/reporting-service` suite, personally re-run by the Tech Lead**: 68 passed, 0
+failed (37 pre-existing + 31 new). `git status --porcelain` confirmed empty for `libs/naive_first_engine`,
+`validation-service`, `gateway-api`, `dashboard-web`, `research/`, and
+`docs/product/backlog-model-research.md` — sprint scope held to `reporting-service` (+ `infra`
+disclosure) only.
+
+**QA verdict (independent `qa` subagent pass, raised after both tickets Tech-Lead-verified done)**:
+**GO**. Independently confirmed the sync-route safety constraint (`report_generation.py` empty diff,
+only `subscriber.py` constructs a real `NarrativeClient`), the Adapter/Strategy seam (all
+`tests/narrative/` tests use a fake/stub, zero live network calls), the fact-check gate's real wiring
+and a passing test proving a false "beat naive" claim never ships, a real banned-term test against
+rendered output (not an isolated unit), graceful degradation proven by a real test, the template
+label + byte-identical no-narrative fallback proven by real tests, no `libs/ai_assist`/no new
+container/no baked-in `NARRATIVE_API_KEY` default, README accuracy against the actual diff, and no
+CLAUDE.md positioning-rule violation in the prompt template/fact-check logic/README copy.
+Independently re-ran the full suite and reproduced 68 passed, 0 failed, plus the doc-sync check (4
+passed). No bugs found, blocking or non-blocking.
 
 # First-run setup (SETUP-*, spans `infra`/`gateway-api`/`dashboard-web`)
 

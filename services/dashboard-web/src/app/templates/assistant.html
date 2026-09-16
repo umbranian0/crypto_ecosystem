@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Assistant -- dashboard-web{% endblock %}
+{% block content %}
+<h2>Ask about your validation history</h2>
+<p>This assistant explains your own validation history -- it does not predict prices or markets.</p>
+<form hx-post="/assistant/ask" hx-target="#assistant-answer" hx-swap="innerHTML">
+    <label for="question">Question</label>
+    <textarea id="question" name="question" rows="3"
+        placeholder="e.g. What was the DM verdict for my most recent run?" required></textarea>
+    <button type="submit">Ask</button>
+</form>
+<div id="assistant-answer"></div>
+{% endblock %}
