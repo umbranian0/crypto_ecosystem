@@ -400,3 +400,80 @@ leakage-safe research baselines run through the existing, unmodified protocol; t
 does not change that positioning either way.
 
 See `docs/tickets/MR-014.md` for the documentation ticket itself.
+
+## GRU sequence-model candidate, new `torch` dependency (MR-015, Sprint 53)
+
+**Explicit new-dependency decision, dated 2026-09-16 (mirroring how MR-004 added `lightgbm` and MR-005
+added `hmmlearn`)**: `torch` (CPU-only wheel, `+cpu` build from `https://download.pytorch.org/whl/cpu`, no
+CUDA) is added to `research/pyproject.toml` as the minimal new dependency required for a GRU candidate.
+This overrides Sprint 52's `torch`/`tensorflow` deferral (recorded in `docs/product/backlog-model-
+research.md`'s MR-012 extension header) per this session's explicit requester/PM sign-off — the deferral
+record itself is left unchanged as accurate history of what was decided when. **Why GRU over Transformer**:
+same light-compute-ceiling precedent as MR-004/MR-005/MR-012/MR-013 — the dataset is thousands, not
+millions, of rows, CPU-only with no GPU available, and a full Transformer's attention mechanism is
+unjustified compute for this scale; a single-layer GRU is the minimal recurrent sequence architecture that
+still closes the thesis's own untested-model-class gap (section 1.6: "Boosting, GRU, Transformer ainda não
+testados" — boosting is now tested via MR-004, an sklearn ensemble via MR-013, GRU via this ticket).
+**Why no lighter alternative exists**: the pre-MR-015 dependency set (`pandas`, `numpy`, `lightgbm`,
+`scikit-learn`, `hmmlearn`, `httpx`, `naive_first_engine`) has no recurrent-sequence-model primitive —
+`scikit-learn` has no GRU/RNN implementation, and hand-rolling backpropagation-through-time in raw
+`numpy` would be a far larger, harder-to-verify undertaking than depending on `torch`'s own GRU layer.
+Installed via `cd research && ./.venv/Scripts/python.exe -m pip install torch --index-url
+https://download.pytorch.org/whl/cpu`, confirmed CPU-only build (`torch.__version__` reports
+`2.14.0+cpu`), no CUDA build installed.
+
+**`research/models/gru_sequence.py`** implements `GRUSequenceBaseline`, a new `Baseline`-protocol Strategy
+implementation registered via `config.extra_baselines` exactly like `LightGBMBaseline`/`RegimeHMMBaseline`/
+`StackingEnsembleBaseline`. No `naive_first_engine` change.
+
+- **Architecture/hyperparameters (Tech-Lead-fixed, no search)**: `hidden_size=16`, `epochs=10`,
+  `window=12` timesteps — all well under the ≤32/≤20/≤24 caps. Single-layer
+  `torch.nn.GRU(input_size=1, hidden_size=16, num_layers=1, batch_first=True)` + `torch.nn.Linear(16, 1)`
+  head on the final hidden state. No bidirectionality, no attention, no dropout. Optimizer
+  `torch.optim.Adam(lr=1e-3)`, loss `torch.nn.MSELoss()`, `device=torch.device("cpu")` hardcoded with no
+  CUDA check of any kind (not even a conditional — CPU-only by construction, not by a runtime branch).
+  `torch.manual_seed(42)` set inside every `predict()` call for reproducibility, matching
+  `RegimeHMMBaseline`'s `random_state=42` precedent.
+- **Leakage-guard design**: a dedicated `_build_windows(series, window)` helper (local to
+  `gru_sequence.py`, a deliberate DRY exception — see below) constructs, for target position `i`, an input
+  window of exactly `values[i-window:i]`, never including `values[i]`. Fitting windows are built from
+  `train` only; `test` windows are built from `pd.concat([train.tail(window), test])`, so each `test` row's
+  window may reach back into `train`'s own tail (legitimate train-fold information, the same convention
+  `RegimeHMMBaseline` already uses for lagged state routing) but never into `test`'s own future rows.
+  Scaling (a simple mean/std normalization) is fit on `train`'s own values only, then applied to both
+  `train`- and `test`-derived windows. A fresh model, optimizer, and scaler are constructed inside every
+  `predict()` call — no instance state persisted across calls.
+- **Deliberate DRY exception**: `_build_windows` does NOT reuse `research/features.py::lagged_returns`.
+  `lagged_returns` produces a flat lag-feature `DataFrame`; a GRU needs a 3D tensor of shape
+  `(n_samples, window, 1)` — a structurally different operation, and forcing it through the existing helper
+  would obscure the exact off-by-one boundary the leakage guard exists to prove correct (same reasoning
+  style as MR-009's and MR-012's own explicit DRY-exception write-ups).
+- **Leakage-guard unit test**: `test_build_windows_never_includes_target_and_matches_exact_slice` calls
+  `_build_windows` directly on a synthetic `pd.Series(range(30))` (unique value per timestep), asserts every
+  window equals exactly `values[i-window:i]`, asserts `values[i]` is never present in that window, and
+  additionally constructs the deliberately-broken off-by-one slice `values[i-window+1:i+1]` (which DOES
+  contain `values[i]`) to show, in the same test, that this assertion genuinely distinguishes correct from
+  broken windowing rather than passing trivially.
+- **Real-data run**: reused MR-012's already-landed widened window verbatim — tenant
+  `271d391dd7bf4213b3e5fb8ea6636563`, source `binance_price_btcusdt_1h`,
+  `start="2024-08-08T09:00:00"`, `end="2026-08-07T09:00:00"`, 17,496 returns, `ValidationConfig
+  (train_window=500, test_window=50, step=250)`, `purge_gap=6` for horizon=1/6, `purge_gap=24` for
+  horizon=24, 68 splits per horizon (same as MR-012/MR-013's own measured count, no re-fetch).
+- **Measured runtime**: `pytest tests/test_gru_sequence.py -v -s` — 8 passed in 17.48s (18.73s wall-clock
+  including process startup), well under the 5-minute ceiling. No hyperparameter narrowing was needed.
+- **Observed DM-vs-Naive0 verdict counts**:
+  - 1h (`purge_gap=6`): `{'better': 1, 'worse': 2, 'no significant difference': 65}`
+  - 6h (`purge_gap=6`): `{'better': 2, 'worse': 3, 'no significant difference': 63}`
+  - 24h (`purge_gap=24`): `{'better': 0, 'worse': 0, 'no significant difference': 68}`
+
+The GRU does not beat Naive0 in a stable, significant way at any horizon — a handful of "better" splits at
+1h/6h against a much larger majority of "no significant difference" splits, and no "better" splits at all
+at 24h. This is a fifth independent real-data confirmation of the thesis's core finding, on the last
+model class (GRU) the thesis's own future-work list flagged as untested — not a failed story.
+
+**Hard gate restated (binding, CLAUDE.md)**: no README, UI copy, or customer-facing claim resulting from
+MR-015 asserts the system predicts Bitcoin prices or generates a trading signal, and no "beats naive" claim
+is made — the observed result does not clear the Harvey-corrected DM significance bar at every horizon, so
+the honest "no edge" framing is used throughout.
+
+See `docs/tickets/MR-015.md` for the full ticket.

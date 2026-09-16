@@ -522,6 +522,7 @@ naive benchmark — never a standalone predictive-edge claim (see `research/READ
 | [MR-012](MR-012.md) | Widen the real-data window MR-008/MR-009 used, re-run at 1h/6h/24h (Sprint 52) | MR-008 (done), MR-009 (done) | done |
 | [MR-013](MR-013.md) | Sklearn-only stacking ensemble of LightGBMBaseline + RegimeHMMBaseline (Sprint 52) | MR-004 (done), MR-005 (done), MR-008 (done), MR-009 (done) | done |
 | [MR-014](MR-014.md) | Document MR-012/MR-013 outcomes + GRU/Transformer deferral decision (Sprint 52) | MR-012 (done), MR-013 (done) | done |
+| [MR-015](MR-015.md) | GRU sequence-model candidate `Baseline`, CPU-only, new `torch` dependency (Sprint 53) | MR-004 (done), MR-005 (done), MR-008 (done), MR-009 (done), MR-012 (done), MR-013 (done) | done |
 
 ## Sprint 41 (docs/sprints/sprint-41.md, backlog: docs/product/backlog-model-research.md)
 
@@ -2854,3 +2855,65 @@ next ticket's input): `VS-031 → VS-032 → VS-033 → GW-031 → DASH-129`.
 | [VS-033](VS-033.md) | RAV-007 (validation-service half): `GET /runs/{id}/splits/{split_index}/points` + canonical `SplitPointResponse` contract | validation-service, libs/common | VS-031, VS-032 | done |
 | [GW-031](GW-031.md) | RAV-007 (gateway-api half): pass-through proxy for the new endpoint | gateway-api | VS-033 | done |
 | [DASH-129](DASH-129.md) | RAV-008: predicted-vs-actual chart per split | dashboard-web | GW-031 | done |
+
+# Sprint 53 — `research/`: GRU sequence-model candidate (MR-015)
+
+Source: `docs/sprints/sprint-53.md`, `docs/product/backlog-model-research.md`'s "Extension: GRU
+sequence-model candidate (MR-015)" section. Single-story sprint, no parallel tracks — the last untested
+model class in the thesis's future-work list (GRU) implemented as a `Baseline` candidate and run against
+MR-012's real `binance_btcusdt_1h` window at 1h/6h/24h under the unmodified leakage-safe protocol. This
+sprint's MR-015 entry exists because the user explicitly signed off this session on adding `torch`,
+overriding Sprint 52's recorded deferral (that deferral record stands unchanged as accurate history).
+
+| Ticket | Story | Module | Depends on | Status |
+|---|---|---|---|---|
+| [MR-015](MR-015.md) | GRU sequence-model candidate `Baseline`, CPU-only, new `torch` dependency | research | MR-004 (done), MR-005 (done), MR-008/MR-009 (done), MR-012 (done), MR-013 (done) | done |
+
+**Outcome**: `research/models/gru_sequence.py` (new) implements `GRUSequenceBaseline`, a single-layer
+`torch.nn.GRU(input_size=1, hidden_size=16, num_layers=1, batch_first=True)` + `torch.nn.Linear(16, 1)`
+head, fixed hyperparameters `hidden_size=16, epochs=10, window=12` (all under the 32/20/24 caps),
+`device=torch.device("cpu")` hardcoded with no CUDA branch, fresh model/optimizer/scaler constructed
+per `predict()` call, train-fold-only scaling. `torch` (CPU-only `+cpu` wheel, `torch-2.14.0+cpu`) added
+as the sole new `research/pyproject.toml` dependency, documented in `research/README.md` as a dated
+(2026-09-16) decision mirroring MR-004/MR-005's own dependency write-ups.
+
+Run against MR-012's exact widened window (tenant `271d391dd7bf4213b3e5fb8ea6636563`, source
+`binance_price_btcusdt_1h`, `2024-08-08T09:00:00`–`2026-08-07T09:00:00`, 17,496 returns, 68 splits per
+horizon, `purge_gap=6` for 1h/6h and `purge_gap=24` for 24h): `pytest tests/test_gru_sequence.py -v -s`
+— **8 passed in 17.15s** (Tech-Lead re-run), well under the 5-minute ceiling, no hyperparameter narrowing
+needed. Observed DM-vs-Naive0 verdicts: 1h `{'better': 1, 'worse': 2, 'no significant difference': 65}`;
+6h `{'better': 2, 'worse': 3, 'no significant difference': 63}`; 24h `{'better': 0, 'worse': 0, 'no
+significant difference': 68}`. The GRU does not beat Naive0 in a stable, significant way at any
+horizon — a fifth independent real-data confirmation of the thesis's core finding, on the last model
+class (GRU) the thesis's own future-work list flagged as untested.
+
+**Tech Lead review (personally performed)**: traced the leakage guard's control flow directly in
+`gru_sequence.py` (`_build_windows`'s index arithmetic never touches position `i`; test windows may reach
+into `train`'s tail but never `test`'s own future rows; scaling statistics computed from `train` only
+before `test` is read). Personally read the leakage-guard unit test
+(`test_build_windows_never_includes_target_and_matches_exact_slice`) and confirmed by direct mechanical
+proof it would fail against a deliberately-broken off-by-one slice (`values[i-window+1:i+1]`, which always
+contains the target). Confirmed fresh model/optimizer per `predict()` call (no persisted instance state).
+Confirmed hyperparameters match the fixed scoping decision exactly, no narrowing needed. Confirmed no
+CLAUDE.md positioning-rule violation anywhere in the new code/docs. Re-ran `libs/naive_first_engine` (99
+passed) and `services/validation-service` (222 passed, 1 pre-existing unrelated failure in
+`test_runs_list_endpoint.py`, module untouched by this sprint — see Known gaps below) to confirm zero
+regressions in modules this sprint does not touch.
+
+**QA verdict (independent `qa` subagent pass, raised per this platform's standing rule)**: **GO**.
+Independently re-verified the leakage-guard test's genuineness via its own standalone repro script
+(25/25 rows fail against the deliberately-broken slice), re-ran `test_gru_sequence.py` (8 passed in
+25.73s), confirmed the compute ceiling and CPU-only device, confirmed the Harvey-correction test genuinely
+exercises horizon-dependent DM statistic behavior and `purge_gap=24` is used at horizon 24, confirmed no
+unauthorized predictive-capability claim anywhere in the new docs/code, confirmed `git status --porcelain`
+scope matches exactly the expected file set, confirmed per-split re-instantiation and train-fold-only
+scaling by reading `predict()` directly.
+
+**Known gaps (non-blocking, out of MR-015's scope, pre-existing)**:
+`services/validation-service/tests/test_runs_list_endpoint.py` has a pre-existing ordering/tie-break flake
+(2 of its own tests fail on an isolated run of the module's suite) — independently confirmed by both the
+Tech Lead and QA to predate this sprint (module untouched, `git status --porcelain
+services/validation-service` empty). Recommend a separate follow-up ticket; not a Sprint 53 blocker.
+
+See `docs/tickets/MR-015.md` for the full ticket and `research/README.md`'s "GRU sequence-model candidate,
+new `torch` dependency (MR-015, Sprint 53)" section for full detail.
