@@ -223,3 +223,98 @@ baseline). Full `research/tests/` suite: 21 passed in 7.38s. `libs/naive_first_e
 99 passed in 2.29s.
 
 See `docs/tickets/MR-006.md` for the full ticket.
+
+## Real BTC/USDT data (MR-008/MR-009)
+
+`research/real_data.py`'s `load_real_hourly_returns(tenant_id, source, start, end, base_url, field=None)`
+is a small, `research/`-owned HTTP client (`httpx`) that calls `ingestion-service`'s existing
+`GET /datasets/{source}/series` route directly, sends `X-Tenant-Id`, and returns a sorted `pd.Series`
+(raw levels, not returns — the returns transform is left to the caller, mirroring
+`dataset_source.py`'s own "load a series" vs. "what the caller does with it" separation). Raises
+`RealDataSourceError` (not a bare `httpx` exception) on a non-2xx response or malformed JSON.
+
+**Binding "never import `app.*`" rule**: this module deliberately does **not** import
+`services/validation-service/src/app/dataset_source.py::IngestionServiceDatasetSource`, even though that
+class implements the identical HTTP contract — that class lives under `services/validation-service`'s own
+`app` package (service code, not a shared `libs/*` package), and `research/` may only call another
+module's HTTP API, never its app code (CLAUDE.md, `docs/tickets/MR-008.md`'s Design section).
+`real_data.py` re-implements only the minimal request/response handling needed (`GET .../series` -> JSON
+-> sorted `pd.Series`), not a copy of `dataset_source.py`'s CSV-parsing logic.
+
+**Environment repair needed before this ticket's own scope could start (disclosed in full in
+`docs/tickets/MR-008.md`'s Analysis section)**: the live local Docker stack's Postgres had exited; once
+restarted, the live Postgres was found polluted with 1,870 leftover test tenants, none of which had the
+Sprint 45 platform-history backfill present; the provision-time auto-seed hook (`GW-030`/`INGEST-030`)
+itself 503'd because `services/ingestion-service`'s Docker image never ships the real seed CSVs
+(`data/raw/_platform/`, present on the host, never `COPY`/mounted into the container — a real, disclosed
+packaging gap, flagged as a follow-up infra ticket, not fixed here). Fixed live: Postgres restarted,
+seed CSVs `docker cp`'d into the running container (not git-tracked, does not survive a container
+recreate), a dedicated research tenant (`271d391dd7bf4213b3e5fb8ea6636563`) created and seeded with
+78,523 real `binance_price_btcusdt_1h` rows (2017-08-17 through at least 2026-08-07).
+
+**MR-008 (Sprint 47, `docs/tickets/MR-008.md`) — real-data run, 1h/6h**: `LightGBMBaseline` (MR-004) and
+`RegimeHMMBaseline` (MR-005), unmodified, registered via `config.extra_baselines` and run through the
+real, unmodified `run_validation_protocol` against the real research tenant's `binance_price_btcusdt_1h`
+series.
+
+- **Tenant/source**: `tenant_id="271d391dd7bf4213b3e5fb8ea6636563"`, `source="binance_price_btcusdt_1h"`,
+  `field` omitted (defaults to `close`).
+- **Date range / row count bound (disclosed)**: `start="2026-01-10T00:00:00"`,
+  `end="2026-08-07T09:00:00"` — the most recent ~209-day window of the full 2017-08-17–2026-08-07 series
+  (~78,500 rows total). This window returned **5,026 rows**; not the full history, to stay CPU-only and
+  under a 5-minute runtime ceiling.
+- **Returns transform**: `raw_series.pct_change().dropna()` (5,025 returns), applied by the test before
+  any baseline/Naive0 comparison — consistent with MR-001's "compare on returns, not levels" methodology.
+- **`ValidationConfig`**: `train_window=500, test_window=50, step=250, purge_gap=6`, horizons `1` and `6`
+  — identical to MR-004/MR-005's synthetic-data config, reused rather than re-derived.
+- **Measured runtime**: `uv run pytest tests/test_real_data_mr008.py -q -s` — 5 passed in 7.20s
+  (pytest-reported; 8.16s wall-clock including interpreter startup), well under the 5-minute ceiling.
+- **Observed DM-vs-Naive0 verdict counts** (18 splits per horizon, real BTC/USDT data, not synthetic):
+  - 1h `LightGBMBaseline`: `{'better': 0, 'worse': 4, 'no significant difference': 14}`
+  - 1h `RegimeHMMBaseline`: `{'better': 0, 'worse': 0, 'no significant difference': 18}`
+  - 6h `LightGBMBaseline`: `{'better': 0, 'worse': 2, 'no significant difference': 16}`
+  - 6h `RegimeHMMBaseline`: `{'better': 0, 'worse': 0, 'no significant difference': 18}`
+
+Neither candidate model beat Naive0 in a stable, significant way on this real, recent BTC/USDT window —
+consistent with the synthetic-data findings (MR-004/MR-005) and the thesis's own core finding. This is a
+second, independent confirmation, reported honestly, not softened or buried.
+
+**Hard gate restated (binding, CLAUDE.md)**: no README, UI copy, or customer-facing claim resulting from
+this story asserts the system predicts Bitcoin prices or generates a trading signal — this is
+leakage-safe benchmarking research against Naive0, and the result above (no improvement) does not change
+that positioning either way.
+
+See `docs/tickets/MR-008.md` for the full ticket.
+
+**MR-009 (Sprint 47, `docs/tickets/MR-009.md`) — real-data run, 24h, Harvey-corrected**: same candidate
+models, same real research tenant, same bounded `2026-01-10T00:00:00`–`2026-08-07T09:00:00` window MR-008
+already fetched (5,026 raw rows / 5,025 returns — no re-fetch, no new window), extended to `horizon=24`.
+
+- **Purge-gap-widening decision (explicit, binding)**: this run uses `purge_gap=24`, wider than MR-008's
+  `purge_gap=6` — matching `libs/naive_first_engine`'s own thesis-regression-suite convention
+  (`test_regression_1h/6h/24h.py` all use `purge_gap=24` uniformly, independent of horizon) and the minimum
+  requirement to keep a 24-hours-ahead target window from overlapping into the very next split's training
+  rows. `train_window`/`test_window`/`step` are unchanged from MR-008 so the split counts stay comparable.
+- **Harvey correction confirmation**: `dm_test.py`'s long-run-variance correction is the
+  `for k in range(1, horizon)` autocovariance-sum branch (`dm_test.py` lines ~104-120) — a no-op for
+  `horizon=1` (`range(1, 1)` is empty) but active for `horizon=24` (23 summed terms), reached unmodified
+  through `run_validation_protocol` → `dm_test(..., horizon=config.horizon)`
+  (`libs/naive_first_engine/src/naive_first_engine/protocol.py` lines 126/137). Verified structurally (code
+  read directly) and via `research/tests/test_real_data_mr009.py::
+  test_harvey_correction_branch_fires_for_horizon_24`, which asserts the DM statistic for identical error
+  series differs between `horizon=1` and `horizon=24` — proof the corrected-variance code path executes,
+  not a hand-derivation of the statistic.
+- **`ValidationConfig`**: `train_window=500, test_window=50, step=250, purge_gap=24, horizon=24`.
+- **Measured runtime**: `uv run --no-sync pytest tests/test_real_data_mr009.py -q -s` — 2 passed in 3.32s
+  (pytest-reported), ~4.03s wall-clock, well under the 5-minute ceiling.
+- **Row count used**: 5,026 raw rows / 5,025 returns — identical to MR-008 (same window, no re-fetch).
+- **Observed DM-vs-Naive0 verdict counts** (18 splits, real BTC/USDT data, `horizon=24`):
+  - `LightGBMBaseline`: `{'better': 0, 'worse': 2, 'no significant difference': 16}`
+  - `RegimeHMMBaseline`: `{'better': 0, 'worse': 0, 'no significant difference': 18}`
+
+Neither candidate model beat Naive0 in a stable, significant way at 24h either — consistent with MR-008's
+1h/6h findings and the thesis's own core finding across all three of its original horizons, now checked on
+this real, bounded window. No profitability or price-prediction claim follows from this result either way
+(CLAUDE.md).
+
+See `docs/tickets/MR-009.md` for the full ticket.

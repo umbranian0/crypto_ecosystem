@@ -2,6 +2,39 @@
 
 Eleven sections are tracked here, kept as clearly separated: `libs/naive_first_engine` (NFE-*, Sprint 01+02, done), `services/validation-service` (VS-*, Sprint 03+04+06+09+10+14), `libs/common` (LC-*, Sprint 04+10; ARCH-*, Sprint 06+10), `services/gateway-api` (GW-*, Sprint 05+06+14), `infra` (INF-*, Sprint 06+07+14), the cross-cutting Operability backlog (OPS-*, Sprint 08+09), `services/ingestion-service` (INGEST-*, Sprint 10), `services/dashboard-web` (DASH-*, Sprint 11), `services/reporting-service` (RS-*, Sprint 12), and `services/economic-service` (ECON-*, Sprint 13 — a disclosed, user-authorized override of trigger #11's ethical/business-honesty boundary, scaffolding-only, see that section below for the full framing). Sprint 14 (docs/sprints/sprint-14.md) closes two disclosed capability gaps (`DASH-005-GAP`, `RS-GAP`) across three modules (`validation-service`, `gateway-api`, `infra`) in one sprint — see the "Sprint 14" subsections under each relevant module below. Sprint 06 (docs/sprints/sprint-06.md) spans ARCH-*/INF-*/two VS-*/one GW-* tickets in one debt sprint — see the "Sprint 06" subsections under each relevant module below. Sprint 10 (docs/sprints/sprint-10.md) closes four longstanding pure-documentation debt items (LC-005, ARCH-007, ARCH-008, VS-016) plus one retroactive tracking ticket (INGEST-001) — see the "Sprint 10" subsections under each relevant module below. **Note on the Sprint 12/13 file-content incident (resolved)**: due to a race between two concurrent background agent sessions writing to this repo directory at nearly the same time (Sprint 12's `reporting-service` PM output and Sprint 13's `economic-service` PM output both originally arrived from their respective agents under the same working filename before being placed/renamed), `docs/sprints/sprint-12.md`'s committed content ended up containing `services/economic-service` (ECON-*) planning text instead of `services/reporting-service` content, despite its commit message correctly reading "Sequence Sprint 12: services/reporting-service PoC." The Sprint 12 Tech Lead caught the mismatch independently, correctly did not treat it as authorization to build `economic-service` under Sprint 12, and worked from `docs/product/backlog-reporting-service.md` and its own task instructions directly instead. The file has since been corrected in place, restoring the real `reporting-service` sprint content (recovered from this session's own prior read of the source, not from git history, since the wrong content had already been committed). `docs/sprints/sprint-13.md` (the correct, intact `economic-service` sprint file, including its Outcome section) was unaffected throughout.
 
+# AI-assist (AI-*, spans `services/reporting-service`/`services/dashboard-web`)
+
+Source: docs/sprints/sprint-48.md, docs/product/backlog-ai-integration-ux.md. Separate track from the
+model-research backlog (MR-*, `research/`) — does not touch `research/`, `libs/naive_first_engine`, or
+`docs/product/backlog-model-research.md`. AI-001 (Must) is a feasibility spike gating AI-002/AI-003/
+AI-004 (all depend on its serving-pattern recommendation); it is sequenced as its own sprint per
+sprint-48.md's own reasoning. AI-005 (Must, documentation) depends on whichever of AI-002/003/004 ship
+and closes out that later sprint. See sprint-48.md for the full sequencing rationale. Sprint 49 sequences
+AI-002 (next unblocked story) followed by an AI-005 partial slice (reporting-service README only) — see
+sprint-49.md. AI-003 remains blocked on AI-002 shipping the fact-grounding pattern it reuses; AI-004
+remains deliberately last per the backlog's own priority rationale.
+
+## Sprint 48
+
+| Ticket | Story | Module | Depends on | Status |
+|---|---|---|---|---|
+| [AI-001](AI-001.md) | Feasibility spike: open-source LLM serving pattern (local Ollama/llama.cpp vs. hosted open-weights API), ADR + binding `libs/ai_assist` decision | reporting-service, dashboard-web (decision only, no feature code) | none | done — [docs/adr/0011-ai-assist-model-serving.md](../adr/0011-ai-assist-model-serving.md): hosted open-weights API recommended for AI-002 and AI-003, local Ollama deferred, no `libs/ai_assist` yet |
+
+## Sprint 49 (docs/sprints/sprint-49.md, backlog: docs/product/backlog-ai-integration-ux.md)
+
+AI-002 (Should) then AI-005 (Must, partial: reporting-service README slice only), sequenced
+strictly one-then-the-other — AI-005 documents AI-002's actual landed behavior, so it cannot start
+before AI-002's diff lands. Next unblocked story per the backlog's own dependency chain (AI-001 done);
+AI-003/AI-004 remain explicitly deferred/not-yet-scoped (see sprint-49.md). Hosted open-weights API
+only, no `libs/ai_assist`, model call lives in `reporting-service`'s existing `run.completed`
+subscriber (RS-006) per ADR-0011's binding recommendation — no inline synchronous call on any hot-path
+read route.
+
+| Ticket | Story | Module | Depends on | Status |
+|---|---|---|---|---|
+| [AI-002](AI-002.md) | Report narrative generation: LLM-produced, fact-checked, clearly-labeled plain-language summary of a run's own metrics/DM verdict, via hosted open-weights API called from the `run.completed` subscriber | reporting-service | AI-001 (done) | in-progress |
+| [AI-005](AI-005.md) (partial: reporting-service README only) | Document the AI-assist boundary in `services/reporting-service/README.md` for whichever of AI-002's deliverables ship this sprint | reporting-service | AI-002 | todo |
+
 # First-run setup (SETUP-*, spans `infra`/`gateway-api`/`dashboard-web`)
 
 Source: docs/sprints/sprint-29.md, docs/product/backlog-first-run-setup-and-ops.md.
@@ -259,6 +292,30 @@ against real diffs (not just dev-agent self-reports) and re-run test suites.
   No code-level blockers found. Minor cosmetic doc drift flagged (a stale note elsewhere implying
   dashboard-web runs bare rather than in Compose) — not corrected in this pass, left as a known small
   cleanup item for a future docs pass.
+
+## Sprint 47 (docs/sprints/sprint-47.md, backlog: docs/product/backlog-model-research.md)
+
+MR-008 -> MR-009 -> MR-011, strictly sequential (same real dataset/pipeline, not independent tracks) — see
+sprint-47.md's "Why a single sprint, not two" section. Re-runs the already-shipped `LightGBMBaseline`
+(MR-004) and `RegimeHMMBaseline` (MR-005) against real `binance_price_btcusdt_1h` data (previously tested
+only on a seeded synthetic series) at all three of the thesis's original horizons.
+
+| Ticket | Story | Module | Depends on | Status |
+|---|---|---|---|---|
+| [MR-008](MR-008.md) | Re-run LightGBM/RegimeHMM candidates against real BTC/USDT hourly data, 1h/6h | research | MR-004 (done), MR-005 (done), MR-001 (done) | done |
+| [MR-009](MR-009.md) | Extend real-data run to 24h, Harvey-corrected, explicit purge-gap-widening decision (purge_gap=24, wider than MR-008's 6) | research | MR-008 (done) | done |
+| [MR-011](MR-011.md) | Document real-data outcomes in research/README.md + ticket index | research | MR-008 (done), MR-009 (done) | done |
+
+**Environment note (Tech Lead, before ticket work started)**: the local Docker stack's Postgres had
+exited and, once restarted, was found heavily polluted with 1,870 leftover test tenants; no tenant had the
+Sprint 45 platform-history backfill present; the live provision-time auto-seed hook (`GW-030`/`INGEST-030`)
+itself 503'd because `services/ingestion-service`'s Docker image never ships the real seed CSVs
+(`data/raw/_platform/`, present on the host, never `COPY`/mounted into the container — a real, disclosed
+packaging gap, flagged as a follow-up infra ticket). Fixed live (Postgres restarted, seed CSVs `docker cp`'d
+into the running container, a dedicated research tenant created and seeded with 78,523 real
+`binance_price_btcusdt_1h` rows spanning 2017-08-17–2026-08-07) — see `docs/tickets/MR-008.md`'s Analysis
+section for the full narrative. None of this touched `libs/naive_first_engine`, any service's source code,
+or any git-tracked file.
 
 ## Sprint 40 (docs/sprints/sprint-40.md, backlog: docs/product/backlog-guided-input.md + docs/product/backlog-model-research.md)
 
