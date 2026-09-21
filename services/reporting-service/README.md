@@ -71,19 +71,23 @@ also out of scope this sprint (HTML only, backlog decision 3).
 - **TRUST-001-02**: the report includes an always-visible "2. Methodology" section, inserted directly
   after section 1 ("Scope") and **before** the `status != "completed"` gate — unlike every other
   results-dependent section, it renders for a non-`"completed"`/zero-split run exactly as for a
-  completed one. `ValidationAuditRenderer` passes a new `METHODOLOGY_FACTS: tuple[str, str, str, str]`
-  module-level constant (`src/app/renderers/validation_audit.py`) into the template context; the
+  completed one. `ValidationAuditRenderer` passes `METHODOLOGY_FACTS: tuple[str, str, str, str]`,
+  imported from `naive_first_common.disclosures` (`libs/common`), into the template context; the
   template renders the four facts verbatim in a `<ul>` (rolling-origin walk-forward, the purge gap,
   the mandatory Naive0/NaiveLast baseline comparison, and the Diebold-Mariano test with the Harvey et
   al. (1997) long-run variance correction). The previously-existing gated "2. Leakage-protocol
   parameters" section (this run's own parameter *values*, still completed-only) is renamed to
   **"2.1 This run's leakage-protocol parameter values"** — a sub-number under the new section 2;
-  sections 2.5/3/4/5/6/7 keep their existing numbers unchanged. `METHODOLOGY_FACTS`'s wording is
-  copied verbatim (byte-for-byte), not imported, from `services/dashboard-web`'s independently-
-  authored `TRUST-001-01` constant of the same name (CLAUDE.md's module-boundary rule — no service
-  imports another service's code); `tests/test_renderers.py::test_methodology_facts_matches_shared_wording`
-  asserts exact tuple equality against the same four hardcoded literals dashboard-web's own same-text
-  test uses, so the two copies drifting out of sync fails a test in each service, not just one.
+  sections 2.5/3/4/5/6/7 keep their existing numbers unchanged. `METHODOLOGY_FACTS`'s wording lives in
+  `libs/common` (`naive_first_common/disclosures.py`), shared with `dashboard-web`'s run-detail panel
+  so the audit report and the UI cannot tell a tenant two different things about the validation
+  protocol — CLAUDE.md's DRY rule pulls cross-module duplication into a `libs/*` package rather than
+  copy-pasting it across service boundaries (the no-cross-service-import rule is about one *service*
+  importing another's code, which this is not). The canonical exact-text assertion lives once in
+  `libs/common/tests/test_disclosures.py`; `tests/test_renderers.py::test_methodology_facts_comes_from_the_shared_library`
+  asserts only *identity* with that shared constant. Originally (TRUST-001-02) this text was copy-pasted
+  here with a hand-mirrored same-text test; that guard could not actually detect drift, since each
+  service's test compared its own copy against another literal in its own test file.
 - **TRUST-004**: the report includes a "2.5. Reproducibility statement" subsection, positioned between section 2 ("Leakage-protocol parameters") and section 3 ("Results table (per split)"), inside the same `status == "completed"` `else` branch (so it's omitted for a non-completed run same as every other results-dependent section). It renders verbatim, template-only, no recomputation: `RunDetailResponse.engine_version`, `.config_fingerprint`, and `.dataset_id` (reused, not a second independently-sourced field), plus a fixed sentence stating that re-running the same configuration/dataset/engine version is expected to reproduce these results (a methodology/audit claim, not a prediction/trading claim). For a run predating `TRUST-003`'s engine-fingerprint tracking (`engine_version`/`config_fingerprint` both `None`, the field default), it renders an explicit "Engine version / config fingerprint not available for runs created before this platform tracked engine fingerprints" note instead — never a fabricated fingerprint, never a bare `"None"` string. `ValidationAuditRenderer`/`generation.py` required zero Python change (`RunDetailResponse` already passes through to the template context unmodified, RS-003's existing pattern).
 - The leakage checklist and statistical-vs-economic disclaimer in every report are populated programmatically from `validation-service` run metadata where possible, never hand-typed — reduces drift between what the engine actually did and what the report claims it did.
 - Data access goes through a Repository layer (`ReportRepository`) — implementation-plan.md section 7 — same pattern as every other tenant-scoped service in this platform.

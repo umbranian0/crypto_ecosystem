@@ -448,8 +448,8 @@ DM/Harvey-mentioning content on this page (`_dm_verdict_chart.html`'s caption, t
 naming either, sits inside `{% if splits %}` and is absent for a zero-split run). This closes that
 gap: a `"running"`/`"failed"` run with zero splits still states the platform's leakage-aware protocol.
 
-- **`app/routers/runs.py`** gained `METHODOLOGY_FACTS: tuple[str, str, str, str]` (a new module-level
-  constant, placed near `CAVEAT_SENTENCE`, same "static disclosure text" shape) stating: rolling-origin
+- **`app/routers/runs.py`** imports `METHODOLOGY_FACTS: tuple[str, str, str, str]` from
+  `naive_first_common.disclosures` (`libs/common`) stating: rolling-origin
   walk-forward validation (train-only-on-the-past, test-only-on-what-follows), the configurable purge
   gap that closes the boundary-leakage channel a plain train/test split allows, the mandatory Naive0/
   NaiveLast baseline comparison (a model's result is never reported in isolation), and the
@@ -462,13 +462,17 @@ gap: a `"running"`/`"failed"` run with zero splits still states the platform's l
   link to `/help/leakage-demo` (the route `TRUST-002` builds -- not required to exist yet for this
   ticket's own tests, which assert only on the `<a href="/help/leakage-demo">` markup, not a live link
   check).
-- **Same-text mechanism**: `tests/test_runs_detail.py`'s `test_methodology_facts_matches_shared_wording`
-  asserts `METHODOLOGY_FACTS` against the four literal strings hardcoded in the test file via exact
-  tuple equality (not substring matching) -- the same `CAVEAT_SENTENCE`-exact-match precedent (FHS-004).
-  `METHODOLOGY_FACTS`'s wording is authored once in this file and reused **verbatim, byte-for-byte** by
-  `TRUST-001-02` independently in `services/reporting-service` -- no cross-service import (CLAUDE.md's
-  module-boundary rule); the two copies are kept in sync by hand, and this test is what would catch a
-  future edit here that silently drifts out of sync with that other copy.
+- **Shared-source mechanism**: the wording lives in `libs/common`
+  (`naive_first_common/disclosures.py`), which this service and `reporting-service` both render from,
+  per CLAUDE.md's DRY rule that cross-module duplication is pulled into a `libs/*` package rather than
+  copy-pasted across service boundaries. (The no-cross-service-import rule forbids one *service*
+  importing another's code -- a different thing, and what this shared package exists to avoid.) The
+  canonical exact-text assertion lives once in `libs/common/tests/test_disclosures.py`;
+  `tests/test_runs_detail.py`'s `test_methodology_facts_comes_from_the_shared_library` asserts only
+  *identity* with that shared constant, so a local re-definition fails even if its text happened to
+  match. Originally (TRUST-001-01/02) this text was copy-pasted into both services with a hand-mirrored
+  same-text test in each; that guard could not actually detect drift, since each service's test compared
+  its copy against another literal in its own test file, and nothing cross-checked the two services.
 - **Positioning**: no "prediction"/"forecast"/"signal"/"recommendation" anywhere in
   `_methodology_panel.html`'s rendered text, per
   `test_methodology_panel_partial_has_no_banned_positioning_words` (same banned-word-scan convention as

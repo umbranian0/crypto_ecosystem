@@ -27,24 +27,10 @@ from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from naive_first_common.contracts import RunDetailResponse, SplitResultResponse
+from naive_first_common.disclosures import METHODOLOGY_FACTS
 
 from app.renderers.base import ReportRenderer
 
-# TRUST-001-02: byte-identical to dashboard-web's TRUST-001-01 `METHODOLOGY_FACTS`
-# (copied verbatim, not imported -- no cross-service import, implementation-plan.md
-# section 2). A same-text test in this service's suite guards drift.
-METHODOLOGY_FACTS: tuple[str, str, str, str] = (
-    "Rolling-origin walk-forward validation: each split trains on data up to a point in "
-    "time and tests only on the period immediately after it -- never on rows the model "
-    "could not yet have seen.",
-    "A configurable purge gap separates every split's training window from its test "
-    "window, closing the boundary-leakage channel a plain train/test split allows.",
-    "Every run is benchmarked against the mandatory Naive0 and NaiveLast baselines -- a "
-    "model's result is never reported in isolation.",
-    "Model-vs-baseline comparisons use the Diebold-Mariano test with the Harvey et al. "
-    "(1997) long-run variance correction for overlapping horizons, not a raw metric "
-    "difference.",
-)
 
 _TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 

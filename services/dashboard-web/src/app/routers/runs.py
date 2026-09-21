@@ -348,6 +348,7 @@ from naive_first_common.contracts import (
     SplitPointResponse,
     SplitResultResponse,
 )
+from naive_first_common.disclosures import METHODOLOGY_FACTS
 from pydantic import ValidationError
 
 from app.charting import (
@@ -467,22 +468,9 @@ CAVEAT_SENTENCE = (
 # `_methodology_panel.html`, outside `{% if splits %}` -- unlike
 # `CAVEAT_SENTENCE` above (only shown once splits/a shareable summary exist),
 # this is the platform's one methodology statement that must render for a
-# zero-split run too (Analysis section's verified gap). Authored once here,
-# verbatim (byte-for-byte); `TRUST-001-02` independently reuses this exact
-# text in `reporting-service` -- no cross-service import (CLAUDE.md module
-# boundary), so any future edit here must be mirrored there by hand.
-METHODOLOGY_FACTS: tuple[str, str, str, str] = (
-    "Rolling-origin walk-forward validation: each split trains on data up to a point in "
-    "time and tests only on the period immediately after it -- never on rows the model "
-    "could not yet have seen.",
-    "A configurable purge gap separates every split's training window from its test "
-    "window, closing the boundary-leakage channel a plain train/test split allows.",
-    "Every run is benchmarked against the mandatory Naive0 and NaiveLast baselines -- a "
-    "model's result is never reported in isolation.",
-    "Model-vs-baseline comparisons use the Diebold-Mariano test with the Harvey et al. "
-    "(1997) long-run variance correction for overlapping horizons, not a raw metric "
-    "difference.",
-)
+# zero-split run too (Analysis section's verified gap). Imported from
+# `libs/common`, which `reporting-service` renders from as well, so the UI and
+# the audit report cannot drift apart -- see that module's own docstring.
 
 # DASH-119: a pre-RSS-004 run can carry an unbounded number of persisted splits
 # (RSS-004's 500-split guardrail on `POST /runs`, `services/validation-service/

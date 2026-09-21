@@ -16,6 +16,8 @@ import pytest
 from naive_first_common.contracts import RunDetailResponse, SplitResultResponse
 
 from app.renderers.factory import UnknownReportKindError, get_report_renderer
+from naive_first_common.disclosures import METHODOLOGY_FACTS as shared_methodology_facts
+
 from app.renderers.validation_audit import METHODOLOGY_FACTS, ValidationAuditRenderer
 
 DISCLAIMER_TEXT = (
@@ -302,24 +304,13 @@ def test_methodology_section_sits_before_leakage_params_and_reproducibility_and_
     )
 
 
-def test_methodology_facts_matches_shared_wording():
-    """Same-text test (mirrors dashboard-web's TRUST-001-01 test name/shape):
-    this service's own copy of `METHODOLOGY_FACTS` must be byte-identical,
-    via exact tuple equality (not substring matching), to the four literal
-    strings independently authored/reused by dashboard-web under TRUST-001-01.
-    QA independently verifies this fails if either service's copy drifts."""
-    assert METHODOLOGY_FACTS == (
-        "Rolling-origin walk-forward validation: each split trains on data up to a point in "
-        "time and tests only on the period immediately after it -- never on rows the model "
-        "could not yet have seen.",
-        "A configurable purge gap separates every split's training window from its test "
-        "window, closing the boundary-leakage channel a plain train/test split allows.",
-        "Every run is benchmarked against the mandatory Naive0 and NaiveLast baselines -- a "
-        "model's result is never reported in isolation.",
-        "Model-vs-baseline comparisons use the Diebold-Mariano test with the Harvey et al. "
-        "(1997) long-run variance correction for overlapping horizons, not a raw metric "
-        "difference.",
-    )
+def test_methodology_facts_comes_from_the_shared_library():
+    """`METHODOLOGY_FACTS` is re-exported from `libs/common`, not re-authored
+    here -- the canonical wording and its exact-text assertion live in that
+    package's own suite, so the two rendering services cannot drift apart.
+    This test guards the import itself: a local re-definition would break the
+    identity check even if the text happened to match."""
+    assert METHODOLOGY_FACTS is shared_methodology_facts
 
 
 def test_methodology_section_has_no_banned_positioning_words():

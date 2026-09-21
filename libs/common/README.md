@@ -48,6 +48,14 @@ Implementation-plan.md section 8: "for libs, the public function signatures in t
 ### `diagnostics.py`
 - `RecentErrorsHandler` (class)
 
+### `disclosures.py`
+Shared user-facing disclosure text rendered by more than one service. Exports
+one module-level constant (not a function/class, so not part of the
+machine-checked list above): `METHODOLOGY_FACTS` -- the four-fact statement of
+the leakage-aware validation protocol, rendered by `dashboard-web`'s run-detail
+methodology panel and by `reporting-service`'s audit report. See "Shared
+disclosure text (TRUST-001)" below.
+
 `logging.py` also exports one module-level `contextvars.ContextVar` (not a
 function/class, so it is not part of the machine-checked list above):
 `correlation_id_var` -- holds the current request's correlation id (empty
@@ -143,6 +151,31 @@ view; distinguishing them, if ever needed, is `validation-service`'s own concern
 "one canonical definition" convention UAT-007/UAT-008 already established -- `gateway-api` imports
 `RunDetailResponse` directly from `naive_first_common.contracts`, so this field required no second,
 hand-mirrored edit there.
+
+## Shared disclosure text (TRUST-001)
+
+`naive_first_common.disclosures.METHODOLOGY_FACTS` is the platform's one statement of the
+leakage-aware validation protocol (rolling-origin walk-forward, the purge gap, the mandatory
+Naive0/NaiveLast comparison, and the Diebold-Mariano test with the Harvey et al. (1997) correction).
+It is rendered by `dashboard-web`'s run-detail methodology panel and by `reporting-service`'s audit
+report, and lives here because those two surfaces must never tell a tenant different things about how
+their model was validated.
+
+This is CLAUDE.md's DRY rule applied literally -- cross-module duplication is pulled into a `libs/*`
+package, never copy-pasted across service boundaries. The neighbouring no-cross-service-import rule
+forbids one *service* importing another service's code, which is a different constraint and precisely
+what this package exists to satisfy.
+
+**Drift guard**: the exact-text assertion lives once, in `tests/test_disclosures.py`. Each consuming
+service asserts only *identity* with this constant (`... is METHODOLOGY_FACTS`), never a second copy of
+the literal text -- so a service re-defining the text locally fails its own test even if the wording
+happens to match. Editing a fact here is therefore a deliberate one-line change that fails this
+library's test until the expected text is updated alongside it.
+
+**History**: TRUST-001-01/02 originally copy-pasted this tuple into both services, each with a
+"same-text test" comparing its copy against another literal in its own test file. That guard could not
+detect the failure it was written for -- nothing cross-checked the two services, so editing one
+service's wording left the other silently stale.
 
 ## CI
 

@@ -9,10 +9,12 @@ from __future__ import annotations
 
 from naive_first_common.db import build_engine
 from naive_first_common.diagnostics import RecentErrorsHandler
+from naive_first_common.disclosures import METHODOLOGY_FACTS
 from naive_first_common.logging import CorrelationIdMiddleware, configure_structured_logging
 from naive_first_common.tenant_context import TenantContext, get_tenant_context
 
 __all__ = [
+    "METHODOLOGY_FACTS",
     "TenantContext",
     "build_engine",
     "get_tenant_context",

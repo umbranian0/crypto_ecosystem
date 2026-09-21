@@ -16,6 +16,8 @@ from fastapi.testclient import TestClient
 
 from app.dependencies.session import get_session_store
 from app.main import app
+from naive_first_common.disclosures import METHODOLOGY_FACTS as shared_methodology_facts
+
 from app.routers.runs import CAVEAT_SENTENCE, METHODOLOGY_FACTS, build_shareable_summary_text
 from naive_first_common.contracts import RunDetailResponse, SplitResultResponse
 
@@ -1514,25 +1516,14 @@ def test_run_detail_chart_titles_render_as_heading_elements(monkeypatch) -> None
 # TRUST-001-01: permanent methodology disclosure panel.
 
 
-def test_methodology_facts_matches_shared_wording() -> None:
-    """Exact tuple-equality check (not substring/keyword) -- mirrors
-    `CAVEAT_SENTENCE`'s (FHS-004) exact-match precedent. This is the test QA
-    independently verifies actually fails if `METHODOLOGY_FACTS` is edited out
-    of sync with `TRUST-001-02`'s independently-authored copy in
-    reporting-service.
+def test_methodology_facts_comes_from_the_shared_library() -> None:
+    """`METHODOLOGY_FACTS` is re-exported from `libs/common`, not re-authored
+    here -- the canonical wording and its exact-text assertion live in that
+    package's own suite, so this service and `reporting-service` cannot drift
+    apart. This test guards the import itself: a local re-definition would
+    break the identity check even if the text happened to match.
     """
-    assert METHODOLOGY_FACTS == (
-        "Rolling-origin walk-forward validation: each split trains on data up to a point in "
-        "time and tests only on the period immediately after it -- never on rows the model "
-        "could not yet have seen.",
-        "A configurable purge gap separates every split's training window from its test "
-        "window, closing the boundary-leakage channel a plain train/test split allows.",
-        "Every run is benchmarked against the mandatory Naive0 and NaiveLast baselines -- a "
-        "model's result is never reported in isolation.",
-        "Model-vs-baseline comparisons use the Diebold-Mariano test with the Harvey et al. "
-        "(1997) long-run variance correction for overlapping horizons, not a raw metric "
-        "difference.",
-    )
+    assert METHODOLOGY_FACTS is shared_methodology_facts
 
 
 def test_run_detail_methodology_panel_renders_for_zero_split_run(monkeypatch) -> None:
