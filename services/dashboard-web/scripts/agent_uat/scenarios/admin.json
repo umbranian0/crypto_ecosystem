@@ -1,0 +1,102 @@
+{
+  "name": "admin",
+  "description": "Operator-persona walkthrough: operator login, monitoring/crawl-status, trigger a crawl, generate a report, connector credential status, tenant management.",
+  "steps": [
+    {
+      "name": "operator_login_page",
+      "action": "get",
+      "path": "/operator-login",
+      "screenshot": true
+    },
+    {
+      "name": "operator_login_submit",
+      "action": "fill_and_submit",
+      "form_selector": "form",
+      "fields": {
+        "operator_token": "{operator_token}"
+      },
+      "screenshot": true
+    },
+    {
+      "name": "monitoring_page",
+      "action": "get",
+      "path": "/monitoring",
+      "screenshot": true,
+      "verify_against": {
+        "method": "GET",
+        "path": "/ingestion/connectors/{source}/status",
+        "extract_fields": [
+          "status",
+          "last_crawl_at"
+        ]
+      }
+    },
+    {
+      "name": "trigger_crawl",
+      "action": "click",
+      "selector": "form[hx-post^='/monitoring/connectors/'][hx-post$='/run'] button[type='submit']",
+      "screenshot": true
+    },
+    {
+      "name": "crawl_status_after_trigger",
+      "action": "get",
+      "path": "/monitoring/crawl-status-fragment",
+      "screenshot": true
+    },
+    {
+      "name": "generate_report_form",
+      "action": "current_page",
+      "screenshot": true
+    },
+    {
+      "name": "generate_report_submit",
+      "action": "fill_and_submit",
+      "form_selector": "form[hx-post='/monitoring/reports/generate']",
+      "fields": {
+        "run_id": "{run_id}"
+      },
+      "screenshot": true
+    },
+    {
+      "name": "settings_connectors",
+      "action": "get",
+      "path": "/settings/connectors",
+      "screenshot": true,
+      "verify_against": {
+        "method": "GET",
+        "path": "/ingestion/connectors/credentials-status",
+        "extract_fields": [
+          "items"
+        ]
+      }
+    },
+    {
+      "name": "tenant_management",
+      "action": "get",
+      "path": "/settings/tenants",
+      "screenshot": true,
+      "verify_against": {
+        "method": "GET",
+        "path": "/tenants",
+        "extract_fields": [
+          "items"
+        ]
+      }
+    },
+    {
+      "name": "tenant_create",
+      "action": "fill_and_submit",
+      "form_selector": "form[action='/settings/tenants']",
+      "fields": {
+        "tenant_name": "agent-uat-tenant"
+      },
+      "screenshot": true
+    },
+    {
+      "name": "tenant_revoke",
+      "action": "click",
+      "selector": "form[hx-post*='/api-keys/'][hx-post$='/revoke'] button[type='submit']",
+      "screenshot": true
+    }
+  ]
+}
