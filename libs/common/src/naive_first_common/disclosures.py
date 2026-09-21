@@ -33,3 +33,18 @@ METHODOLOGY_FACTS: tuple[str, str, str, str] = (
     "(1997) long-run variance correction for overlapping horizons, not a raw metric "
     "difference.",
 )
+
+# TRUST-005: appended (only) when `better_count == 0` -- a real client model
+# was submitted and evaluated, and it did not beat Naive0 on any split. Never
+# rendered for the has_client_model=False placeholder case (see
+# `dashboard-web`'s `build_headline_verdict_summary` and
+# `reporting-service`'s `validation_audit.html.jinja`, both of which gate on
+# this exact condition). Additive context only -- the existing "did not beat
+# naive" verdict language in both services is unchanged by this sentence's
+# presence.
+NOT_BEATING_NAIVE_IS_EXPECTED_SENTENCE = (
+    "Under rigorous, leakage-free validation, most models -- including sophisticated ones -- "
+    "do not beat a strong naive baseline in a stable way; this platform's own published "
+    "research found the same pattern, so this outcome is common and not evidence of a broken "
+    "evaluation."
+)

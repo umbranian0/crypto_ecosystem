@@ -12,11 +12,15 @@ from naive_first_common.contracts import (
     SplitPointResponse,
     SplitResultResponse,
 )
+from naive_first_common.disclosures import (
+    NOT_BEATING_NAIVE_IS_EXPECTED_SENTENCE as shared_not_beating_naive_sentence,
+)
 
 from app.charting import (
     METRIC_REGISTRY,
     MODEL_COLUMN_LABEL,
     MODEL_COLUMN_PLACEHOLDER_LABEL,
+    NOT_BEATING_NAIVE_IS_EXPECTED_SENTENCE,
     UNDEFINED_VERDICT_CATEGORY,
     build_dm_verdict_chart,
     build_error_chart,
@@ -609,6 +613,54 @@ def test_build_headline_verdict_summary_none_for_zero_splits() -> None:
     run = RunDetailResponse(**{**_RUN_DETAIL_BODY, "has_client_model": True})
 
     assert build_headline_verdict_summary(run, []) is None
+
+
+def test_build_headline_verdict_summary_appends_expected_finding_note_when_better_count_zero() -> None:
+    """TRUST-005: a real client model that did not beat Naive0 on any split
+    gets the shared "not beating naive is expected" sentence appended after
+    the existing "Beat Naive0 on 0/N splits." sentence -- additive, not a
+    replacement."""
+    run = RunDetailResponse(**{**_RUN_DETAIL_BODY, "has_client_model": True})
+    splits = [
+        _dm_split(0, 0.5, 0.6, "worse"),
+        _dm_split(1, None, None, "no significant difference"),
+    ]
+
+    summary = build_headline_verdict_summary(run, splits)
+
+    assert summary is not None
+    assert summary.startswith("Beat Naive0 on 0/2 splits.")
+    assert summary.endswith(NOT_BEATING_NAIVE_IS_EXPECTED_SENTENCE)
+
+
+def test_build_headline_verdict_summary_no_client_model_does_not_append_expected_finding_note() -> None:
+    """The design call this ticket makes explicit: the `has_client_model=False`
+    placeholder branch never gets the "not beating naive is expected" note,
+    even when `better_count == 0` -- there is no real client model in that
+    case, only NaiveLast's own placeholder output."""
+    run = RunDetailResponse(**{**_RUN_DETAIL_BODY, "has_client_model": False})
+    splits = [
+        _dm_split(0, 0.5, 0.6, "worse"),
+        _dm_split(1, None, None, "no significant difference"),
+    ]
+
+    summary = build_headline_verdict_summary(run, splits)
+
+    assert summary == "Beat NaiveLast placeholder on 0/2 splits -- no client model submitted."
+    assert NOT_BEATING_NAIVE_IS_EXPECTED_SENTENCE not in summary
+
+
+def test_not_beating_naive_sentence_matches_shared_wording() -> None:
+    """Mirrors `test_methodology_facts_comes_from_the_shared_library`'s
+    identity-check shape: `NOT_BEATING_NAIVE_IS_EXPECTED_SENTENCE` is
+    imported from `libs/common` into `app.charting`, not re-authored here --
+    the canonical wording and its exact-text assertion live in that
+    package's own suite, so this service and `reporting-service` cannot
+    drift apart. This test guards the import itself: a local re-definition
+    would break the identity check even if the text happened to match. QA
+    will independently verify this fails if this service's copy drifts from
+    reporting-service's."""
+    assert NOT_BEATING_NAIVE_IS_EXPECTED_SENTENCE is shared_not_beating_naive_sentence
 
 
 # UAT-004: fixed-precision rounding for displayed metric values.

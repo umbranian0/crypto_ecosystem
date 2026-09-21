@@ -50,10 +50,13 @@ Implementation-plan.md section 8: "for libs, the public function signatures in t
 
 ### `disclosures.py`
 Shared user-facing disclosure text rendered by more than one service. Exports
-one module-level constant (not a function/class, so not part of the
-machine-checked list above): `METHODOLOGY_FACTS` -- the four-fact statement of
-the leakage-aware validation protocol, rendered by `dashboard-web`'s run-detail
-methodology panel and by `reporting-service`'s audit report. See "Shared
+module-level constants (not functions/classes, so not part of the
+machine-checked list above): `METHODOLOGY_FACTS`/`METHODOLOGY_INTRO` -- the
+four-fact statement of the leakage-aware validation protocol, rendered by
+`dashboard-web`'s run-detail methodology panel and by `reporting-service`'s
+audit report -- and `NOT_BEATING_NAIVE_IS_EXPECTED_SENTENCE` (TRUST-005) --
+one sentence, appended by both services only when a real client model was
+submitted and evaluated and did not beat Naive0 on any split. See "Shared
 disclosure text (TRUST-001)" below.
 
 `logging.py` also exports one module-level `contextvars.ContextVar` (not a
@@ -152,7 +155,7 @@ view; distinguishing them, if ever needed, is `validation-service`'s own concern
 `RunDetailResponse` directly from `naive_first_common.contracts`, so this field required no second,
 hand-mirrored edit there.
 
-## Shared disclosure text (TRUST-001)
+## Shared disclosure text (TRUST-001, TRUST-005)
 
 `naive_first_common.disclosures.METHODOLOGY_FACTS` is the platform's one statement of the
 leakage-aware validation protocol (rolling-origin walk-forward, the purge gap, the mandatory
@@ -161,21 +164,33 @@ It is rendered by `dashboard-web`'s run-detail methodology panel and by `reporti
 report, and lives here because those two surfaces must never tell a tenant different things about how
 their model was validated.
 
+`naive_first_common.disclosures.NOT_BEATING_NAIVE_IS_EXPECTED_SENTENCE` (TRUST-005) is one additional
+sentence, additive to the existing "did not beat naive" verdict language in both services (never a
+replacement for it), rendered only when a real client model was submitted and evaluated (`has_client_model
+== True` in `dashboard-web`, and the equivalent condition in `reporting-service`'s render context) and did
+not beat Naive0 on any split (`better_count == 0`). It is never rendered for the `has_client_model=False`
+placeholder case in either service -- there is no real model to frame as "expected not to beat naive" when
+no client model was submitted. Same shared-constant/drift-guard mechanism as `METHODOLOGY_FACTS` below.
+
 This is CLAUDE.md's DRY rule applied literally -- cross-module duplication is pulled into a `libs/*`
 package, never copy-pasted across service boundaries. The neighbouring no-cross-service-import rule
 forbids one *service* importing another service's code, which is a different constraint and precisely
 what this package exists to satisfy.
 
-**Drift guard**: the exact-text assertion lives once, in `tests/test_disclosures.py`. Each consuming
-service asserts only *identity* with this constant (`... is METHODOLOGY_FACTS`), never a second copy of
-the literal text -- so a service re-defining the text locally fails its own test even if the wording
-happens to match. Editing a fact here is therefore a deliberate one-line change that fails this
-library's test until the expected text is updated alongside it.
+**Drift guard**: the exact-text assertion for each constant lives once, in `tests/test_disclosures.py`.
+Each consuming service asserts only *identity* with the constant (`... is METHODOLOGY_FACTS`, `... is
+NOT_BEATING_NAIVE_IS_EXPECTED_SENTENCE`), never a second copy of the literal text -- so a service
+re-defining the text locally fails its own test even if the wording happens to match. Editing a fact here
+is therefore a deliberate one-line change that fails this library's test until the expected text is
+updated alongside it.
 
-**History**: TRUST-001-01/02 originally copy-pasted this tuple into both services, each with a
+**History**: TRUST-001-01/02 originally copy-pasted the methodology tuple into both services, each with a
 "same-text test" comparing its copy against another literal in its own test file. That guard could not
-detect the failure it was written for -- nothing cross-checked the two services, so editing one
-service's wording left the other silently stale.
+detect the failure it was written for -- nothing cross-checked the two services, so editing one service's
+wording left the other silently stale. TRUST-005-01/02's own tickets, as originally written, specified the
+same per-service-copy-plus-same-text-test shape for `NOT_BEATING_NAIVE_IS_EXPECTED_SENTENCE` -- corrected
+before implementation to use this shared-constant mechanism from the start, rather than repeating the
+mistake a second time.
 
 ## CI
 

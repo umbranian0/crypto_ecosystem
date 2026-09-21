@@ -78,7 +78,7 @@ design: `verdict-label-worse` renders in `#e0a06a` (amber), not a pure red, spec
 already forbid a red/green better/worse pairing. The gaps below are real, but narrower than "build this
 from scratch."
 
-### TRUST-001 — Permanent, standalone methodology disclosure panel (not just a chart caption) [Should]
+### TRUST-001 — Permanent, standalone methodology disclosure panel (not just a chart caption) [Should] — DONE (Sprint 57)
 
 As a tenant or third party reading a run's results or a generated audit report, I want a permanent,
 always-visible section stating the leakage-aware protocol's fixed parameters (rolling-origin
@@ -87,19 +87,24 @@ Harvey et al. 1997 long-run variance correction for overlapping horizons), so th
 is visible regardless of which chart happens to render, not dependent on reading one chart's caption.
 
 Acceptance criteria:
-- [ ] `dashboard-web`'s `GET /runs/{run_id}` renders a new, always-visible (not gated on `{% if splits %}`,
+- [x] `dashboard-web`'s `GET /runs/{run_id}` renders a new, always-visible (not gated on `{% if splits %}`,
   unlike today's DM-verdict-chart caption) "Methodology" panel stating the same four facts named above,
   in plain language, reusable across every run regardless of status or split count.
-- [ ] `reporting-service`'s `validation_audit.html.jinja` gains an equivalent always-visible "Methodology"
+- [x] `reporting-service`'s `validation_audit.html.jinja` gains an equivalent always-visible "Methodology"
   subsection (today's section 2, "Leakage-protocol parameters," states the run's own parameter values but
   never names Diebold-Mariano or the Harvey correction by name) — extends section 2, does not duplicate
   section 5's existing statistical-vs-economic disclaimer.
-- [ ] The exact wording is one shared constant (mirroring `FHS-004`'s `CAVEAT_SENTENCE` precedent — a
-  single source of truth, not two independently drifting copies) — since `dashboard-web` and
-  `reporting-service` are separate services (implementation-plan.md section 2: no service imports another's
-  code), this means the same text is authored once in this ticket and kept identical by a shared
-  test/fixture in each service, not literally imported cross-service.
-- [ ] Positioning check: wording never implies "the system predicts prices" — it describes the validation
+- [x] The exact wording is one shared constant (mirroring `FHS-004`'s `CAVEAT_SENTENCE` precedent — a
+  single source of truth, not two independently drifting copies). As actually shipped, this AC's own
+  original text ("authored once... kept identical by a shared test/fixture in each service, not literally
+  imported cross-service") describes a mechanism that turned out not to work: each service's same-text
+  test only compared its own copy against another literal in its own test file, so nothing cross-checked
+  the two services and editing one left the other silently stale. Corrected post-review (commit `a780493`):
+  the constant lives once in `libs/common` as `naive_first_common.disclosures.METHODOLOGY_FACTS`, imported
+  by both services — a `libs/*` shared package, not one *service* importing another service's code, so
+  implementation-plan.md section 2's module-boundary rule is unaffected; CLAUDE.md's DRY rule (cross-module
+  duplication belongs in `libs/*`) governs here instead.
+- [x] Positioning check: wording never implies "the system predicts prices" — it describes the validation
   methodology, matching every other user-facing string in both services (CLAUDE.md).
 
 Rationale for priority: Should — the underlying fact is already computed and already disclosed once; this
@@ -107,7 +112,10 @@ is a visibility/completeness fix (always-on vs. chart-conditional), not a new ca
 single most concrete "make the rigor visible" ask in the brainstorm, so it doesn't drop to Could.
 Depends on: none
 
-### TRUST-002 — Static "leaky vs. purged walk-forward" side-by-side demo using the thesis's own numbers [Should]
+See `docs/tickets/TRUST-001-01.md` (dashboard-web) and `docs/tickets/TRUST-001-02.md` (reporting-service)
+for the full implementation record, including the libs/common supersession.
+
+### TRUST-002 — Static "leaky vs. purged walk-forward" side-by-side demo using the thesis's own numbers [Should] — DONE (Sprint 57)
 
 As a prospective tenant or evaluator who has never used this platform, I want a static page showing,
 side by side, what the thesis's own results looked like with a naive/leaky evaluation methodology versus
@@ -115,21 +123,23 @@ the purged, leakage-aware one this platform enforces, so that I understand concr
 purge-gap/naive-first protocol matters, using real numbers instead of an abstract claim.
 
 Acceptance criteria:
-- [ ] A new static page (e.g. `/help/leakage-demo`, sibling to `UAT-014`'s existing `/help/concepts` page
+- [x] A new static page (e.g. `/help/leakage-demo`, sibling to `UAT-014`'s existing `/help/concepts` page
   — same router module, same "no backend call, static content" pattern, not a new mechanism).
-- [ ] Content is the thesis's own real, already-published numbers from `docs/da-tese-ao-produto.md`
+- [x] Content is the thesis's own real, already-published numbers from `docs/da-tese-ao-produto.md`
   section 1.3 (e.g. OLS's headline vs. Naive0 at 1h/6h/24h, DM better/worse split counts) — no fabricated
   or illustrative-only numbers standing in for real ones.
-- [ ] The "leaky" side is described honestly as what the protocol change protects against (e.g. "a naive
+- [x] The "leaky" side is described honestly as what the protocol change protects against (e.g. "a naive
   random-split or globally-fit-preprocessing evaluation would have reported the model as competitive; the
   purge-gap/train-only-fit protocol this platform enforces reports the same model honestly losing to
   Naive0 in MAE/RMSE at every horizon") — not a fabricated re-run of the thesis under a leaky protocol (no
   such re-run is available or in scope; the "leaky" column is descriptive/didactic, not itself computed by
   this platform).
-- [ ] Positioning check: explicitly reinforces, not contradicts, the core finding (CLAUDE.md: no model
+- [x] Positioning check: explicitly reinforces, not contradicts, the core finding (CLAUDE.md: no model
   beat naive stably) — this page cannot read as "buy this model," only "this is why validation discipline
   matters."
-- [ ] Linked from `TRUST-001`'s methodology panel and from `/help/concepts`.
+- [x] Linked from `TRUST-001`'s methodology panel and from `/help/concepts`.
+
+See `docs/tickets/TRUST-002.md` for the full implementation record.
 
 Rationale for priority: Should — real trust-building value, cheap to build (static content, no backend
 change, no new data), directly serves the platform's own stated sales argument (da-tese-ao-produto.md
@@ -210,7 +220,7 @@ Rationale for priority: Should — small, additive template change once `TRUST-0
 strengthens the "auditable, not just accurate" positioning this whole platform is built on.
 Depends on: TRUST-003
 
-### TRUST-005 — Reframe "model didn't beat naive" copy as the expected, first-class scientific finding [Should]
+### TRUST-005 — Reframe "model didn't beat naive" copy as the expected, first-class scientific finding [Should] — DONE (Sprint 57)
 
 As a tenant or reader seeing a "worse" or "no significant difference" verdict, I want the report's own
 language to state plainly that this is a common, expected, scientifically valid outcome — consistent with
@@ -227,18 +237,23 @@ sentence needed to make a "worse" verdict read as validating the process, not me
 win."
 
 Acceptance criteria:
-- [ ] `validation_audit.html.jinja`'s "Overall" verdict paragraph (today's `{% if better_count == 0 %}`
+- [x] `validation_audit.html.jinja`'s "Overall" verdict paragraph (today's `{% if better_count == 0 %}`
   branch) gains one additional sentence for the `better_count == 0` case only: a plain statement that under
   rigorous, leakage-free validation, most models — including sophisticated ones — do not beat a strong
   naive baseline in a stable way, so this outcome is common and not evidence of a broken evaluation.
-- [ ] The added sentence does not soften or hide the actual verdict (the "did not beat naive" language
+- [x] The added sentence does not soften or hide the actual verdict (the "did not beat naive" language
   stays exactly as-is) — it is additive context, not a replacement for the honest result.
-- [ ] `dashboard-web`'s run detail page gains the equivalent sentence in the same condition (a run whose
+- [x] `dashboard-web`'s run detail page gains the equivalent sentence in the same condition (a run whose
   `better_count == 0` across its splits), reusing the same wording precedent `TRUST-001` establishes for
-  shared cross-service copy.
-- [ ] Positioning check: the added sentence never implies any model should beat naive, only that not
+  shared cross-service copy — in the actually-shipped form, that precedent is the `libs/common` shared
+  constant `a780493` established, not per-service copy-paste (disclosed deviation, see
+  `docs/tickets/TRUST-005-01.md`/`TRUST-005-02.md`'s own "Superseded in part" notes).
+- [x] Positioning check: the added sentence never implies any model should beat naive, only that not
   beating it is expected and valid (CLAUDE.md's core finding, restated honestly, not softened into "your
   model is fine anyway").
+
+See `docs/tickets/TRUST-005-01.md` (dashboard-web) and `docs/tickets/TRUST-005-02.md` (reporting-service)
+for the full implementation record.
 
 Rationale for priority: Should — the styling/factual-language half of this is already done, so this is a
 small, high-leverage copy-only change (no new field, no new endpoint) that closes the one real remaining

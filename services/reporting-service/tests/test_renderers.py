@@ -17,8 +17,15 @@ from naive_first_common.contracts import RunDetailResponse, SplitResultResponse
 
 from app.renderers.factory import UnknownReportKindError, get_report_renderer
 from naive_first_common.disclosures import METHODOLOGY_FACTS as shared_methodology_facts
+from naive_first_common.disclosures import (
+    NOT_BEATING_NAIVE_IS_EXPECTED_SENTENCE as shared_not_beating_naive_sentence,
+)
 
-from app.renderers.validation_audit import METHODOLOGY_FACTS, ValidationAuditRenderer
+from app.renderers.validation_audit import (
+    METHODOLOGY_FACTS,
+    NOT_BEATING_NAIVE_IS_EXPECTED_SENTENCE,
+    ValidationAuditRenderer,
+)
 
 DISCLAIMER_TEXT = (
     "This audit evaluates statistical forecast accuracy only. No transaction costs, "
@@ -127,6 +134,63 @@ def test_run_that_never_beats_naive_renders_did_not_beat_naive_plainly():
     assert "did not beat naive" in html
     assert "0 better, 2 worse" in html
     assert DISCLAIMER_TEXT in html
+
+
+def test_run_that_never_beats_naive_also_renders_not_beating_naive_is_expected_note():
+    """TRUST-005: `better_count == 0` gets `NOT_BEATING_NAIVE_IS_EXPECTED_SENTENCE`
+    appended after the existing, unchanged "did not beat naive" sentence."""
+    import html as html_module
+
+    run = _make_run(status="completed")
+    splits = [
+        _make_split(0, "worse", 2.8, 0.02),
+        _make_split(1, "worse", 3.1, 0.01),
+    ]
+
+    rendered = html_module.unescape(ValidationAuditRenderer().render(run, splits))
+
+    assert "did not beat naive on any split evaluated in this run." in rendered
+    assert NOT_BEATING_NAIVE_IS_EXPECTED_SENTENCE in rendered
+    assert rendered.index(
+        "did not beat naive on any split evaluated in this run."
+    ) < rendered.index(NOT_BEATING_NAIVE_IS_EXPECTED_SENTENCE)
+
+
+def test_run_with_better_count_above_zero_does_not_render_not_beating_naive_note():
+    """Proves the sentence is scoped to the `better_count == 0` branch only --
+    it must not leak into the "beat naive on every split"/"mixed" branches."""
+    import html as html_module
+
+    run = _make_run(status="completed")
+    mixed_splits = [
+        _make_split(0, "better", -3.1, 0.01),
+        _make_split(1, "worse", 2.8, 0.02),
+        _make_split(2, "no significant difference", 0.5, 0.6),
+    ]
+
+    rendered = html_module.unescape(ValidationAuditRenderer().render(run, mixed_splits))
+
+    assert NOT_BEATING_NAIVE_IS_EXPECTED_SENTENCE not in rendered
+
+    all_better_splits = [
+        _make_split(0, "better", -3.1, 0.01),
+        _make_split(1, "better", -2.9, 0.02),
+    ]
+
+    rendered_all_better = html_module.unescape(
+        ValidationAuditRenderer().render(run, all_better_splits)
+    )
+
+    assert NOT_BEATING_NAIVE_IS_EXPECTED_SENTENCE not in rendered_all_better
+
+
+def test_not_beating_naive_sentence_matches_shared_wording():
+    """`NOT_BEATING_NAIVE_IS_EXPECTED_SENTENCE` is re-exported from
+    `libs/common`, not re-authored here -- mirrors
+    `test_methodology_facts_comes_from_the_shared_library`'s identity-check
+    shape. QA will independently verify this fails if this service's copy
+    drifts from dashboard-web's."""
+    assert NOT_BEATING_NAIVE_IS_EXPECTED_SENTENCE is shared_not_beating_naive_sentence
 
 
 def test_failed_run_with_no_splits_renders_status_only_report_without_error():

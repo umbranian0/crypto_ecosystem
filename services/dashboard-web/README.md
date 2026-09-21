@@ -478,6 +478,37 @@ gap: a `"running"`/`"failed"` run with zero splits still states the platform's l
   `test_methodology_panel_partial_has_no_banned_positioning_words` (same banned-word-scan convention as
   `test_help_concepts_page_has_no_banned_positioning_words`).
 
+**TRUST-005**: `app.charting.build_headline_verdict_summary` appends
+`naive_first_common.disclosures.NOT_BEATING_NAIVE_IS_EXPECTED_SENTENCE` (space-separated) after its
+existing "Beat Naive0 on 0/N splits." sentence, but only when `run.has_client_model` is `True` **and**
+`better_count == 0` -- a real client model was submitted and evaluated, and it did not beat Naive0 on
+any split. Never appended in the `has_client_model=False` placeholder branch: in that case there is no
+real client model that "did not beat naive," only NaiveLast's own placeholder output being compared to
+Naive0, and the existing "no client model submitted" wording already covers that honestly. The
+sentence is additive only -- the existing "Beat Naive0 on N/total splits." text is never reworded.
+Shares the exact same `libs/common`/identity-check drift-guard mechanism `METHODOLOGY_FACTS` uses
+(`tests/test_charting.py::test_not_beating_naive_sentence_matches_shared_wording`); `TRUST-005-01`'s and
+`TRUST-005-02`'s (reporting-service) tickets, as originally written, specified a per-service copy plus a
+per-service same-text test for this sentence -- corrected before implementation to reuse the shared
+constant from the start (see both tickets' own "Superseded in part" notes).
+
+## Leakage demo page (TRUST-002)
+
+`GET /help/leakage-demo` (`src/app/routers/help.py`, second route on the same `UAT-014` router --
+same "help/explainer pages" concern, not a new sibling file) is a pure static render: no downstream
+call, no session dependency, identical pattern to `/help/concepts` above. `src/app/templates/
+help_leakage_demo.html` displays the thesis's own real, already-published numbers from
+`docs/da-tese-ao-produto.md` section 1.3 verbatim (Naive0 vs. OLS MAE, OLS directional accuracy, and
+Diebold-Mariano better/worse split counts at the 1h/6h/24h horizons), a descriptive/didactic account of
+what the purge-gap/train-only-fit protocol protects against (explicitly stating no fabricated leaky
+re-run of the thesis exists or is computed by this platform -- there is no second, independently-measured
+"leaky" number to show), and a closing paragraph restating the core finding plainly (no model beat
+Naive0 in a stable, significant way at any tested horizon; best directional accuracy observed was
+52.51%, OLS at 6h). Linked from `_methodology_panel.html` (TRUST-001-01's `<a
+href="/help/leakage-demo">` now resolves) and from `help_concepts.html`'s own new closing paragraph.
+Positioning-scanned the same way as every other help page
+(`test_help_leakage_demo_page_has_no_banned_positioning_words`).
+
 ## Submit a run (DASH-006)
 
 `GET /runs/new` (`src/app/routers/runs.py`) renders `run_new.html`, a form matching `RunRequest`'s
@@ -514,6 +545,15 @@ exact fields (`dataset_id`, `dataset_reference`, `horizon`, `purge_gap_hours`, `
   construction.
 - A transport-level `httpx.ConnectError`/`httpx.TimeoutException`, or a `502`/`504` forwarded from
   `gateway-api`, renders the same `error.html` DASH-004 uses -- no second, near-identical template.
+- **Sprint 57 DRY fix**: `run_new_submit`'s five `422` redisplay paths (invalid inline JSON for
+  `dataset_reference`, a missing `dataset_reference`, invalid inline JSON for
+  `client_prediction_reference`, a `RunRequest` construction failure, and a `422` forwarded from
+  `gateway-api`) were five near-identical `templates.TemplateResponse("run_new.html", {"error": ...,
+  "values": values, "datasets": datasets}, status_code=422)` calls differing only in the error message
+  -- past the "extract on second duplication" threshold (implementation-plan.md section 9), extracted
+  into `_run_new_form_error_response(request, error_message, values, datasets)`, used at all five call
+  sites. No behavior change -- each call site still performs its own `_fetch_ingestion_datasets` call
+  first (DASH-120), only the response-building step was duplicated and is now shared.
 
 ### Optional run label (UAT-008)
 

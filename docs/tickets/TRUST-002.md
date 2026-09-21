@@ -6,7 +6,28 @@ this starts — sequenced last per the sprint plan (its one real precondition is
 `TRUST-001` panel to link *from*; also avoids concurrent edits to `run_detail.html`/`runs.py` while
 those two are still in flight in the same service).
 **Story**: `docs/product/backlog-trust-and-admin-ops.md` TRUST-002 (Should).
-**Status**: todo.
+**Status: done.** Implemented, tested (5 new tests: `test_help_leakage_demo_returns_200_and_expected_numbers`,
+`test_help_concepts_links_to_leakage_demo`, `test_help_leakage_demo_page_has_no_banned_positioning_words`,
+`test_help_leakage_demo_restates_core_finding` in `tests/test_help_concepts.py`, plus
+`test_run_detail_links_to_leakage_demo` in `tests/test_runs_detail.py`), full `services/dashboard-web`
+suite personally re-run by the Tech Lead (402 passed, 0 failed, 8 deselected, `-m "not e2e"`, up from
+394 pre-sprint), Tech-Lead-reviewed (diff read personally, numbers re-verified directly against
+`docs/da-tese-ao-produto.md` section 1.3 a second time at Review, both inbound links confirmed to
+resolve to `200` via `client.get`, positioning copy read in full).
+
+**Outcome**: this was the sprint's highest-priority item -- the `<a href="/help/leakage-demo">` link
+`TRUST-001-01` shipped on every run-detail page 404'd because this route did not exist. `GET
+/help/leakage-demo` (`services/dashboard-web/src/app/routers/help.py`) and its template
+(`services/dashboard-web/src/app/templates/help_leakage_demo.html`) now exist exactly as designed
+below: pure static render, no session/downstream dependency, the real 1h/6h/24h Naive0/OLS MAE, OLS DA,
+and DM better/worse figures from section 1.3 (verified verbatim a second time at Review), a
+descriptive/didactic "what a leaky evaluation would have reported" paragraph explicitly stating no
+fabricated leaky re-run exists or is computed, and a closing paragraph restating the core finding
+("no model beat Naive0" plus the 52.51% DA figure). `help_concepts.html` gained one new closing
+paragraph linking to it. The Analysis section's positioning note required one correction during
+implementation: the first draft's "Bitcoin return-prediction case study" phrase tripped the banned-word
+scan (the word "prediction" in isolation, not describing the platform's own function) and was reworded
+to "return-modeling case study" -- a wording fix, not a scope change.
 
 ## Analysis
 

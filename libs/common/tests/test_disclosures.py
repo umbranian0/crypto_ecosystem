@@ -9,7 +9,10 @@ two services quietly drifting apart on what they tell a tenant.
 
 from __future__ import annotations
 
-from naive_first_common.disclosures import METHODOLOGY_FACTS
+from naive_first_common.disclosures import (
+    METHODOLOGY_FACTS,
+    NOT_BEATING_NAIVE_IS_EXPECTED_SENTENCE,
+)
 
 
 def test_methodology_facts_exact_wording():
@@ -35,3 +38,32 @@ def test_methodology_facts_has_no_banned_positioning_words():
 
     for banned in ("prediction", "forecast", "signal", "recommendation"):
         assert banned not in joined, f"banned positioning word {banned!r} in METHODOLOGY_FACTS"
+
+
+def test_not_beating_naive_sentence_exact_wording():
+    """TRUST-005: the single place this shared sentence's exact text is
+    pinned. `dashboard-web` and `reporting-service` each assert only identity
+    with this constant (mirroring `test_methodology_facts_exact_wording`
+    above) -- a local re-definition in either service fails even if its text
+    happens to match.
+    """
+    assert NOT_BEATING_NAIVE_IS_EXPECTED_SENTENCE == (
+        "Under rigorous, leakage-free validation, most models -- including sophisticated ones -- "
+        "do not beat a strong naive baseline in a stable way; this platform's own published "
+        "research found the same pattern, so this outcome is common and not evidence of a broken "
+        "evaluation."
+    )
+
+
+def test_not_beating_naive_sentence_has_no_banned_positioning_words():
+    """CLAUDE.md positioning constraint, same convention as
+    `test_methodology_facts_has_no_banned_positioning_words`. This sentence
+    must never imply a model *should* beat naive -- only that not beating it
+    is expected and valid.
+    """
+    joined = NOT_BEATING_NAIVE_IS_EXPECTED_SENTENCE.lower()
+
+    for banned in ("prediction", "forecast", "signal", "recommendation"):
+        assert banned not in joined, (
+            f"banned positioning word {banned!r} in NOT_BEATING_NAIVE_IS_EXPECTED_SENTENCE"
+        )

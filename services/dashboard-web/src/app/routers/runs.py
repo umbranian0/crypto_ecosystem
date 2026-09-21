@@ -330,6 +330,28 @@ ticket's Analysis section: today's only DM/Harvey mention,
 `_dm_verdict_chart.html`'s caption, is otherwise entirely gated behind
 `{% if splits %}`). No new downstream call -- pure addition to the
 already-built context dict.
+
+TRUST-005-01: `app.charting.build_headline_verdict_summary` (imported above)
+now appends `naive_first_common.disclosures.NOT_BEATING_NAIVE_IS_EXPECTED_SENTENCE`
+after its existing "Beat Naive0 on 0/N splits." sentence when
+`run.has_client_model` is `True` and `better_count == 0` -- see that
+function's own docstring in `app/charting.py` for the full note. No change to
+this router module itself: `run_detail` already passes the function's return
+value straight through as `headline_verdict_summary`, so the longer string
+renders through the exact same already-existing template path the shorter
+one used before this ticket.
+
+Sprint 57 cleanup: `run_new_submit`'s five 422-redisplay branches (invalid
+inline JSON for `dataset_reference`, a missing `dataset_reference`, invalid
+inline JSON for `client_prediction_reference`, a `RunRequest` construction
+failure, and a `422` forwarded from gateway-api) were five near-identical
+`templates.TemplateResponse("run_new.html", {"error": ..., "values": values,
+"datasets": datasets}, status_code=422)` calls differing only in the error
+message -- past the "extract on second duplication" threshold
+(implementation-plan.md section 9), extracted into `_run_new_form_error_response`
+below (each call site still performs its own `_fetch_ingestion_datasets`
+call first, since a couple of branches fetch it under slightly different
+conditions; only the response-building step was duplicated).
 """
 
 from __future__ import annotations
@@ -403,6 +425,30 @@ def _parse_path_or_inline_reference(path_value: str, inline_value: str) -> dict 
     if inline_value.strip():
         return {"inline": json.loads(inline_value)}
     return None
+
+
+def _run_new_form_error_response(
+    request: Request, error_message: str, values: dict, datasets: list[DatasetSummaryResponse]
+):
+    """`run_new_submit`'s five 422 redisplay paths -- invalid inline JSON for
+    `dataset_reference`, a missing `dataset_reference` altogether, invalid
+    inline JSON for the optional `client_prediction_reference` (RPT-003), a
+    `RunRequest` construction failure, and a `422` forwarded from gateway-api
+    itself -- all re-render `run_new.html` with the exact same shape: the
+    caller's own field-specific `error_message`, the submitted `values` (so
+    the form is redisplayed, not blanked), the freshly re-fetched `datasets`
+    (DASH-120 -- never a hardcoded `[]`), and a `422` status. Past the
+    "extract on second duplication" threshold (implementation-plan.md
+    section 9) -- five near-identical `templates.TemplateResponse(...)`
+    calls differing only in `error_message`, mirroring the same rule
+    `_render_error_for_status` above was extracted under.
+    """
+    return templates.TemplateResponse(
+        request,
+        "run_new.html",
+        {"error": error_message, "values": values, "datasets": datasets},
+        status_code=422,
+    )
 
 
 def _human_readable_run_request_error(exc: ValueError | ValidationError) -> str:
@@ -936,11 +982,8 @@ def run_new_submit(
             )
         except json.JSONDecodeError:
             datasets = _fetch_ingestion_datasets(client, headers)
-            return templates.TemplateResponse(
-                request,
-                "run_new.html",
-                {"error": _INVALID_INLINE_JSON_ERROR, "values": values, "datasets": datasets},
-                status_code=422,
+            return _run_new_form_error_response(
+                request, _INVALID_INLINE_JSON_ERROR, values, datasets
             )
 
         if parsed_dataset_reference is not None:
@@ -955,11 +998,8 @@ def run_new_submit(
                 dataset_reference["field"] = dataset_reference_field.strip()
         else:
             datasets = _fetch_ingestion_datasets(client, headers)
-            return templates.TemplateResponse(
-                request,
-                "run_new.html",
-                {"error": _MISSING_DATASET_REFERENCE_ERROR, "values": values, "datasets": datasets},
-                status_code=422,
+            return _run_new_form_error_response(
+                request, _MISSING_DATASET_REFERENCE_ERROR, values, datasets
             )
 
         # RPT-003: optional field -- a blank pair leaves this `None`
@@ -973,15 +1013,8 @@ def run_new_submit(
             )
         except json.JSONDecodeError:
             datasets = _fetch_ingestion_datasets(client, headers)
-            return templates.TemplateResponse(
-                request,
-                "run_new.html",
-                {
-                    "error": _INVALID_CLIENT_PREDICTION_JSON_ERROR,
-                    "values": values,
-                    "datasets": datasets,
-                },
-                status_code=422,
+            return _run_new_form_error_response(
+                request, _INVALID_CLIENT_PREDICTION_JSON_ERROR, values, datasets
             )
 
         try:
@@ -998,15 +1031,8 @@ def run_new_submit(
             )
         except (ValueError, ValidationError) as exc:
             datasets = _fetch_ingestion_datasets(client, headers)
-            return templates.TemplateResponse(
-                request,
-                "run_new.html",
-                {
-                    "error": _human_readable_run_request_error(exc),
-                    "values": values,
-                    "datasets": datasets,
-                },
-                status_code=422,
+            return _run_new_form_error_response(
+                request, _human_readable_run_request_error(exc), values, datasets
             )
 
         response, transport_status = _call_downstream(
@@ -1018,11 +1044,8 @@ def run_new_submit(
             return _render_error_for_status(request, response.status_code)
         if response.status_code == 422:
             datasets = _fetch_ingestion_datasets(client, headers)
-            return templates.TemplateResponse(
-                request,
-                "run_new.html",
-                {"error": _extract_detail(response), "values": values, "datasets": datasets},
-                status_code=422,
+            return _run_new_form_error_response(
+                request, _extract_detail(response), values, datasets
             )
 
         run = RunResponse(**response.json())

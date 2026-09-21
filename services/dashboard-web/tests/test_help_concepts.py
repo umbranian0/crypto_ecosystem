@@ -93,3 +93,63 @@ def test_help_concepts_page_has_no_banned_positioning_words() -> None:
 
     for banned in ("prediction", "forecast", "signal", "recommendation"):
         assert banned not in text, f"banned positioning word {banned!r} found in help_concepts.html"
+
+
+# TRUST-002: `GET /help/leakage-demo` -- static "leaky vs. purged walk-forward"
+# demo using the thesis's own real section-1.3 numbers.
+
+
+def test_help_leakage_demo_returns_200_and_expected_numbers() -> None:
+    client = TestClient(app)
+
+    response = client.get("/help/leakage-demo")
+
+    assert response.status_code == 200
+    for marker in (
+        "0.003683",
+        "51.33",
+        "0/4",
+        "0.009533",
+        "52.51",
+        "4/18",
+        "0.020895",
+        "50.80",
+        "14/22",
+    ):
+        assert marker in response.text, f"missing expected marker {marker!r}"
+
+
+def test_help_concepts_links_to_leakage_demo() -> None:
+    client = TestClient(app)
+
+    response = client.get("/help/concepts")
+
+    assert response.status_code == 200
+    assert 'href="/help/leakage-demo"' in response.text
+
+
+def test_help_leakage_demo_page_has_no_banned_positioning_words() -> None:
+    """Mirrors `test_help_concepts_page_has_no_banned_positioning_words`."""
+    template_path = (
+        pathlib.Path(__file__).parent.parent
+        / "src"
+        / "app"
+        / "templates"
+        / "help_leakage_demo.html"
+    )
+    text = template_path.read_text(encoding="utf-8").lower()
+
+    for banned in ("prediction", "forecast", "signal", "recommendation"):
+        assert banned not in text, f"banned positioning word {banned!r} found in help_leakage_demo.html"
+
+
+def test_help_leakage_demo_restates_core_finding() -> None:
+    client = TestClient(app)
+
+    response = client.get("/help/leakage-demo")
+
+    assert response.status_code == 200
+    text = response.text
+    assert "did not beat" in text or "no model beat" in text.lower() or "did not beat naive" in text.lower()
+    assert "Naive0" in text
+    assert "52.51" in text

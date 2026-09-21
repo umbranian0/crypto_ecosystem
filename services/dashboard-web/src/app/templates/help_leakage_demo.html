@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}Leaky vs. purged walk-forward -- dashboard-web{% endblock %}
+{% block content %}
+<h2>What a leakage-aware protocol changes: the thesis's own real numbers</h2>
+
+<p>This platform's leakage-aware, purged walk-forward protocol (see the "Methodology" panel on any
+run's detail page, and <a href="/help/concepts">the walk-forward/purge-gap explainer</a>) was itself
+validated against a real Bitcoin return-modeling case study. The numbers below are that study's
+own published results -- not an illustrative or fabricated example.</p>
+
+<h3>The real, purged results (1h / 6h / 24h horizons)</h3>
+<table>
+    <thead>
+        <tr>
+            <th>Horizon</th>
+            <th>Naive0 MAE</th>
+            <th>OLS MAE (vs. Naive0)</th>
+            <th>OLS DA</th>
+            <th>DM (better/worse vs. Naive0)</th>
+        </tr>
+    </thead>
+    <tbody>
+        <tr>
+            <td>1h</td>
+            <td>0.003627</td>
+            <td>0.003683 (+1.55%)</td>
+            <td>51.33%</td>
+            <td>0/4</td>
+        </tr>
+        <tr>
+            <td>6h</td>
+            <td>0.009110</td>
+            <td>0.009533 (+4.64%)</td>
+            <td>52.51%</td>
+            <td>4/18</td>
+        </tr>
+        <tr>
+            <td>24h</td>
+            <td>0.019720</td>
+            <td>0.020895 (+5.96%)</td>
+            <td>50.80%</td>
+            <td>14/22</td>
+        </tr>
+    </tbody>
+</table>
+<p>OLS was the best non-naive challenger of the models tested (OLS, Random Forest, ARIMA, LSTM), and
+it still lost to Naive0 on average MAE at every horizon -- by 1.55% at 1h, 4.64% at 6h, and 5.96% at
+24h. Diebold-Mariano test evidence was mixed and limited: even OLS had more "worse" than "better"
+splits against Naive0 at nearly every horizon.</p>
+
+<h3>What a leaky evaluation would have reported</h3>
+<p>There is no second, independently-computed "leaky" number to show here -- no leaky re-run of this
+study exists or is computed by this platform, and none is fabricated for this page. What follows is
+descriptive: a naive random-split or globally-fit-preprocessing evaluation would not purge the
+boundary between train and test data the way this platform's protocol does. Without a purge gap,
+information from rows right at the train/test boundary -- for example a rolling-average feature
+computed across both sides of that boundary -- can leak into the test window, giving a model an
+unfairly easy look at data it is supposed to be evaluated against. Fitting preprocessing (scaling,
+imputation, feature selection) globally rather than per training fold has the same effect at a
+larger scale. Either mistake tends to make a model look more competitive with, or even better than,
+a naive baseline than it actually is. The numbers in the table above are what this platform's own
+leakage-aware protocol actually reported for the same models -- the purge gap and train-fold-only
+preprocessing are exactly the mechanism that protects against the inflated, misleading numbers a
+leaky evaluation would otherwise produce.</p>
+
+<h3>The core finding, restated plainly</h3>
+<p>Under this leakage-free, purged walk-forward protocol, no model beat Naive0 in a stable,
+statistically significant way at any of the 1h/6h/24h horizons -- OLS, Random Forest, ARIMA, and
+LSTM all did not beat Naive0 stably. The best directional accuracy observed across every model and
+horizon was 52.51% (OLS, 6h) -- barely above the 50% chance level. This is exactly why the platform
+validates models against a naive baseline under a leakage-aware protocol by default, rather than
+reporting a model's own numbers in isolation.</p>
+
+<p><a href="/help/concepts">Back to the walk-forward/purge-gap explainer</a></p>
+{% endblock %}

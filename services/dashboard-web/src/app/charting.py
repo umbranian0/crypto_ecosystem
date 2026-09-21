@@ -107,6 +107,7 @@ from naive_first_common.contracts import (
     SplitPointResponse,
     SplitResultResponse,
 )
+from naive_first_common.disclosures import NOT_BEATING_NAIVE_IS_EXPECTED_SENTENCE
 
 # DASH-125 (UAT-001 frontend half, VS-029's `has_client_model` field): the one
 # shared place the "Model" column/legend/export label is computed -- every
@@ -440,6 +441,17 @@ def build_headline_verdict_summary(
     "NaiveLast placeholder"/"no client model submitted" wording
     `MODEL_COLUMN_PLACEHOLDER_LABEL` already uses, rather than a second,
     independently-worded disclosure.
+
+    TRUST-005: when `run.has_client_model` is `True` and `better_count == 0`
+    (a real client model was submitted and evaluated, and it did not beat
+    Naive0 on any split), `naive_first_common.disclosures.
+    NOT_BEATING_NAIVE_IS_EXPECTED_SENTENCE` is appended (space-separated)
+    after the existing "Beat Naive0 on 0/N splits." sentence -- additive
+    context only, the existing sentence is unchanged. Never appended in the
+    `has_client_model=False` placeholder branch: there is no real model that
+    "did not beat naive" in that case, only NaiveLast's own placeholder
+    output being compared to Naive0, and the existing "no client model
+    submitted" wording already covers that case honestly.
     """
     if not splits:
         return None
@@ -448,7 +460,10 @@ def build_headline_verdict_summary(
     total = len(splits)
 
     if run.has_client_model:
-        return f"Beat Naive0 on {better_count}/{total} splits."
+        summary = f"Beat Naive0 on {better_count}/{total} splits."
+        if better_count == 0:
+            summary = f"{summary} {NOT_BEATING_NAIVE_IS_EXPECTED_SENTENCE}"
+        return summary
     return (
         f"Beat NaiveLast placeholder on {better_count}/{total} splits -- "
         "no client model submitted."

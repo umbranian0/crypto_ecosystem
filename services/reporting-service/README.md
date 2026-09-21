@@ -78,7 +78,8 @@ also out of scope this sprint (HTML only, backlog decision 3).
   al. (1997) long-run variance correction). The previously-existing gated "2. Leakage-protocol
   parameters" section (this run's own parameter *values*, still completed-only) is renamed to
   **"2.1 This run's leakage-protocol parameter values"** — a sub-number under the new section 2;
-  sections 2.5/3/4/5/6/7 keep their existing numbers unchanged. `METHODOLOGY_FACTS`'s wording lives in
+  sections 2.5 (later renumbered to 2.2, see the TRUST-005/Sprint 57 note below)/3/4/5/6/7 kept their
+  existing numbers unchanged at the time. `METHODOLOGY_FACTS`'s wording lives in
   `libs/common` (`naive_first_common/disclosures.py`), shared with `dashboard-web`'s run-detail panel
   so the audit report and the UI cannot tell a tenant two different things about the validation
   protocol — CLAUDE.md's DRY rule pulls cross-module duplication into a `libs/*` package rather than
@@ -89,6 +90,23 @@ also out of scope this sprint (HTML only, backlog decision 3).
   here with a hand-mirrored same-text test; that guard could not actually detect drift, since each
   service's test compared its own copy against another literal in its own test file.
 - **TRUST-004**: the report includes a "2.5. Reproducibility statement" subsection, positioned between section 2 ("Leakage-protocol parameters") and section 3 ("Results table (per split)"), inside the same `status == "completed"` `else` branch (so it's omitted for a non-completed run same as every other results-dependent section). It renders verbatim, template-only, no recomputation: `RunDetailResponse.engine_version`, `.config_fingerprint`, and `.dataset_id` (reused, not a second independently-sourced field), plus a fixed sentence stating that re-running the same configuration/dataset/engine version is expected to reproduce these results (a methodology/audit claim, not a prediction/trading claim). For a run predating `TRUST-003`'s engine-fingerprint tracking (`engine_version`/`config_fingerprint` both `None`, the field default), it renders an explicit "Engine version / config fingerprint not available for runs created before this platform tracked engine fingerprints" note instead — never a fabricated fingerprint, never a bare `"None"` string. `ValidationAuditRenderer`/`generation.py` required zero Python change (`RunDetailResponse` already passes through to the template context unmodified, RS-003's existing pattern).
+- **Sprint 57 renumbering**: TRUST-004's "2.5. Reproducibility statement" heading is now **"2.2
+  Reproducibility statement"** — a cheap, non-cascading rename (Tech Lead review item, `sprint-57.md`):
+  "2.5" read as a decimal offset sibling of "2.1" without actually being one, and no test or other
+  document referenced the literal string "2.5", so renumbering it to sit immediately after "2.1" was a
+  one-line template edit with no cascade into sections 3/4/5/6/7 (their numbers are unchanged).
+- **TRUST-005**: section 4 ("Verdict")'s "Overall" paragraph, inside the existing `{% if better_count ==
+  0 %}` branch, now renders one additional sentence after the existing, unchanged "the model did not
+  beat naive on any split evaluated in this run." text:
+  `naive_first_common.disclosures.NOT_BEATING_NAIVE_IS_EXPECTED_SENTENCE` (the same shared constant
+  `dashboard-web`'s `build_headline_verdict_summary` appends under the equivalent condition,
+  `has_client_model=True` and `better_count == 0`). `ValidationAuditRenderer.render` passes it into the
+  template context as `not_beating_naive_note`. Never rendered in the `better_count > 0` branches (either
+  "beat naive on every split" or "mixed"). Same shared-constant/identity-check drift-guard mechanism as
+  `METHODOLOGY_FACTS` above (`tests/test_renderers.py::test_not_beating_naive_sentence_matches_shared_wording`).
+  `TRUST-005-01`'s and this ticket's (`TRUST-005-02`) own tickets, as originally written, specified a
+  per-service copy plus a per-service same-text test for this sentence — corrected before implementation
+  to reuse the shared constant from the start (see both tickets' own "Superseded in part" notes).
 - The leakage checklist and statistical-vs-economic disclaimer in every report are populated programmatically from `validation-service` run metadata where possible, never hand-typed — reduces drift between what the engine actually did and what the report claims it did.
 - Data access goes through a Repository layer (`ReportRepository`) — implementation-plan.md section 7 — same pattern as every other tenant-scoped service in this platform.
 - **Service-to-service call path**: calls `validation-service`'s real `GET /runs/{id}`/`GET /runs/{id}/splits` directly by hostname inside the Docker network (same internal-call pattern `gateway-api` already uses), never through `gateway-api` — this is an internal call, not an external client request.

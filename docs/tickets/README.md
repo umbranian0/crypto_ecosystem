@@ -3091,6 +3091,61 @@ both `-01` tickets to avoid concurrent edits to the same files.
 |---|---|---|---|---|
 | [TRUST-001-01](TRUST-001-01.md) | Always-visible "Methodology" panel on `run_detail.html`, outside `{% if splits %}`; originates the shared `METHODOLOGY_FACTS` wording + same-text-test mechanism | dashboard-web | none | done |
 | [TRUST-001-02](TRUST-001-02.md) | Always-visible "2. Methodology" subsection in `validation_audit.html.jinja`, before the completed-only status gate; independently-authored copy of `TRUST-001-01`'s wording, own same-text test | reporting-service | none | done |
-| [TRUST-005-01](TRUST-005-01.md) | `build_headline_verdict_summary` appends the "not beating naive is expected" sentence when `has_client_model=True` and `better_count==0` | dashboard-web | TRUST-001-01 | todo |
-| [TRUST-005-02](TRUST-005-02.md) | One additive sentence inside `validation_audit.html.jinja`'s existing `{% if better_count == 0 %}` branch | reporting-service | TRUST-001-02 | todo |
-| [TRUST-002](TRUST-002.md) | New static `/help/leakage-demo` route + template using `da-tese-ao-produto.md` section 1.3's real numbers, linked from the methodology panel and `/help/concepts` | dashboard-web | TRUST-001-01, TRUST-005-01 | todo |
+| [TRUST-005-01](TRUST-005-01.md) | `build_headline_verdict_summary` appends the "not beating naive is expected" sentence when `has_client_model=True` and `better_count==0` -- constant relocated to `libs/common` (deviation from ticket's original Design, disclosed in the ticket's own "Superseded in part" note) | dashboard-web | TRUST-001-01 | done |
+| [TRUST-005-02](TRUST-005-02.md) | One additive sentence inside `validation_audit.html.jinja`'s existing `{% if better_count == 0 %}` branch -- same `libs/common` deviation; also renumbers "2.5." to "2.2" (Sprint 57 item 4) | reporting-service | TRUST-001-02 | done |
+| [TRUST-002](TRUST-002.md) | New static `/help/leakage-demo` route + template using `da-tese-ao-produto.md` section 1.3's real numbers, linked from the methodology panel and `/help/concepts` -- fixes the live 404 `TRUST-001-01`'s panel link shipped with | dashboard-web | TRUST-001-01, TRUST-005-01 | done |
+
+**Sprint 57 status: all six tickets done, QA-verified (GO).** A prior Tech Lead session hit a rate
+limit after `TRUST-001-01/02` shipped; the coordinator applied two direct follow-up commits
+(`a780493`, `6282565`) that moved `METHODOLOGY_FACTS`/`METHODOLOGY_INTRO` into `libs/common` as
+`naive_first_common.disclosures` and corrected `TRUST-001-01/02`'s own records, plus a third
+(`79ee93d`) fixing `infra/bootstrap.sh`/`.ps1`'s Step-1 numbering gap. A follow-on Tech Lead session
+completed the sprint's remaining scope: `TRUST-002` (the 404 code fix), `TRUST-005-01`/`02` (built
+against the `libs/common` pattern from the start, not the per-service-copy pattern their own ticket
+files originally specified -- both tickets carry a "Superseded in part" note recording the deviation
+before implementation), a DRY fix in `dashboard-web`'s `runs.py` (`_run_new_form_error_response`,
+unifying five near-identical 422-redisplay `TemplateResponse` calls, past the documented
+"extract on second duplication" threshold), and a cheap, non-cascading renumber of
+`reporting-service`'s "2.5. Reproducibility statement" heading to "2.2". The `qa` agent then
+independently validated the full remaining scope (see sprint-57.md's Definition of Done for exact
+scope) -- first time the QA gate actually ran on this sprint's work -- and returned **GO**, including
+mutation-testing the `NOT_BEATING_NAIVE_IS_EXPECTED_SENTENCE` drift guard itself (edited the shared
+constant, confirmed the right test fails, reverted) rather than only re-running the suites as-is.
+
+**Two non-blocking follow-ups QA surfaced, tracked here rather than silently dropped**:
+1. `docs/product/backlog-trust-and-admin-ops.md`'s `TRUST-001` entry had never been marked done/checked
+   (an earlier-session gap, unrelated to this session's own tickets) -- fixed in this same pass once QA
+   flagged it.
+2. **`INF-020` -- closed, 2026-09-21.** `services/dashboard-web`'s Docker image could not be rebuilt via
+   `docker compose build` -- its `Dockerfile` never copied `libs/ai_assist` into the build context even
+   though `pyproject.toml` depends on it (`uv sync --frozen` failed with `Distribution not found at:
+   file:///repo/libs/ai_assist`), a pre-existing bug dating to the AI-004/AI-005 sprint (`c75ad6d`), not
+   introduced by Sprint 57. Independently re-checking this finding surfaced the exact same gap in
+   `services/reporting-service/Dockerfile` (that service is where the `naive_first_ai_assist` dependency
+   originated, before `libs/ai_assist` was extracted by Sprint 50's `AI-003-REFACTOR`) -- so this was a
+   two-service bug, not one, and `docker compose build` had been broken for both `dashboard-web` and
+   `reporting-service` since that sprint. No dedicated ticket file was written (small, mechanical,
+   packaging-only fix mirroring an already-established pattern exactly -- same precedent `INF-019`
+   already set for a same-sized Dockerfile packaging fix that also shipped comment-only, no separate
+   ticket file); disclosed here plus inline in both Dockerfiles' own header comments (tagged `INF-020`).
+
+   **Fix**: added `COPY --from=libs ai_assist ./libs/ai_assist` to both Dockerfiles, right after the
+   existing `COPY --from=libs common ./libs/common` line, mirroring that exact existing pattern (both
+   services already had a `libs: ../libs` additional build context wired in `infra/docker-compose.yml`,
+   so `libs/ai_assist` was already reachable, just not copied). Each Dockerfile's own header comment was
+   also corrected -- `dashboard-web`'s previously said "only `libs/common` is copied in" (false as of
+   AI-003); `reporting-service`'s didn't mention `ai_assist` at all.
+
+   **Live-verified, not just reasoned about** (Docker Desktop reachable in this session, unlike prior
+   sprints' disclosed "no Docker access" gaps): confirmed the *unfixed* `dashboard-web` Dockerfile really
+   did fail first (`docker compose -f infra/docker-compose.yml build dashboard-web` -> `error: Failed to
+   determine installation plan / Caused by: Distribution not found at: file:///repo/libs/ai_assist`, exit
+   code 2), proving the bug was real, not hypothetical. Then, with both Dockerfiles fixed: `docker compose
+   -f infra/docker-compose.yml build dashboard-web reporting-service` succeeded for both (`naive-first-ai-
+   assist` installed alongside `naive-first-common` in each image's `uv sync` output, both images exported
+   successfully). Recreated both containers against the new images (`docker compose -f
+   infra/docker-compose.yml up -d dashboard-web reporting-service`); `GET /health` returned `200` on both
+   (`localhost:8004`, `localhost:8002`), and `GET /help/leakage-demo` against the real, running
+   `naive-first-dashboard-web` container now returns `200` with the real rendered page (confirmed via
+   response body, not just the status code) -- closing the gap QA flagged above, where that same route
+   404'd on the live container despite the code fix already being complete and test-covered.

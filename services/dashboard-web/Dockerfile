@@ -11,7 +11,15 @@
 # context is the service directory (see infra/docker-compose.yml),
 # libs/common is pulled in from the "libs" additional build context defined
 # there. Like gateway-api, dashboard-web does not depend on
-# naive_first_engine at runtime, so only libs/common is copied in.
+# naive_first_engine at runtime, so that one is not copied in.
+#
+# INF-020: pyproject.toml also declares naive_first_ai_assist (AI-003) as an editable
+# path dependency at "../../libs/ai_assist" -- previously NOT copied in here,
+# which broke `docker compose build dashboard-web` outright (`uv sync
+# --frozen --no-dev` failed with "Distribution not found at:
+# file:///repo/libs/ai_assist", confirmed live 2026-09-21). Fixed below by
+# copying libs/ai_assist the same way libs/common is copied, from the same
+# "libs" additional build context.
 #
 # Unlike gateway-api, dashboard-web has no scripts/ directory (no
 # provision_tenant.py/revoke_api_key.py-style operator tooling) -- that
@@ -23,6 +31,7 @@ RUN pip install --no-cache-dir uv
 WORKDIR /repo
 
 COPY --from=libs common ./libs/common
+COPY --from=libs ai_assist ./libs/ai_assist
 
 WORKDIR /repo/services/dashboard-web
 

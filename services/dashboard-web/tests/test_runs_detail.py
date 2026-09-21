@@ -1600,3 +1600,28 @@ def test_methodology_panel_partial_has_no_banned_positioning_words() -> None:
         assert banned not in text, (
             f"banned positioning word {banned!r} found in _methodology_panel.html"
         )
+
+
+def test_run_detail_links_to_leakage_demo(monkeypatch) -> None:
+    """TRUST-002: `_methodology_panel.html`'s `/help/leakage-demo` link must
+    actually resolve now that the route exists, not just be present as a
+    `href` string."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == f"/runs/{RUN_ID}":
+            return httpx.Response(200, json=RUN_DETAIL_BODY)
+        if request.url.path == f"/runs/{RUN_ID}/splits":
+            return httpx.Response(200, json=[SPLIT_BODY])
+        raise AssertionError(f"unexpected path {request.url.path}")
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get(f"/runs/{RUN_ID}")
+
+    assert response.status_code == 200
+    assert 'href="/help/leakage-demo"' in response.text
+
+    follow_up = client.get("/help/leakage-demo")
+    assert follow_up.status_code == 200

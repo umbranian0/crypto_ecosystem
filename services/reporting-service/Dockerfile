@@ -14,6 +14,16 @@
 # convention), libs/common is pulled in from the "libs" additional build
 # context, the same shape infra/docker-compose.yml already defines for the
 # other services.
+#
+# INF-020: pyproject.toml also declares naive_first_ai_assist (originally AI-002,
+# later extracted into libs/ai_assist by Sprint 50's AI-003-REFACTOR) as an
+# editable path dependency at "../../libs/ai_assist" -- previously NOT
+# copied in here, which broke `docker compose build reporting-service`
+# outright (`uv sync --frozen --no-dev` failed with "Distribution not found
+# at: file:///repo/libs/ai_assist", same failure mode confirmed live for
+# dashboard-web on 2026-09-21). Fixed below by copying libs/ai_assist the
+# same way libs/common is copied, from the same "libs" additional build
+# context.
 FROM python:3.11-slim
 
 RUN pip install --no-cache-dir uv
@@ -21,6 +31,7 @@ RUN pip install --no-cache-dir uv
 WORKDIR /repo
 
 COPY --from=libs common ./libs/common
+COPY --from=libs ai_assist ./libs/ai_assist
 
 WORKDIR /repo/services/reporting-service
 

@@ -47,7 +47,7 @@ protocol parameters this run actually used, verbatim from the run record:</p>
     <li>Splits evaluated: {{ splits | length }}</li>
 </ul>
 
-<h2>2.5. Reproducibility statement</h2>
+<h2>2.2 Reproducibility statement</h2>
 {% if run.engine_version and run.config_fingerprint %}
 <ul>
     <li>Engine version (naive_first_engine): {{ run.engine_version }}</li>
@@ -149,7 +149,7 @@ engine fingerprints.</p>
 </ul>
 <p>Overall:
 {% if better_count == 0 %}
-the model did not beat naive on any split evaluated in this run.
+the model did not beat naive on any split evaluated in this run. {{ not_beating_naive_note }}
 {% elif worse_count == 0 and no_diff_count == 0 %}
 the model beat naive on every split evaluated in this run.
 {% else %}
