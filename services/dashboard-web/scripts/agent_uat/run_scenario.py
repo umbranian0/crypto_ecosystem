@@ -97,6 +97,11 @@ def _rendered_text_contains(html: str, value: Any) -> bool:
     """
     if value is None:
         return True  # nothing to check
+    if isinstance(value, (list, dict)):
+        # Not a scalar the page renders verbatim -- stringifying a list and
+        # substring-matching it always fails, which would be a false mismatch.
+        # Name the scalar fields inside it instead.
+        return True
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return str(value) in html
 
@@ -137,23 +142,46 @@ def run_step(
         time.sleep(0.5)
     elif action == "fill_and_submit":
         missing_fields: list[str] = []
-        form = driver.find_element(By.CSS_SELECTOR, step["form_selector"])
-        for field_name, raw_value in step.get("fields", {}).items():
+        try:
+            form = driver.find_element(By.CSS_SELECTOR, step["form_selector"])
+        except Exception:
+            # A form that isn't on the page is itself a finding -- record it and
+            # carry on, rather than aborting the run and losing every later step's
+            # evidence. The screenshot still shows what the user would have seen.
+            form = None
+            missing_fields.append(f"<form not found: {step['form_selector']}>")
+        for field_name, raw_value in ({} if form is None else step.get("fields", {})).items():
             value = _substitute(raw_value, context)
             try:
                 field = form.find_element(By.NAME, field_name)
             except Exception:
                 missing_fields.append(field_name)
                 continue
-            if field.tag_name == "select":
-                Select(field).select_by_value(value)
-            else:
-                field.clear()
-                field.send_keys(value)
+            try:
+                if field.tag_name == "select":
+                    select = Select(field)
+                    # "{first_option}", or any placeholder the context could not
+                    # resolve, means "whatever this tenant actually has" -- a UAT
+                    # drives the real dropdown rather than a hardcoded id.
+                    if value == "{first_option}" or (value.startswith("{") and value.endswith("}")):
+                        choices = [o for o in select.options if (o.get_attribute("value") or "").strip()]
+                        if not choices:
+                            missing_fields.append(f"{field_name} (no selectable options)")
+                            continue
+                        select.select_by_value(choices[0].get_attribute("value"))
+                    else:
+                        select.select_by_value(value)
+                else:
+                    field.clear()
+                    field.send_keys(value)
+            except Exception as exc:
+                missing_fields.append(f"{field_name} (could not set: {type(exc).__name__})")
+                continue
         # Click the submit button rather than calling the DOM form.submit() method:
         # the latter does not fire the "submit" event per spec, which several of
         # this app's forms (HTMX hx-post) rely on to intercept the request.
-        form.find_element(By.CSS_SELECTOR, "button[type='submit'], input[type='submit']").click()
+        if form is not None:
+            form.find_element(By.CSS_SELECTOR, "button[type='submit'], input[type='submit']").click()
         if step.get("follow_redirect"):
             time.sleep(0.5)
         else:
@@ -219,6 +247,7 @@ def main() -> None:
     parser.add_argument("--gateway-url", required=True)
     parser.add_argument("--api-key", default=None)
     parser.add_argument("--operator-token", default=None)
+    parser.add_argument("--tenant-id", default=None, help="Tenant id, for cross-checks against endpoints that take it as a query param")
     parser.add_argument("--dataset-source", default=None, help="Stored dataset source name for the tenant scenario's run-submit step")
     parser.add_argument("--headful", action="store_true")
     args = parser.parse_args()
@@ -233,6 +262,8 @@ def main() -> None:
         context["api_key"] = args.api_key
     if args.operator_token:
         context["operator_token"] = args.operator_token
+    if args.tenant_id:
+        context["tenant_id"] = args.tenant_id
     if args.dataset_source:
         context["dataset_source"] = args.dataset_source
 

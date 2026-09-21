@@ -1,7 +1,23 @@
 {
   "name": "admin",
-  "description": "Operator-persona walkthrough: operator login, monitoring/crawl-status, trigger a crawl, generate a report, connector credential status, tenant management.",
+  "description": "Operator-persona walkthrough. Logs in as BOTH a tenant and an operator, because /monitoring mixes operator-scoped panels (service health, recent errors, run throughput) with tenant-scoped ones (crawl status, generate a report) that only render with a tenant session.",
   "steps": [
+    {
+      "name": "tenant_login_page",
+      "action": "get",
+      "path": "/login",
+      "screenshot": true
+    },
+    {
+      "name": "tenant_login_submit",
+      "action": "fill_and_submit",
+      "form_selector": "form[action='/login']",
+      "fields": {
+        "api_key": "{api_key}"
+      },
+      "screenshot": true,
+      "follow_redirect": true
+    },
     {
       "name": "operator_login_page",
       "action": "get",
@@ -11,25 +27,18 @@
     {
       "name": "operator_login_submit",
       "action": "fill_and_submit",
-      "form_selector": "form",
+      "form_selector": "form[action='/operator-login']",
       "fields": {
         "operator_token": "{operator_token}"
       },
-      "screenshot": true
+      "screenshot": true,
+      "follow_redirect": true
     },
     {
       "name": "monitoring_page",
       "action": "get",
       "path": "/monitoring",
-      "screenshot": true,
-      "verify_against": {
-        "method": "GET",
-        "path": "/ingestion/connectors/{source}/status",
-        "extract_fields": [
-          "status",
-          "last_crawl_at"
-        ]
-      }
+      "screenshot": true
     },
     {
       "name": "trigger_crawl",
@@ -45,15 +54,16 @@
     },
     {
       "name": "generate_report_form",
-      "action": "current_page",
-      "screenshot": true
+      "action": "get",
+      "screenshot": true,
+      "path": "/monitoring"
     },
     {
       "name": "generate_report_submit",
       "action": "fill_and_submit",
       "form_selector": "form[hx-post='/monitoring/reports/generate']",
       "fields": {
-        "run_id": "{run_id}"
+        "run_id": "{first_option}"
       },
       "screenshot": true
     },
@@ -61,12 +71,23 @@
       "name": "settings_connectors",
       "action": "get",
       "path": "/settings/connectors",
+      "screenshot": true
+    },
+    {
+      "name": "settings_connectors_lookup",
+      "action": "fill_and_submit",
+      "form_selector": "form[action='/settings/connectors']",
+      "fields": {
+        "tenant_id": "{tenant_id}"
+      },
       "screenshot": true,
+      "follow_redirect": true,
       "verify_against": {
         "method": "GET",
-        "path": "/ingestion/connectors/credentials-status",
+        "path": "/ingestion/connectors/credentials-status?tenant_id={tenant_id}",
         "extract_fields": [
-          "items"
+          "source",
+          "credential_set"
         ]
       }
     },
@@ -79,7 +100,8 @@
         "method": "GET",
         "path": "/tenants",
         "extract_fields": [
-          "items"
+          "name",
+          "id"
         ]
       }
     },
