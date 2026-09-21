@@ -89,6 +89,8 @@ class PostgresValidationRunRepository:
         warnings: list[str] | None = None,
         feature_lineage: list[dict] | None = None,
         label: str | None = None,
+        engine_version: str | None = None,
+        config_fingerprint: str | None = None,
     ) -> RunRecord:
         run = Run(
             id=uuid4().hex,
@@ -104,6 +106,8 @@ class PostgresValidationRunRepository:
             warnings=warnings if warnings is not None else [],
             feature_lineage=feature_lineage if feature_lineage is not None else [],
             label=label,
+            engine_version=engine_version,
+            config_fingerprint=config_fingerprint,
         )
         with _tenant_scoped_session(self._engine, tenant_id) as session:
             session.add(run)

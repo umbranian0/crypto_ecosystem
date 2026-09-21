@@ -23,10 +23,43 @@ fail() {
     exit 1
 }
 
-echo "==> Step 1/6: starting postgres, redis"
-docker compose -f "$compose_file" up -d postgres redis || fail "step 1 (docker compose up postgres redis)"
+# BOOT-002: single reusable poll used for validation-service, gateway-api, and
+# dashboard-web below (step 7) -- mirrors step 3's postgres wait-loop shape
+# (attempt/max_attempts/sleep), but over HTTP GET .../health instead of
+# `docker inspect`. A curl transport failure (connection refused, timeout) and
+# a non-200 response are both treated as "not yet healthy" and retried --
+# curl's own non-zero exit must not trip `set -e` mid-loop, hence `|| true`.
+wait_for_service_health() {
+    name="$1"
+    port="$2"
+    attempt=0
+    max_attempts=30
+    while :; do
+        status_code="$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:${port}/health" 2>/dev/null || true)"
+        if [ "$status_code" = "200" ]; then
+            echo "    $name is healthy"
+            return 0
+        fi
+        attempt=$((attempt + 1))
+        if [ "$attempt" -ge "$max_attempts" ]; then
+            fail "step 7 ($name did not become healthy within ${max_attempts} attempts; last status: '${status_code}')"
+        fi
+        sleep 2
+    done
+}
 
-echo "==> Step 2/6: waiting for postgres to become healthy"
+echo "==> Step 0/8: checking for infra/.env"
+if [ ! -f "$script_dir/.env" ]; then
+    cp "$script_dir/.env.example" "$script_dir/.env" || fail "step 0 (copying .env.example to .env)"
+    echo "    created $script_dir/.env from .env.example"
+    echo "    Change these disclosed insecure dev-only defaults before any non-local deployment:"
+    echo "    OPERATOR_TOKEN, POSTGRES_PASSWORD, POSTGRES_APP_PASSWORD, INGESTION_CREDENTIAL_ENCRYPTION_KEY, INGESTION_INTERNAL_TOKEN"
+fi
+
+echo "==> Step 2/8: starting postgres, redis"
+docker compose -f "$compose_file" up -d postgres redis || fail "step 2 (docker compose up postgres redis)"
+
+echo "==> Step 3/8: waiting for postgres to become healthy"
 attempt=0
 max_attempts=30
 while :; do
@@ -37,16 +70,16 @@ while :; do
     fi
     attempt=$((attempt + 1))
     if [ "$attempt" -ge "$max_attempts" ]; then
-        fail "step 2 (postgres did not become healthy within ${max_attempts} attempts; last status: '${status}')"
+        fail "step 3 (postgres did not become healthy within ${max_attempts} attempts; last status: '${status}')"
     fi
     sleep 2
 done
 
-echo "==> Step 3/6: running migrations (delegated to infra/migrate.sh both)"
-"$script_dir/migrate.sh" both || fail "step 3 (infra/migrate.sh both -- see output above for which service's migration failed)"
+echo "==> Step 4/8: running migrations (delegated to infra/migrate.sh both)"
+"$script_dir/migrate.sh" both || fail "step 4 (infra/migrate.sh both -- see output above for which service's migration failed)"
 
-echo "==> Step 4/6: starting validation-service, gateway-api"
-docker compose -f "$compose_file" up -d --build validation-service gateway-api || fail "step 4 (docker compose up --build validation-service gateway-api)"
+echo "==> Step 5/8: starting validation-service, gateway-api"
+docker compose -f "$compose_file" up -d --build validation-service gateway-api || fail "step 5 (docker compose up --build validation-service gateway-api)"
 
 # SETUP-004: closes the "one command" loop -- starts dashboard-web via
 # Compose (depends on SETUP-030's compose entry existing) and opens/prints
@@ -56,13 +89,25 @@ docker compose -f "$compose_file" up -d --build validation-service gateway-api |
 # means re-running this step against an already-initialized stack lands the
 # operator on /login, not a duplicate-tenant error -- no new idempotency
 # logic is added here.
-echo "==> Step 5/6: starting dashboard-web"
-docker compose -f "$compose_file" up -d --build dashboard-web || fail "step 5 (docker compose up --build dashboard-web)"
+echo "==> Step 6/8: starting dashboard-web"
+docker compose -f "$compose_file" up -d --build dashboard-web || fail "step 6 (docker compose up --build dashboard-web)"
 
+validation_service_port="${VALIDATION_SERVICE_PORT:-8001}"
+gateway_api_port="${GATEWAY_API_PORT:-8000}"
 dashboard_port="${DASHBOARD_WEB_PORT:-8004}"
 wizard_url="http://localhost:${dashboard_port}/"
 
-echo "==> Step 6/6: opening the setup wizard"
+# BOOT-002: dashboard-web is polled last -- its own /health already makes a
+# real call to gateway-api's /health (DASH-008), so confirming
+# validation-service/gateway-api first gives the clearest failure attribution
+# if something upstream is broken.
+echo "==> Step 7/8: verifying validation-service, gateway-api, dashboard-web are healthy"
+wait_for_service_health "validation-service" "$validation_service_port"
+wait_for_service_health "gateway-api" "$gateway_api_port"
+wait_for_service_health "dashboard-web" "$dashboard_port"
+echo "    all services healthy"
+
+echo "==> Step 8/8: opening the setup wizard"
 opened=0
 if command -v xdg-open >/dev/null 2>&1; then
     xdg-open "$wizard_url" >/dev/null 2>&1 && opened=1

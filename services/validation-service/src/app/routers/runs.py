@@ -147,6 +147,7 @@ from app.dependencies.repositories import (
     ValidationRunRepositoryDep,
 )
 from app.feature_dataset import FeatureDatasetError
+from app.fingerprint import compute_config_fingerprint, get_engine_version
 from app.level_detection import (
     LAG1_AUTOCORR_THRESHOLD,
     MEAN_OVER_STD_THRESHOLD,
@@ -232,19 +233,26 @@ def _persist_new_run(
     warnings: list[str],
     feature_lineage: list[dict] | None = None,
 ):
+    # TRUST-003: split_config is built once, as a local variable, and reused
+    # for both create_run's existing split_config= argument and the
+    # fingerprint call below -- no second, independently-constructed dict
+    # that could ever drift from what's actually persisted in runs.split_config.
+    split_config = {
+        "train_window": request.train_window,
+        "test_window": request.test_window,
+        "step": request.step,
+    }
     return run_repository.create_run(
         tenant_id=tenant.tenant_id,
         dataset_id=request.dataset_id,
         horizon=request.horizon,
         purge_gap_hours=request.purge_gap_hours,
-        split_config={
-            "train_window": request.train_window,
-            "test_window": request.test_window,
-            "step": request.step,
-        },
+        split_config=split_config,
         warnings=warnings,
         feature_lineage=feature_lineage if feature_lineage is not None else [],
         label=request.label,
+        engine_version=get_engine_version(),
+        config_fingerprint=compute_config_fingerprint(split_config),
     )
 
 
@@ -665,6 +673,8 @@ def get_run(
         # same precedent VS-029 established for has_client_model.
         has_multimodal_features=bool(run.feature_lineage),
         label=run.label,
+        engine_version=run.engine_version,
+        config_fingerprint=run.config_fingerprint,
     )
 
 

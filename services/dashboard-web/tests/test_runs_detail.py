@@ -16,7 +16,7 @@ from fastapi.testclient import TestClient
 
 from app.dependencies.session import get_session_store
 from app.main import app
-from app.routers.runs import CAVEAT_SENTENCE, build_shareable_summary_text
+from app.routers.runs import CAVEAT_SENTENCE, METHODOLOGY_FACTS, build_shareable_summary_text
 from naive_first_common.contracts import RunDetailResponse, SplitResultResponse
 
 RAW_KEY = "super-secret-raw-api-key-do-not-leak"
@@ -1509,3 +1509,103 @@ def test_run_detail_chart_titles_render_as_heading_elements(monkeypatch) -> None
     # still renders its own `<p class="chart-title">` unchanged -- only the
     # three named partials' titles became headings.
     assert response.text.count('<p class="chart-title">') == 1
+
+
+# TRUST-001-01: permanent methodology disclosure panel.
+
+
+def test_methodology_facts_matches_shared_wording() -> None:
+    """Exact tuple-equality check (not substring/keyword) -- mirrors
+    `CAVEAT_SENTENCE`'s (FHS-004) exact-match precedent. This is the test QA
+    independently verifies actually fails if `METHODOLOGY_FACTS` is edited out
+    of sync with `TRUST-001-02`'s independently-authored copy in
+    reporting-service.
+    """
+    assert METHODOLOGY_FACTS == (
+        "Rolling-origin walk-forward validation: each split trains on data up to a point in "
+        "time and tests only on the period immediately after it -- never on rows the model "
+        "could not yet have seen.",
+        "A configurable purge gap separates every split's training window from its test "
+        "window, closing the boundary-leakage channel a plain train/test split allows.",
+        "Every run is benchmarked against the mandatory Naive0 and NaiveLast baselines -- a "
+        "model's result is never reported in isolation.",
+        "Model-vs-baseline comparisons use the Diebold-Mariano test with the Harvey et al. "
+        "(1997) long-run variance correction for overlapping horizons, not a raw metric "
+        "difference.",
+    )
+
+
+def test_run_detail_methodology_panel_renders_for_zero_split_run(monkeypatch) -> None:
+    """The regression-proof test for the gap this ticket closes: today's only
+    DM/Harvey mention (`_dm_verdict_chart.html`'s caption) is inside
+    `{% if splits %}` and is absent for a zero-split (e.g. `"running"`) run.
+    """
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == f"/runs/{RUN_ID}":
+            body = {**RUN_DETAIL_BODY, "status": "running", "completed_at": None}
+            return httpx.Response(200, json=body)
+        if request.url.path == f"/runs/{RUN_ID}/splits":
+            return httpx.Response(200, json=[])
+        raise AssertionError(f"unexpected path {request.url.path}")
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get(f"/runs/{RUN_ID}")
+
+    assert response.status_code == 200
+    import html
+
+    rendered = html.unescape(response.text)
+    for fact in METHODOLOGY_FACTS:
+        assert fact in rendered
+
+
+def test_run_detail_methodology_panel_renders_for_completed_multi_split_run(monkeypatch) -> None:
+    """Same assertion repeated for a completed, multi-split run -- the panel
+    renders alongside the existing per-split content, not instead of it.
+    """
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == f"/runs/{RUN_ID}":
+            return httpx.Response(200, json=RUN_DETAIL_BODY)
+        if request.url.path == f"/runs/{RUN_ID}/splits":
+            return httpx.Response(200, json=[SPLIT_BODY, UNDEFINED_DM_SPLIT_BODY])
+        raise AssertionError(f"unexpected path {request.url.path}")
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get(f"/runs/{RUN_ID}")
+
+    assert response.status_code == 200
+    import html
+
+    rendered = html.unescape(response.text)
+    for fact in METHODOLOGY_FACTS:
+        assert fact in rendered
+    # Alongside, not instead of, the existing per-split content.
+    assert "no significant difference" in rendered
+
+
+def test_methodology_panel_partial_has_no_banned_positioning_words() -> None:
+    """CLAUDE.md positioning scan, same convention as
+    `test_help_concepts_page_has_no_banned_positioning_words`/
+    `test_shareable_summary_partial_has_no_banned_positioning_words_outside_caveat`.
+    """
+    template_path = (
+        __import__("pathlib").Path(__file__).parent.parent
+        / "src"
+        / "app"
+        / "templates"
+        / "_methodology_panel.html"
+    )
+    text = template_path.read_text(encoding="utf-8").lower()
+
+    for banned in ("prediction", "forecast", "signal", "recommendation"):
+        assert banned not in text, (
+            f"banned positioning word {banned!r} found in _methodology_panel.html"
+        )

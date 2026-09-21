@@ -16,7 +16,7 @@ import pytest
 from naive_first_common.contracts import RunDetailResponse, SplitResultResponse
 
 from app.renderers.factory import UnknownReportKindError, get_report_renderer
-from app.renderers.validation_audit import ValidationAuditRenderer
+from app.renderers.validation_audit import METHODOLOGY_FACTS, ValidationAuditRenderer
 
 DISCLAIMER_TEXT = (
     "This audit evaluates statistical forecast accuracy only. No transaction costs, "
@@ -26,7 +26,12 @@ DISCLAIMER_TEXT = (
 )
 
 
-def _make_run(status: str = "completed", failure_reason: str | None = None) -> RunDetailResponse:
+def _make_run(
+    status: str = "completed",
+    failure_reason: str | None = None,
+    engine_version: str | None = None,
+    config_fingerprint: str | None = None,
+) -> RunDetailResponse:
     return RunDetailResponse(
         id="run-1",
         tenant_id="tenant-1",
@@ -40,6 +45,8 @@ def _make_run(status: str = "completed", failure_reason: str | None = None) -> R
             datetime(2026, 1, 2, tzinfo=timezone.utc) if status == "completed" else None
         ),
         failure_reason=failure_reason,
+        engine_version=engine_version,
+        config_fingerprint=config_fingerprint,
     )
 
 
@@ -168,3 +175,166 @@ def test_narrative_html_present_renders_labeled_block():
 
     assert "AI-generated summary of the results above" in html
     assert "This is the AI narrative paragraph text." in html
+
+
+def test_fingerprinted_run_renders_reproducibility_statement_facts():
+    """TRUST-004: a run with both `engine_version`/`config_fingerprint` set
+    (the post-TRUST-003 contract) renders all four required facts: engine
+    version, config fingerprint, dataset reference, and the fixed
+    reproducibility-expectation sentence.
+    """
+    run = _make_run(
+        status="completed",
+        engine_version="naive_first_engine==1.4.0",
+        config_fingerprint="a3f5c9...deadbeef",
+    )
+    splits = [_make_split(0, "better", -3.1, 0.01)]
+
+    html = ValidationAuditRenderer().render(run, splits)
+
+    assert "Reproducibility statement" in html
+    assert "naive_first_engine==1.4.0" in html
+    assert "a3f5c9...deadbeef" in html
+    assert "dataset-1" in html
+    assert "expected to reproduce these results" in html
+
+
+def test_null_fingerprint_run_renders_not_available_note_without_leaking_none():
+    """TRUST-004: a pre-TRUST-003 run (`engine_version`/`config_fingerprint`
+    both `None`, `_make_run`'s existing default) renders the explicit
+    not-available note and never leaks Jinja2's `None -> "None"` string
+    coercion into the subsection.
+    """
+    run = _make_run(status="completed")
+    splits = [_make_split(0, "better", -3.1, 0.01)]
+
+    html = ValidationAuditRenderer().render(run, splits)
+    normalized_html = " ".join(html.split())
+
+    assert (
+        "not available for runs created before this platform tracked "
+        "engine fingerprints" in normalized_html
+    )
+
+    start = html.index("Reproducibility statement")
+    end = html.index("3. Results table (per split)")
+    subsection = html[start:end]
+    assert "None" not in subsection
+
+
+def test_reproducibility_statement_sits_between_leakage_params_and_results_table():
+    """TRUST-004 placement acceptance criterion: the new subsection's heading
+    appears strictly after "leakage-protocol parameter values" and strictly
+    before "Results table (per split)" in the rendered HTML.
+    """
+    run = _make_run(status="completed")
+    splits = [_make_split(0, "better", -3.1, 0.01)]
+
+    html = ValidationAuditRenderer().render(run, splits)
+
+    assert html.index("leakage-protocol parameter values") < html.index("Reproducibility statement")
+    assert html.index("Reproducibility statement") < html.index("Results table (per split)")
+
+
+def test_non_completed_run_omits_reproducibility_statement():
+    """The new subsection lives inside the existing `else` branch of the
+    `run.status != "completed"` guard, so a non-completed run must omit it
+    entirely, same as every other results-dependent section.
+    """
+    run = _make_run(status="running")
+
+    html = ValidationAuditRenderer().render(run, [])
+
+    assert "Reproducibility statement" not in html
+
+
+def test_methodology_section_renders_for_non_completed_zero_split_run():
+    """TRUST-001-02: the new "2. Methodology" section is always-visible --
+    it must render, with all four facts verbatim, even for a run that has
+    not completed and has zero splits. This is the regression-proof test for
+    the gap this ticket closes."""
+    import html as html_module
+
+    run = _make_run(status="running")
+
+    rendered = html_module.unescape(ValidationAuditRenderer().render(run, []))
+
+    assert "2. Methodology" in rendered
+    for fact in METHODOLOGY_FACTS:
+        assert fact in rendered
+
+
+def test_methodology_section_renders_for_completed_multi_split_run():
+    """Same assertion repeated for a "completed", multi-split run -- the
+    section is present regardless of status, not only for the non-completed
+    case."""
+    import html as html_module
+
+    run = _make_run(status="completed")
+    splits = [
+        _make_split(0, "better", -3.1, 0.01),
+        _make_split(1, "worse", 2.8, 0.02),
+    ]
+
+    rendered = html_module.unescape(ValidationAuditRenderer().render(run, splits))
+
+    assert "2. Methodology" in rendered
+    for fact in METHODOLOGY_FACTS:
+        assert fact in rendered
+
+
+def test_methodology_section_sits_before_leakage_params_and_reproducibility_and_results_table():
+    """Design acceptance criterion: "2. Methodology" sits before "2.1 This
+    run's leakage-protocol parameter values", which sits before
+    "Reproducibility statement", which sits before "3. Results table (per
+    split)" -- proves the new section sits where Design says it must, not
+    merely that it's present somewhere."""
+    run = _make_run(status="completed")
+    splits = [_make_split(0, "better", -3.1, 0.01)]
+
+    html = ValidationAuditRenderer().render(run, splits)
+
+    assert (
+        html.index("2. Methodology")
+        < html.index("leakage-protocol parameter values")
+        < html.index("Reproducibility statement")
+        < html.index("3. Results table (per split)")
+    )
+
+
+def test_methodology_facts_matches_shared_wording():
+    """Same-text test (mirrors dashboard-web's TRUST-001-01 test name/shape):
+    this service's own copy of `METHODOLOGY_FACTS` must be byte-identical,
+    via exact tuple equality (not substring matching), to the four literal
+    strings independently authored/reused by dashboard-web under TRUST-001-01.
+    QA independently verifies this fails if either service's copy drifts."""
+    assert METHODOLOGY_FACTS == (
+        "Rolling-origin walk-forward validation: each split trains on data up to a point in "
+        "time and tests only on the period immediately after it -- never on rows the model "
+        "could not yet have seen.",
+        "A configurable purge gap separates every split's training window from its test "
+        "window, closing the boundary-leakage channel a plain train/test split allows.",
+        "Every run is benchmarked against the mandatory Naive0 and NaiveLast baselines -- a "
+        "model's result is never reported in isolation.",
+        "Model-vs-baseline comparisons use the Diebold-Mariano test with the Harvey et al. "
+        "(1997) long-run variance correction for overlapping horizons, not a raw metric "
+        "difference.",
+    )
+
+
+def test_methodology_section_has_no_banned_positioning_words():
+    """CLAUDE.md positioning scan, scoped to the new "2. Methodology" block
+    only (the template's pre-existing disclaimer text legitimately uses
+    "forecast"/"recommendations" elsewhere, so a whole-template scan would
+    false-positive) -- mirrors dashboard-web's
+    `test_help_concepts_page_has_no_banned_positioning_words` pattern."""
+    run = _make_run(status="running")
+
+    html = ValidationAuditRenderer().render(run, [])
+
+    start = html.index("2. Methodology")
+    end = html.index("Status", start)
+    block = html[start:end].lower()
+
+    for banned in ("prediction", "forecast", "signal", "recommendation"):
+        assert banned not in block, f"banned positioning word {banned!r} found in Methodology block"

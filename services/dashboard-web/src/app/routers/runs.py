@@ -291,6 +291,45 @@ acceptance criteria do not call for one; a future ticket can add pagination
 here the same way DASH-122 added it to `runs_horizon_summary`/`runs_trend` if
 a real split's test window is found to exceed that default. `run_detail.html`
 gains a "Points" column per split row linking into this route.
+
+RPT-003: `run_new_submit` gains two new optional form fields,
+`client_prediction_reference_path`/`client_prediction_reference_inline`,
+mirroring `dataset_reference`'s own path/inline modes (deliberately not its
+third "stored dataset" mode -- a disclosed, already-decided two-mode scope
+call, see the ticket's own Design section for the full rationale). The
+shape-building step both fields share (`{"path": ...}` / `{"inline":
+<parsed JSON>}` from a pair of raw form strings, raising
+`json.JSONDecodeError` on invalid inline JSON) is extracted into
+`_parse_path_or_inline_reference` below and used by both `dataset_reference`'s
+existing path/inline arms and the new field -- not two near-identical copies
+(this ticket's own DRY check note). `dataset_reference`'s own three-mode
+precedence/error text/status codes are unchanged; the new field is optional,
+so a blank pair simply leaves `client_prediction_reference` at `None`
+(`RunRequest`'s own default -- byte-identical to today's payload) rather than
+raising a "missing" error. An invalid inline JSON payload on the new field is
+caught at its own call site with its own field-specific error message
+(`_INVALID_CLIENT_PREDICTION_JSON_ERROR`), distinct from
+`_INVALID_INLINE_JSON_ERROR`, so a tenant with both an inline dataset payload
+and an inline model-prediction payload on screen knows which one is broken.
+`run_new.html` gains a new, clearly-optional fieldset for these two fields,
+positioned after "Stored dataset" and before `horizon`; its copy states only
+that the platform compares the supplied series against the mandatory naive
+baselines under the leakage-aware protocol (mirroring
+`services/validation-service/src/app/client_baseline.py`'s
+`CLIENT_PREDICTION_AUDIT_DISCLAIMER` framing), never "improves," "corrects,"
+or any form of "certif-". `run_detail.html` needs zero change -- it already
+renders a client baseline whenever a run's splits carry one (VS-017/VS-029/
+DASH-125/RAV-005), regardless of how that run was submitted.
+
+TRUST-001-01: `run_detail` now also passes `methodology_facts=METHODOLOGY_FACTS`
+(below) in its template context, rendered by the new `_methodology_panel.html`
+partial included in `run_detail.html` right after the status table and
+*outside* `{% if splits %}` -- the platform's one always-visible methodology
+statement, present for a zero-split run exactly as for a completed one (this
+ticket's Analysis section: today's only DM/Harvey mention,
+`_dm_verdict_chart.html`'s caption, is otherwise entirely gated behind
+`{% if splits %}`). No new downstream call -- pure addition to the
+already-built context dict.
 """
 
 from __future__ import annotations
@@ -336,6 +375,33 @@ _MISSING_DATASET_REFERENCE_ERROR = (
     "for the dataset reference."
 )
 _INVALID_INLINE_JSON_ERROR = "Inline payload must be valid JSON."
+# RPT-003: distinct text from `_INVALID_INLINE_JSON_ERROR` above -- names the
+# offending field so a tenant with both an inline dataset payload and an
+# inline model-prediction payload on screen knows which one is broken. No
+# apostrophe -- `run_new.html` renders this through `{{ error }}`, which
+# Jinja2 autoescapes to `&#39;`, so an apostrophe here would never
+# byte-match a plain-text assertion against the rendered response.
+_INVALID_CLIENT_PREDICTION_JSON_ERROR = (
+    "Your model predictions inline payload must be valid JSON."
+)
+
+
+def _parse_path_or_inline_reference(path_value: str, inline_value: str) -> dict | None:
+    """Shared by `dataset_reference`'s path/inline modes and the optional
+    `client_prediction_reference` field (RPT-003) -- returns `{"path": ...}`
+    or `{"inline": <parsed JSON>}`, or `None` if neither raw form string is
+    filled in (caller decides whether that's an error: mandatory for
+    `dataset_reference`, fine for the optional `client_prediction_reference`).
+    Raises `json.JSONDecodeError` verbatim on invalid inline JSON -- callers
+    catch it themselves and redisplay their own field-specific error message;
+    this helper only extracts the shape-building step both fields already
+    share, not the differing required/optional handling around it.
+    """
+    if path_value.strip():
+        return {"path": path_value.strip()}
+    if inline_value.strip():
+        return {"inline": json.loads(inline_value)}
+    return None
 
 
 def _human_readable_run_request_error(exc: ValueError | ValidationError) -> str:
@@ -395,6 +461,27 @@ CAVEAT_SENTENCE = (
     "beaten a naive statistical baseline in a stable, significant way at any tested "
     "horizon -- treat any deviation shown here as unproven until independently "
     "reconfirmed."
+)
+
+# TRUST-001-01: the four always-visible methodology facts rendered by
+# `_methodology_panel.html`, outside `{% if splits %}` -- unlike
+# `CAVEAT_SENTENCE` above (only shown once splits/a shareable summary exist),
+# this is the platform's one methodology statement that must render for a
+# zero-split run too (Analysis section's verified gap). Authored once here,
+# verbatim (byte-for-byte); `TRUST-001-02` independently reuses this exact
+# text in `reporting-service` -- no cross-service import (CLAUDE.md module
+# boundary), so any future edit here must be mirrored there by hand.
+METHODOLOGY_FACTS: tuple[str, str, str, str] = (
+    "Rolling-origin walk-forward validation: each split trains on data up to a point in "
+    "time and tests only on the period immediately after it -- never on rows the model "
+    "could not yet have seen.",
+    "A configurable purge gap separates every split's training window from its test "
+    "window, closing the boundary-leakage channel a plain train/test split allows.",
+    "Every run is benchmarked against the mandatory Naive0 and NaiveLast baselines -- a "
+    "model's result is never reported in isolation.",
+    "Model-vs-baseline comparisons use the Diebold-Mariano test with the Harvey et al. "
+    "(1997) long-run variance correction for overlapping horizons, not a raw metric "
+    "difference.",
 )
 
 # DASH-119: a pre-RSS-004 run can carry an unbounded number of persisted splits
@@ -821,6 +908,8 @@ def run_new_submit(
     dataset_reference_start: str = Form(""),
     dataset_reference_end: str = Form(""),
     dataset_reference_field: str = Form(""),
+    client_prediction_reference_path: str = Form(""),
+    client_prediction_reference_inline: str = Form(""),
     horizon: str = Form(""),
     purge_gap_hours: str = Form(""),
     train_window: str = Form(""),
@@ -836,6 +925,8 @@ def run_new_submit(
         "dataset_reference_start": dataset_reference_start,
         "dataset_reference_end": dataset_reference_end,
         "dataset_reference_field": dataset_reference_field,
+        "client_prediction_reference_path": client_prediction_reference_path,
+        "client_prediction_reference_inline": client_prediction_reference_inline,
         "horizon": horizon,
         "purge_gap_hours": purge_gap_hours,
         "train_window": train_window,
@@ -854,19 +945,26 @@ def run_new_submit(
     # every error path (including ones before the downstream `/runs` call)
     # can re-fetch without duplicating the `with httpx.Client(...)` block.
     with httpx.Client(base_url=base_url, timeout=DOWNSTREAM_HTTP_TIMEOUT_SECONDS) as client:
-        if dataset_reference_path.strip():
-            dataset_reference: dict = {"path": dataset_reference_path.strip()}
-        elif dataset_reference_inline.strip():
-            try:
-                dataset_reference = {"inline": json.loads(dataset_reference_inline)}
-            except json.JSONDecodeError:
-                datasets = _fetch_ingestion_datasets(client, headers)
-                return templates.TemplateResponse(
-                    request,
-                    "run_new.html",
-                    {"error": _INVALID_INLINE_JSON_ERROR, "values": values, "datasets": datasets},
-                    status_code=422,
-                )
+        # RPT-003: the first two arms (path/inline) now call the shared
+        # `_parse_path_or_inline_reference` helper -- same precedence
+        # (path, then inline), same error text/status code on invalid inline
+        # JSON, unchanged fall-through to the source/missing-reference arms
+        # below when the helper returns `None`.
+        try:
+            parsed_dataset_reference = _parse_path_or_inline_reference(
+                dataset_reference_path, dataset_reference_inline
+            )
+        except json.JSONDecodeError:
+            datasets = _fetch_ingestion_datasets(client, headers)
+            return templates.TemplateResponse(
+                request,
+                "run_new.html",
+                {"error": _INVALID_INLINE_JSON_ERROR, "values": values, "datasets": datasets},
+                status_code=422,
+            )
+
+        if parsed_dataset_reference is not None:
+            dataset_reference: dict = parsed_dataset_reference
         elif dataset_reference_source.strip():
             dataset_reference = {"source": dataset_reference_source.strip()}
             if dataset_reference_start.strip():
@@ -884,6 +982,28 @@ def run_new_submit(
                 status_code=422,
             )
 
+        # RPT-003: optional field -- a blank pair leaves this `None`
+        # (`RunRequest`'s own default, byte-identical to today's payload), no
+        # "missing" error is ever raised for it. A `json.JSONDecodeError` here
+        # is caught separately from the dataset-reference call site above so
+        # its redisplayed message names this field specifically.
+        try:
+            client_prediction_reference = _parse_path_or_inline_reference(
+                client_prediction_reference_path, client_prediction_reference_inline
+            )
+        except json.JSONDecodeError:
+            datasets = _fetch_ingestion_datasets(client, headers)
+            return templates.TemplateResponse(
+                request,
+                "run_new.html",
+                {
+                    "error": _INVALID_CLIENT_PREDICTION_JSON_ERROR,
+                    "values": values,
+                    "datasets": datasets,
+                },
+                status_code=422,
+            )
+
         try:
             run_request = RunRequest(
                 dataset_id=dataset_id,
@@ -894,6 +1014,7 @@ def run_new_submit(
                 test_window=int(test_window),
                 step=int(step),
                 label=label.strip() if label.strip() else None,
+                client_prediction_reference=client_prediction_reference,
             )
         except (ValueError, ValidationError) as exc:
             datasets = _fetch_ingestion_datasets(client, headers)
@@ -1127,6 +1248,7 @@ def run_detail(
         {
             "run": run,
             "splits": rendered_splits,
+            "methodology_facts": METHODOLOGY_FACTS,
             "error_chart": build_error_chart(rendered_splits, metric=metric),
             "metric_options": METRIC_REGISTRY,
             "dm_verdict_chart": build_dm_verdict_chart(rendered_splits),

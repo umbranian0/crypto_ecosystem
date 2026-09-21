@@ -93,6 +93,16 @@ class Run(Base):
     # -- None whenever no label was supplied, no fabricated default
     # (migrations/versions/0010_add_runs_label_column.py).
     label: Mapped[str | None] = mapped_column(String, nullable=True)
+    # TRUST-003: the installed naive_first_engine distribution version and a
+    # SHA-256 fingerprint of this run's split_config (app.fingerprint),
+    # computed once at create_run time regardless of eventual run outcome.
+    # Nullable, no Python-side default= (unlike warnings/feature_lineage
+    # above) -- a Run(...) built without these keyword arguments persists
+    # NULL, matching the migration's own no-server_default shape
+    # (migrations/versions/0012_add_runs_engine_fingerprint_columns.py) so a
+    # pre-migration row is never fabricated a value.
+    engine_version: Mapped[str | None] = mapped_column(String, nullable=True)
+    config_fingerprint: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 class SplitResult(Base):

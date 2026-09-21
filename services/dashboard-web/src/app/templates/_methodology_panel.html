@@ -1,0 +1,16 @@
+{# TRUST-001-01: always-visible methodology disclosure panel -- included from
+   `run_detail.html` right after the status table, outside `{% if splits %}`,
+   so it renders for a zero-split run exactly as for a completed one (unlike
+   `_dm_verdict_chart.html`'s caption, the only other place naming DM/Harvey,
+   which stays gated behind `{% if splits %}`). `methodology_facts` is
+   `app/routers/runs.py`'s `METHODOLOGY_FACTS` constant, rendered verbatim --
+   no summarization/truncation. #}
+<h3>Methodology</h3>
+<p>Every validation run on this platform follows the same leakage-aware protocol, regardless of
+this run's own status or outcome:</p>
+<ul>
+    {% for fact in methodology_facts %}
+    <li>{{ fact }}</li>
+    {% endfor %}
+</ul>
+<p><a href="/help/leakage-demo">See this protocol applied to the thesis's own real numbers</a></p>

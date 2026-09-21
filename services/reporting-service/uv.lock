@@ -538,6 +538,20 @@ wheels = [
 ]
 
 [[package]]
+name = "naive-first-ai-assist"
+version = "0.1.0"
+source = { editable = "../../libs/ai_assist" }
+dependencies = [
+    { name = "httpx" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "httpx", specifier = ">=0.27" }]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=7.4" }]
+
+[[package]]
 name = "naive-first-common"
 version = "0.1.0"
 source = { editable = "../../libs/common" }
@@ -924,6 +938,7 @@ dependencies = [
     { name = "fastapi" },
     { name = "httpx" },
     { name = "jinja2" },
+    { name = "naive-first-ai-assist" },
     { name = "naive-first-common" },
     { name = "psycopg", extra = ["binary"] },
     { name = "pydantic" },
@@ -945,6 +960,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.110" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "jinja2", specifier = ">=3.1" },
+    { name = "naive-first-ai-assist", editable = "../../libs/ai_assist" },
     { name = "naive-first-common", editable = "../../libs/common" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.1" },
     { name = "pydantic", specifier = ">=2.6" },

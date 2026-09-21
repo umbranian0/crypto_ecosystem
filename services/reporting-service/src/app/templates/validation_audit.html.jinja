@@ -21,6 +21,15 @@
     </tbody>
 </table>
 
+<h2>2. Methodology</h2>
+<p>Every validation run on this platform follows the same leakage-aware protocol, regardless
+of this run's own status or outcome:</p>
+<ul>
+    {% for fact in methodology_facts %}
+    <li>{{ fact }}</li>
+    {% endfor %}
+</ul>
+
 {% if run.status != "completed" %}
 <h2>Status</h2>
 <p>This run has not completed (status: "{{ run.status }}"). No validation results are available yet
@@ -29,7 +38,7 @@ omitted rather than populated with fabricated or placeholder metrics. Re-generat
 the run reaches "completed" status.</p>
 {% else %}
 
-<h2>2. Leakage-protocol parameters</h2>
+<h2>2.1 This run's leakage-protocol parameter values</h2>
 <p>This audit does not independently re-derive a leakage pass/fail checklist -- computing/validating
 the leakage-aware protocol is validation-service's/naive_first_engine's own bounded context. The
 protocol parameters this run actually used, verbatim from the run record:</p>
@@ -38,6 +47,21 @@ protocol parameters this run actually used, verbatim from the run record:</p>
     <li>Purge gap (hours): {{ run.purge_gap_hours }}</li>
     <li>Splits evaluated: {{ splits | length }}</li>
 </ul>
+
+<h2>2.5. Reproducibility statement</h2>
+{% if run.engine_version and run.config_fingerprint %}
+<ul>
+    <li>Engine version (naive_first_engine): {{ run.engine_version }}</li>
+    <li>Config fingerprint (SHA-256 of this run's split configuration): {{ run.config_fingerprint }}</li>
+    <li>Dataset reference: {{ run.dataset_id }}</li>
+</ul>
+<p>Re-running this exact configuration against the same dataset and the same naive_first_engine version
+is expected to reproduce these results. A different result obtained under the same engine version and
+config fingerprint should be investigated as a regression, not treated as a new finding.</p>
+{% else %}
+<p>Engine version / config fingerprint not available for runs created before this platform tracked
+engine fingerprints.</p>
+{% endif %}
 
 <h2>3. Results table (per split)</h2>
 {% if splits %}

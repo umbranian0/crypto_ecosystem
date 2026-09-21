@@ -440,6 +440,40 @@ plus its per-split results, both fetched from `gateway-api` and parsed via the s
   "N of M splits shown" truncation notice, DASH-119) rather than the `.error` styling -- never rendered
   as an error, and absent entirely (no empty `<ul>`) when `warnings` is `[]`.
 
+### Permanent methodology panel (TRUST-001)
+
+`GET /runs/{run_id}` renders a new `_methodology_panel.html` partial right after the status table --
+**unconditionally**, outside `{% if splits %}` and not gated on `run.status`, unlike every other
+DM/Harvey-mentioning content on this page (`_dm_verdict_chart.html`'s caption, the only prior place
+naming either, sits inside `{% if splits %}` and is absent for a zero-split run). This closes that
+gap: a `"running"`/`"failed"` run with zero splits still states the platform's leakage-aware protocol.
+
+- **`app/routers/runs.py`** gained `METHODOLOGY_FACTS: tuple[str, str, str, str]` (a new module-level
+  constant, placed near `CAVEAT_SENTENCE`, same "static disclosure text" shape) stating: rolling-origin
+  walk-forward validation (train-only-on-the-past, test-only-on-what-follows), the configurable purge
+  gap that closes the boundary-leakage channel a plain train/test split allows, the mandatory Naive0/
+  NaiveLast baseline comparison (a model's result is never reported in isolation), and the
+  Diebold-Mariano test with the Harvey et al. (1997) long-run variance correction for overlapping
+  horizons. `run_detail`'s handler passes `methodology_facts=METHODOLOGY_FACTS` in the template context
+  -- no new downstream call, pure addition to the already-built context dict.
+- **`app/templates/_methodology_panel.html`** (new partial, same `{% include %}` pattern as
+  `_error_chart.html`/`_dm_verdict_chart.html`) renders an `<h3>Methodology</h3>`, one intro sentence,
+  and a `<ul>` of the four `methodology_facts` items verbatim (no summarization/truncation), plus a
+  link to `/help/leakage-demo` (the route `TRUST-002` builds -- not required to exist yet for this
+  ticket's own tests, which assert only on the `<a href="/help/leakage-demo">` markup, not a live link
+  check).
+- **Same-text mechanism**: `tests/test_runs_detail.py`'s `test_methodology_facts_matches_shared_wording`
+  asserts `METHODOLOGY_FACTS` against the four literal strings hardcoded in the test file via exact
+  tuple equality (not substring matching) -- the same `CAVEAT_SENTENCE`-exact-match precedent (FHS-004).
+  `METHODOLOGY_FACTS`'s wording is authored once in this file and reused **verbatim, byte-for-byte** by
+  `TRUST-001-02` independently in `services/reporting-service` -- no cross-service import (CLAUDE.md's
+  module-boundary rule); the two copies are kept in sync by hand, and this test is what would catch a
+  future edit here that silently drifts out of sync with that other copy.
+- **Positioning**: no "prediction"/"forecast"/"signal"/"recommendation" anywhere in
+  `_methodology_panel.html`'s rendered text, per
+  `test_methodology_panel_partial_has_no_banned_positioning_words` (same banned-word-scan convention as
+  `test_help_concepts_page_has_no_banned_positioning_words`).
+
 ## Submit a run (DASH-006)
 
 `GET /runs/new` (`src/app/routers/runs.py`) renders `run_new.html`, a form matching `RunRequest`'s
@@ -2409,3 +2443,55 @@ tenant's plain-language free-text description of what they want to validate.
   AI-002/AI-003's positioning constraint; this feature never claims predictive capability and is framed
   throughout as configuration help for a validation run, never guidance toward a better-performing
   prediction.
+
+## "Audit my model's predictions" submission path (RPT-003)
+
+**Status: implemented (Sprint 55).** `POST /runs/new` (`run_new_submit`, `src/app/routers/runs.py`) now
+accepts two new optional form fields, `client_prediction_reference_path`/`client_prediction_reference_inline`,
+that populate `RunRequest.client_prediction_reference` (a field that has existed on the shared contract
+since VS-017/VS-030 but that this form never exposed until now) -- closing the gap between what the
+backend already supported and what a tenant could actually reach from this form. Full reasoning in
+`docs/tickets/RPT-003.md`.
+
+- **What it does**: a new "Your model's predictions (optional)" fieldset on `run_new.html`, positioned
+  after "Stored dataset" and before `horizon`, mirroring the "Dataset reference" fieldset's own
+  path/inline structure -- one text input (local file path) and one textarea (inline JSON). Leaving both
+  blank evaluates the mandatory Naive0/NaiveLast baselines only (byte-identical to every submission before
+  this ticket -- `client_prediction_reference` stays `None`, `RunRequest`'s own pre-existing default).
+  Filling in either compares the supplied series against those same mandatory naive baselines under the
+  leakage-aware protocol; the copy deliberately avoids "improves," "corrects," or any form of "certif-"
+  (certify/certifies/certification), in either affirmative or negated usage, so as not to overstate what
+  submitting the field does (`test_run_new_template_has_no_banned_positioning_words` in
+  `tests/test_runs_submit.py` enforces this by scanning the whole template).
+- **Shared-helper DRY note**: `dataset_reference`'s existing path/inline arms and this new field's
+  path/inline arms both build the same `{"path": ...}` / `{"inline": <parsed JSON>}` shape from a pair of
+  raw form strings -- past the "extract on second duplication" threshold (implementation-plan.md section
+  9), so both now call one shared `_parse_path_or_inline_reference(path_value, inline_value) -> dict |
+  None` helper (`runs.py`). `dataset_reference`'s own three-mode precedence (path, then inline, then
+  stored dataset, then a "missing reference" error), error text, and status codes are unchanged -- the
+  helper only extracts the shape-building step both fields already shared, not the differing
+  required/optional handling around it. An invalid inline JSON payload on the new field redisplays the
+  form with its own distinct, field-specific error message (not `dataset_reference`'s), so a tenant with
+  both an inline dataset payload and an inline model-prediction payload on screen knows which one is
+  broken.
+- **Two-mode, not three-mode (disclosed scope call)**: this ticket implements only the local-file-path and
+  inline-JSON modes for the new field, deliberately not the third "stored dataset" mode
+  `dataset_reference` itself grew under `DASH-108`. Rationale (one line): the backlog's own acceptance
+  criteria scope this to two modes explicitly, and a tenant's own model predictions overwhelmingly arrive
+  as a file or a pasted payload, not as something already sitting in `ingestion-service`'s per-source
+  table (that table is for the *target* series ingestion connects to, not arbitrary client-computed model
+  output) -- see `docs/tickets/RPT-003.md`'s Design section for the full four-point reasoning, including
+  why this is easily revisited later (the backend already accepts a third/fourth mode transparently for
+  this field, VS-017's `DatasetSourceDep` seam).
+- **What needed zero change**: `run_detail.html` -- it already renders a client-baseline comparison
+  whenever a run's splits carry one (`split.client_baseline`, VS-017/VS-029), regardless of how that run
+  was submitted (raw `POST /runs` before this ticket, this new form field from now on). Confirmed by
+  `git diff --stat` showing no change to that file.
+- **Tests**: `services/dashboard-web/tests/test_runs_submit.py` --
+  `test_run_new_submit_without_client_prediction_reference_sends_none` (the byte-identical-when-omitted
+  regression test), `test_run_new_submit_client_prediction_reference_path`,
+  `test_run_new_submit_client_prediction_reference_inline`,
+  `test_run_new_submit_invalid_client_prediction_inline_json_redisplays_form`, plus every pre-existing
+  `dataset_reference` test in that file passing unmodified (proving the shared-helper extraction did not
+  change `dataset_reference`'s own observable behavior). 390 unit tests passing (plus 8 `e2e`-marked
+  Selenium tests excluded from the default run, unrelated to this ticket).

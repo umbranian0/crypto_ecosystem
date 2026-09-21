@@ -88,6 +88,13 @@ class RunRecord:
     # UAT-008: optional, freeform label a tenant attached at submission time.
     # None (default) whenever no label was supplied.
     label: str | None = None
+    # TRUST-003: the installed naive_first_engine distribution version and a
+    # SHA-256 fingerprint of this run's split_config (app.fingerprint), both
+    # populated at create_run time regardless of eventual run outcome. None
+    # (default) whenever the row predates migration 0012 -- never a
+    # fabricated value.
+    engine_version: str | None = None
+    config_fingerprint: str | None = None
 
 
 @dataclass(frozen=True)
@@ -167,6 +174,8 @@ class ValidationRunRepository(typing.Protocol):
         warnings: list[str] | None = None,
         feature_lineage: list[dict] | None = None,
         label: str | None = None,
+        engine_version: str | None = None,
+        config_fingerprint: str | None = None,
     ) -> RunRecord: ...
 
     def get_run(self, tenant_id: str, run_id: str) -> RunRecord | None: ...

@@ -911,6 +911,12 @@ def test_run_new_template_has_no_banned_positioning_words() -> None:
     copy (RSS-001's dataset-field tooltip) using "forecast" to describe what
     a *model* does, not a claim this product predicts -- out of this
     ticket's scope to touch.
+
+    RPT-003: extended with "improves," "corrects," and "certif" (the
+    substring, catching every inflection -- certify/certifies/certification)
+    -- the new "Your model's predictions" fieldset's copy must not overstate
+    what submitting that field does, in either affirmative or negated form
+    (the ticket's own Design section).
     """
     import pathlib
 
@@ -919,8 +925,116 @@ def test_run_new_template_has_no_banned_positioning_words() -> None:
     )
     text = template_path.read_text(encoding="utf-8").lower()
 
-    for banned in ("optimal", "recommended", "best"):
+    for banned in ("optimal", "recommended", "best", "improves", "corrects", "certif"):
         assert banned not in text, f"banned positioning word {banned!r} found in run_new.html"
+
+
+# RPT-003: "Your model's predictions (optional)" fieldset --
+# `client_prediction_reference_path`/`client_prediction_reference_inline`.
+
+
+def test_run_new_submit_without_client_prediction_reference_sends_none(monkeypatch) -> None:
+    """Regression test the sprint's Definition of Done calls for: submitting
+    `VALID_FORM` (unmodified, no `client_prediction_reference_*` keys at all)
+    produces a `POST /runs` body whose `client_prediction_reference` is
+    `None` -- byte-identical to today's payload, proving this ticket only
+    made the value conditionally a dict instead of always `None`.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/runs"
+        import json
+
+        payload = json.loads(request.read())
+        assert payload["client_prediction_reference"] is None
+        return httpx.Response(201, json={"id": RUN_ID, "status": "running"})
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.post("/runs/new", data=VALID_FORM, follow_redirects=False)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == f"/runs/{RUN_ID}"
+
+
+def test_run_new_submit_client_prediction_reference_path(monkeypatch) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/runs"
+        import json
+
+        payload = json.loads(request.read())
+        assert payload["client_prediction_reference"] == {"path": "/data/model_preds.csv"}
+        return httpx.Response(201, json={"id": RUN_ID, "status": "running"})
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    form = {**VALID_FORM, "client_prediction_reference_path": "/data/model_preds.csv"}
+
+    response = client.post("/runs/new", data=form, follow_redirects=False)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == f"/runs/{RUN_ID}"
+
+
+def test_run_new_submit_client_prediction_reference_inline(monkeypatch) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/runs"
+        import json
+
+        payload = json.loads(request.read())
+        assert payload["client_prediction_reference"] == {
+            "inline": {"timestamps": ["2026-01-01T00:00:00Z"], "values": [1.5]}
+        }
+        return httpx.Response(201, json={"id": RUN_ID, "status": "running"})
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    form = {
+        **VALID_FORM,
+        "client_prediction_reference_inline": (
+            '{"timestamps": ["2026-01-01T00:00:00Z"], "values": [1.5]}'
+        ),
+    }
+
+    response = client.post("/runs/new", data=form, follow_redirects=False)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == f"/runs/{RUN_ID}"
+
+
+def test_run_new_submit_invalid_client_prediction_inline_json_redisplays_form(
+    monkeypatch,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        # Must never reach gateway-api's `/runs` -- only the ingestion-datasets
+        # re-fetch the 422 redisplay path makes.
+        assert request.url.path == "/ingestion/datasets"
+        return _ONE_STORED_DATASET_RESPONSE
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    form = {**VALID_FORM, "client_prediction_reference_inline": "{not json"}
+
+    response = client.post("/runs/new", data=form)
+
+    assert response.status_code == 422
+    assert "Your model predictions inline payload must be valid JSON" in response.text
+    # Distinct from the pre-existing dataset-reference inline JSON error.
+    assert "Inline payload must be valid JSON." not in response.text
+    assert "binance_btcusdt_1h" in response.text
+    assert "No ingested datasets yet" not in response.text
 
 
 # DASH-126 (UAT-002): raw-levels-vs-returns warning made always-visible on

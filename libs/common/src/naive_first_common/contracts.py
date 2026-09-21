@@ -202,6 +202,14 @@ class RunDetailResponse(BaseModel):
     # UAT-008: optional, freeform label a tenant attached at submission time.
     # None whenever no label was supplied -- never a fabricated default.
     label: str | None = None
+    # TRUST-003: the installed naive_first_engine distribution version and a
+    # SHA-256 fingerprint of this run's split_config, both populated at
+    # create_run time regardless of eventual run outcome. None means either
+    # "not yet computed by an in-flight rolling deploy" (defensive default,
+    # same precedent as `warnings` above) or "this row predates migration
+    # 0012" -- never a fabricated value either way.
+    engine_version: str | None = None
+    config_fingerprint: str | None = None
 
 
 class RunSummaryResponse(BaseModel):

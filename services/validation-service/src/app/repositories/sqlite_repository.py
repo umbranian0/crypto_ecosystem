@@ -76,6 +76,8 @@ def _run_to_record(run: Run) -> RunRecord:
         warnings=run.warnings,
         feature_lineage=run.feature_lineage,
         label=run.label,
+        engine_version=run.engine_version,
+        config_fingerprint=run.config_fingerprint,
     )
 
 
@@ -195,6 +197,8 @@ class SQLiteValidationRunRepository:
         warnings: list[str] | None = None,
         feature_lineage: list[dict] | None = None,
         label: str | None = None,
+        engine_version: str | None = None,
+        config_fingerprint: str | None = None,
     ) -> RunRecord:
         # Deterministic engine-side run_id (models.py's PK doc note) isn't
         # available at this signature -- naive_first_engine.protocol computes
@@ -215,6 +219,8 @@ class SQLiteValidationRunRepository:
             warnings=warnings if warnings is not None else [],
             feature_lineage=feature_lineage if feature_lineage is not None else [],
             label=label,
+            engine_version=engine_version,
+            config_fingerprint=config_fingerprint,
         )
         with Session(self._engine) as session:
             session.add(run)

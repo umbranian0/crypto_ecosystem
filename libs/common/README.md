@@ -127,6 +127,23 @@ same "one canonical definition" convention UAT-007 already established for `RunR
 imports these classes directly from `naive_first_common.contracts` (no local mirror to update in sync),
 so this field required no second, hand-mirrored edit in `gateway-api`.
 
+## Per-run engine/config fingerprint (TRUST-003)
+
+`RunDetailResponse` gained two optional fields: `engine_version: str | None = None` and
+`config_fingerprint: str | None = None` -- the installed `naive_first_engine` distribution version and a
+SHA-256 fingerprint of the run's `split_config`, both computed and persisted by `validation-service` at
+`create_run` time (`services/validation-service/src/app/fingerprint.py`), never by this library. Same
+defensive-default precedent `warnings`/`label` already established: a `None` here is deliberately
+ambiguous between two honest cases -- "not yet computed, because a rolling deploy served this response
+from a `validation-service` instance that omitted the field temporarily" (a wire-contract-compatibility
+null, transient) and "this run row predates migration `0012`, so the value was never computed at all" (a
+migration-boundary null, permanent). Both are equally "not a real value" from this contract's point of
+view; distinguishing them, if ever needed, is `validation-service`'s own concern (its `runs.engine_version`/
+`config_fingerprint` columns), not something `RunDetailResponse` encodes. **Version-sync convention**: same
+"one canonical definition" convention UAT-007/UAT-008 already established -- `gateway-api` imports
+`RunDetailResponse` directly from `naive_first_common.contracts`, so this field required no second,
+hand-mirrored edit there.
+
 ## CI
 
 **CI**: `.github/workflows/ci.yml` runs this module's test suite on every push/PR.

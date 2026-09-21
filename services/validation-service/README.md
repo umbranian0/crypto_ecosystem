@@ -192,6 +192,27 @@ guardrail (RSS-004/DH-005/MR-001). **Version-sync convention**: `RunRequest`/`Ru
 `gateway-api` both import them directly, so this field required no hand-duplicated schema edit here beyond
 the `runs.label` persistence column itself.
 
+**Per-run engine/config fingerprint (`TRUST-003`)**: `runs.engine_version` and `runs.config_fingerprint`
+(both nullable `String` columns, `migrations/versions/0012_add_runs_engine_fingerprint_columns.py`) --
+deliberately **no `server_default`** on either column, unlike `warnings`/`feature_lineage`'s
+`nullable=False, server_default='[]'` shape: a `server_default` here would silently backfill every
+pre-migration row with a fabricated engine version/fingerprint it never actually ran with, which is
+exactly what this story exists to prevent. `src/app/fingerprint.py` (new) computes both values: `get_engine_version()`
+is a memoized `importlib.metadata.version("naive_first_engine")` lookup (reads the installed distribution's
+own metadata, not `pyproject.toml` parsed at runtime); `compute_config_fingerprint(split_config)` is the SHA-256
+of `split_config`'s canonicalized (sorted-key, no-whitespace) JSON serialization. `_persist_new_run` (`runs.py`)
+builds `split_config` once as a local variable and reuses it for both `create_run`'s existing `split_config=`
+argument and the fingerprint call -- no second, independently-constructed config object that could drift from
+what's actually persisted. **Populated regardless of run outcome**: because `_persist_new_run` is the single
+call site for `run_repository.create_run(...)`, used at all three points a run row is created (the dataset-load
+failure branch, the feature-assembly failure branch, and the main success path), every run created from
+migration `0012` forward gets a non-null `engine_version`/`config_fingerprint` the instant its row exists --
+this is correct, not an oversight: the fingerprint describes the engine version/config that were *about to be
+used* for that attempt, a fact that is true and knowable independent of whether the run later succeeds or
+fails. `GET /runs/{id}` returns both verbatim via `RunDetailResponse.engine_version`/`config_fingerprint`.
+Rows that predate migration `0012` stay honestly `NULL` on both fields forever -- write-once at `create_run`
+time, never touched by `update_run_status` or any other mutation path.
+
 `migrations/env.py` targets the `validation` schema specifically for Postgres, both for table creation (`SET search_path TO validation` on the migration connection) and for `alembic_version` tracking (`version_table_schema="validation"`) -- required (not optional) per an INF-005 finding: running two services' schema-less, `public`-targeting migrations back-to-back against the same shared Postgres database caused the second one to find `public.alembic_version` already stamped and silently skip its own `upgrade()`. Both settings are conditional on the connection actually being Postgres (`connection.dialect.name == "postgresql"`) so `alembic upgrade head` against a `sqlite:///` `DATABASE_URL` (as `tests/test_models.py::test_alembic_upgrade_head_creates_matching_schema` does) is unaffected.
 
 `src/app/dependencies/repositories.py` remains the only module that imports `sqlite_repository`/`postgres_repository` directly; route/business-logic code depends on the `ValidationRunRepository`/`SplitResultRepository` interfaces only.

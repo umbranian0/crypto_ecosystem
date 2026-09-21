@@ -137,6 +137,34 @@ finding. Compute a returns series before validating if you want a meaningful aud
         {% endif %}
     </fieldset>
 
+    <fieldset>
+        <legend>Your model's predictions (optional)</legend>
+        <p class="field-hint">Leaving both fields below blank evaluates the mandatory Naive0/NaiveLast
+        baselines only -- no change from today's behavior. Filling in either one compares your supplied
+        series against those same mandatory naive baselines under the leakage-aware protocol.</p>
+
+        <label for="client_prediction_reference_path">
+            Local file path (optional)
+            <span class="field-tooltip" tabindex="0"
+                  data-tooltip="Path to a two-column CSV (timestamp, value) inside validation-service's own container filesystem, holding predicted values from your own model. Leave blank if using the inline payload option, or if you only want the naive baselines evaluated."
+                  aria-label="Path to a two-column CSV (timestamp, value) inside validation-service's own container filesystem, holding predicted values from your own model. Leave blank if using the inline payload option, or if you only want the naive baselines evaluated.">?</span>
+        </label>
+        <input type="text" id="client_prediction_reference_path" name="client_prediction_reference_path"
+               placeholder="/repo/services/validation-service/model_predictions.csv"
+               value="{{ values.client_prediction_reference_path if values else '' }}">
+
+        <label for="client_prediction_reference_inline">
+            Inline payload (JSON, optional)
+            <span class="field-tooltip" tabindex="0"
+                  data-tooltip='Either {"timestamps": [...], "values": [...]} or a list of [timestamp, value] pairs, holding predicted values from your own model. Leave blank if using the local file path option above, or if you only want the naive baselines evaluated.'
+                  aria-label='Either {"timestamps": [...], "values": [...]} or a list of [timestamp, value] pairs, holding predicted values from your own model. Leave blank if using the local file path option above, or if you only want the naive baselines evaluated.'>?</span>
+        </label>
+        <textarea id="client_prediction_reference_inline" name="client_prediction_reference_inline"
+                  rows="4"
+                  placeholder='{"timestamps": ["2026-01-01T00:00:00", "2026-01-01T01:00:00"], "values": [100.5, 101.0]}'>{{ values.client_prediction_reference_inline if values else '' }}</textarea>
+        <small class="field-hint">Fill in at most one of the two fields above -- not both.</small>
+    </fieldset>
+
     <label for="horizon">
         Horizon
         <span class="field-tooltip" tabindex="0"

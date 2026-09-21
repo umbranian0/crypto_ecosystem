@@ -39,12 +39,15 @@ list, and per-service Alembic migration environments under each service's own `m
 directory (one per Postgres schema — `ingestion`, `validation`, `reporting`, `identity`, later
 `economic` — see [../docs/implementation-plan.md](../docs/implementation-plan.md) section 5).
 
-Copy `infra/.env.example` to `infra/.env` (or a repo-root `.env`) before starting anything —
-every variable below has a working default, but the file also documents which values are
-Compose-network values (service reaching service by Compose service name) versus local,
-non-Compose-dev values (a service run directly on the host reaching a dependency via its
-host-published port). The two are not interchangeable; see `.env.example` itself for both forms
-of each variable.
+**(`BOOT-001`)** Copying `infra/.env.example` to `infra/.env` now happens automatically, as the
+first step (`Step 0/8`) of `infra/bootstrap.sh`/`infra/bootstrap.ps1` — see "First-boot bootstrap
+(INF-015)" below. If you're running services individually without the bootstrap script (or
+otherwise not starting anything via those scripts), copy `infra/.env.example` to `infra/.env` (or
+a repo-root `.env`) by hand before starting anything — every variable below has a working default,
+but the file also documents which values are Compose-network values (service reaching service by
+Compose service name) versus local, non-Compose-dev values (a service run directly on the host
+reaching a dependency via its host-published port). The two are not interchangeable; see
+`.env.example` itself for both forms of each variable.
 
 
 ## OPS-004 verification (2026-08-11/12)
@@ -58,33 +61,60 @@ The non-root (USER appuser) and port-binding changes to services/validation-serv
 section-by-section below in one command, in order, each step failing loudly (non-zero exit, a
 message naming the failed step) rather than silently continuing:
 
-1. `docker compose -f infra/docker-compose.yml up -d postgres redis`.
-2. Wait for `postgres`'s own `pg_isready`-based healthcheck to report `healthy` (via `docker inspect
+1. **(`BOOT-001`)** Check whether `infra/.env` exists (resolved relative to the script's own
+   directory, never the caller's cwd — the same `$script_dir`/`$scriptDir` convention `compose_file`
+   already uses). If it doesn't, copy `infra/.env.example` to `infra/.env` verbatim (byte-for-byte,
+   not re-templated) and print a message naming the file just created plus the known,
+   disclosed-insecure dev-only defaults that should be changed before any non-local deployment
+   (`OPERATOR_TOKEN`, `POSTGRES_PASSWORD`, `POSTGRES_APP_PASSWORD`,
+   `INGESTION_CREDENTIAL_ENCRYPTION_KEY`, `INGESTION_INTERNAL_TOKEN`). If `infra/.env` already
+   exists, this step is a silent no-op — it never overwrites an existing file, even one that looks
+   drifted from `.env.example` (drift detection is `BOOT-003`'s deferred territory, not this step's).
+   Any real failure here (e.g. `infra/.env.example` itself missing) fails loudly through the same
+   `fail`/`Fail-Step` convention every other step uses, naming step 0.
+2. `docker compose -f infra/docker-compose.yml up -d postgres redis`.
+3. Wait for `postgres`'s own `pg_isready`-based healthcheck to report `healthy` (via `docker inspect
    --format '{{.State.Health.Status}}' naive-first-postgres`, bounded retry loop — not a new ad hoc
    `sleep`/port-probe), failing loudly if it never becomes healthy within the timeout.
-3. Run migrations by calling INF-016's `infra/migrate.sh both` / `infra/migrate.ps1 -Service both` —
+4. Run migrations by calling INF-016's `infra/migrate.sh both` / `infra/migrate.ps1 -Service both` —
    this script does **not** re-derive the `alembic upgrade head` invocation itself, it delegates to
    that script entirely (see "Applying a new migration (INF-016)" below). If a service's migration
    fails, the bootstrap script stops here, non-zero exit, naming which service failed — it never
    proceeds to start the app containers against a partially-migrated database.
-4. `docker compose -f infra/docker-compose.yml up -d --build validation-service gateway-api`.
-5. **(`SETUP-004`)** `docker compose -f infra/docker-compose.yml up -d --build dashboard-web`
+5. `docker compose -f infra/docker-compose.yml up -d --build validation-service gateway-api`.
+6. **(`SETUP-004`)** `docker compose -f infra/docker-compose.yml up -d --build dashboard-web`
    (depends on `SETUP-030`'s Compose entry existing) — the browser-based setup wizard (`SETUP-003`)
-   this step's next one opens needs a running `dashboard-web` container to land the operator on.
-6. **(`SETUP-004`)** Open the default browser at `http://localhost:${DASHBOARD_WEB_PORT:-8004}/` —
+   the step after next opens needs a running `dashboard-web` container to land the operator on.
+7. **(`BOOT-002`)** Verify `validation-service`, `gateway-api`, and `dashboard-web` are actually
+   serving, not just that their containers started: bounded-retry-poll each service's own
+   `GET /health` on its documented host port (`VALIDATION_SERVICE_PORT`/`GATEWAY_API_PORT`/
+   `DASHBOARD_WEB_PORT`, falling back to `8001`/`8000`/`8004`), same
+   `attempt`/`max_attempts=30`/`sleep 2` shape as step 3's postgres wait-loop above (bash:
+   `wait_for_service_health`; PowerShell: `Wait-ForServiceHealth` — a single reusable function per
+   script, called once per service, not copy-pasted three times). A poll attempt counts as healthy
+   only on an HTTP `200`; connection-refused, any non-`200`, or a request error/timeout all count as
+   "not yet healthy" and retry until the bound is hit. `dashboard-web` is polled last, after
+   `validation-service`/`gateway-api` are already confirmed — its own `GET /health` (`DASH-008`)
+   already makes a real call to `gateway-api`'s own `/health`, so polling it last gives the clearest
+   failure attribution if something upstream is broken, rather than re-implementing a second
+   cross-service check here. If any one service never reports healthy within the bound, the script
+   fails loudly (non-zero exit), naming that specific service — never a generic message, and the
+   script never proceeds to the browser-open step below in that case. Prints "all services healthy"
+   once every service in this step has passed.
+8. **(`SETUP-004`)** Open the default browser at `http://localhost:${DASHBOARD_WEB_PORT:-8004}/` —
    bash: `xdg-open`/`open`, whichever exists (platform-conditional); PowerShell: `Start-Process`. On an
    environment with no way to launch a browser (e.g. a headless CI runner), this **prints the URL
    instead of failing** — never a non-zero exit purely because no browser could be opened. This is the
    step that closes the "one command" loop: the operator lands directly on `SETUP-003`'s wizard
    (tenant name in, API key shown once, straight into `/login`) instead of a partial sequence that
    still ends in a manual `docker compose exec ... provision_tenant.py` step.
-7. **Demoted, not deleted** (same "demote, don't delete" convention this file already applies to its
+9. **Demoted, not deleted** (same "demote, don't delete" convention this file already applies to its
    own hand-run sequences): print the exact `provision_tenant.py` invocation as the non-interactive/
    CI-friendly alternative to the browser wizard above — tenant provisioning mints a real,
    one-time-visible API key, so this script deliberately stops short of minting one unattended (the
    printed command is the containerized form used in the "Full-stack smoke test (Definition of Done,
    INF-004)" section below, not `gateway-api/README.md`'s host-`.venv` form — the container this
-   bootstrap script's own step 4 just started is the one whose Postgres-backed `identity` schema the
+   bootstrap script's own step 5 just started is the one whose Postgres-backed `identity` schema the
    provisioned tenant needs to land in).
 
 **`SETUP-004` idempotency, live-verified (not merely asserted)**: running the full script twice in a

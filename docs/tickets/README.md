@@ -1361,6 +1361,39 @@ no independent validation-service-side log line to visually pair against gateway
 underlying correlation-id mechanism is proven correct end-to-end by both unit test and live header/log
 inspection. Flagged as a small future-polish item, not blocking.
 
+## Sprint 54 (docs/sprints/sprint-54.md, backlog: docs/product/backlog-installation-ops.md)
+
+Fresh-checkout bootstrap reliability. Both stories touch the same numbered-step sequence of the same
+two files (`infra/bootstrap.sh`, `infra/bootstrap.ps1`) plus the same `infra/README.md` section —
+sequenced `BOOT-001` then `BOOT-002`, not parallel, per sprint-54.md's own "Sequencing decision"
+section (`BOOT-001` establishes the new 0–7 step baseline `BOOT-002` needs to insert into cleanly).
+`BOOT-003` (env-drift warning, Could) is explicitly deferred, not scheduled this sprint.
+
+| Ticket | Story | Module | Depends on | Status |
+|---|---|---|---|---|
+| [BOOT-001](BOOT-001.md) | Auto-provision `infra/.env` from `infra/.env.example` when missing (new step 0, renumbers 1–6 to 2–7) | infra | none | done |
+| [BOOT-002](BOOT-002.md) | Post-startup health verification for validation-service/gateway-api/dashboard-web, not just postgres (new step before browser-open, final count 8) | infra | BOOT-001 (file-region sequencing only) | done |
+
+**Outcome**: `infra/bootstrap.sh` gained `wait_for_service_health` (bash function, `name`/`port`
+args) and `infra/bootstrap.ps1` gained `Wait-ForServiceHealth` (PowerShell function, `-Name`/`-Port`
+params) — one reusable bounded-retry `GET .../health` poll per script (same
+`attempt`/`max_attempts=30`/`sleep 2` shape as the existing postgres wait-loop), called once each for
+`validation-service` (`VALIDATION_SERVICE_PORT`, default `8001`), `gateway-api`
+(`GATEWAY_API_PORT`, default `8000`), then `dashboard-web` (`DASHBOARD_WEB_PORT`, default `8004`,
+polled last per `DASH-008`'s own upstream-`/health`-call reasoning) as the new step 7/8, inserted
+between dashboard-web's start (step 6/8) and the browser-open step (renumbered 7/7 → 8/8; every
+step's denominator across both scripts renumbered `/7` → `/8`). A non-200/connection-refused/timeout
+response is retried; exhausting the bound fails loudly (non-zero exit) naming the specific service
+(e.g. `step 7 (validation-service did not become healthy within 30 attempts)`), never proceeding to
+the browser-open step. `infra/README.md`'s "First-boot bootstrap (INF-015)" section renumbered 1–8 →
+1–9 with the new step 7 inserted. Verified in isolation (no Docker daemon available in this
+environment): a one-off Python `http.server`-based stub server on both bash and PowerShell,
+confirming (a) an immediate `200` passes without exhausting retries, (b) nothing listening exhausts
+the bound and fails naming the service, (c) a `503` response is treated the same as not-healthy, not
+silently accepted — see `docs/tickets/BOOT-002.md`'s Test section for the exact commands/output. The
+full-Docker-stack dry run (Test AC's third bullet) was **not** run — no working Docker daemon in this
+environment — left unchecked in the ticket file, honestly.
+
 # services/ingestion-service (INGEST-*)
 
 Source: docs/tickets/INGEST-001.md, docs/product/backlog-operability.md.
@@ -2939,3 +2972,125 @@ stays strictly increasing across all 25 inserts — fixed with a monkeypatched s
 clock in that test, no production code change. Full `services/validation-service` suite (224 tests)
 verified clean by the Tech Lead across 3 independent re-runs after both fixes; the dev agent separately
 verified 5/5 clean. See `docs/tickets/VS-034.md` for the full ticket.
+
+## Sprint 55 (docs/sprints/sprint-55.md, backlog: docs/product/backlog-trust-and-admin-ops.md)
+
+`RPT-003` (Must) — the platform's own headline "bring your own model" backend capability (VS-017/VS-029,
+already shipped) was reachable only via a raw `POST /runs` call, with zero field for it on
+`dashboard-web`'s "Submit a run" form. One-story sprint, single ticket, no dependency on anything else in
+that backlog.
+
+| Ticket | Story | Module | Depends on | Status |
+|---|---|---|---|---|
+| [RPT-003](RPT-003.md) | Optional `client_prediction_reference` path/inline fieldset on `run_new.html`, wired through `run_new_submit`'s `RunRequest` construction, reusing `dataset_reference`'s existing path/inline parsing code path (DRY) | dashboard-web | none | done |
+
+**Outcome**: `services/dashboard-web/src/app/routers/runs.py` gained a shared
+`_parse_path_or_inline_reference(path_value, inline_value) -> dict | None` helper, extracted per the
+ticket's own DRY note and reused by both `dataset_reference`'s pre-existing path/inline arms (behavior
+byte-unchanged — same precedence, same error text/status codes, every pre-existing `dataset_reference`
+test passes unmodified) and two new optional `run_new_submit` form fields,
+`client_prediction_reference_path`/`client_prediction_reference_inline`. Submitting without either field
+leaves `client_prediction_reference` at `RunRequest`'s own pre-existing `None` default — byte-identical to
+every submission before this ticket, proven by a dedicated regression test. `services/dashboard-web/src/app/templates/run_new.html`
+gained a new "Your model's predictions (optional)" fieldset (local file path / inline JSON only —
+a disclosed, reasoned two-mode-not-three-mode scope call, see the ticket's Design section), positioned
+between "Stored dataset" and `horizon`, whose copy contains none of "improves"/"corrects"/"certif-" in any
+form (enforced by extending the existing `test_run_new_template_has_no_banned_positioning_words` test).
+`run_detail.html` required zero change, confirmed by `git diff --stat` — it already rendered a client
+baseline whenever a run's splits carried one (VS-017/VS-029/DASH-125/RAV-005), regardless of submission
+path. Full `services/dashboard-web` suite: **390 passed, 8 deselected** (`e2e`-marked Selenium tests,
+excluded by this project's own default `pytest` marker filter, unrelated to this ticket) — independently
+re-run by the Tech Lead, matching the dev agent's own report exactly. **QA verdict (independent `qa`
+subagent pass, raised per this platform's standing rule)**: **GO**. Independently re-verified the
+no-regression claim by tracing the diff and re-running the byte-identical-when-omitted regression test,
+traced the new capability end-to-end against `validation-service/README.md`'s VS-017/VS-029 sections
+(client_prediction_reference -> ClientPredictionBaseline -> non-null client_baseline on splits), confirmed
+the banned-positioning-word test is a genuine file-content scan (not toothless), confirmed
+`run_detail.html`'s zero diff, confirmed the DRY helper genuinely replaced the duplicated parsing logic
+(grepped for any leftover second `json.loads` call site -- none found), independently re-ran the full
+suite (390 passed, 8 deselected, matching the Tech Lead's own numbers exactly), and confirmed all three
+Documentation acceptance criteria landed. No bugs found. One disclosed, non-blocking gap: no live-stack
+click-through smoke test was possible in QA's environment (Docker daemon unreachable) -- noted as a
+completeness gap for a future pre-production smoke pass, not a blocker, since this is a new-feature ticket
+with full unit-test coverage of the actual HTTP-body-construction logic. See `docs/tickets/RPT-003.md` for
+the full ticket, including the Tech Lead's disclosed two-mode-vs-three-mode reasoning.
+
+## Sprint 56 (docs/sprints/sprint-56.md, backlog: docs/product/backlog-trust-and-admin-ops.md)
+
+`TRUST-003` (Should) then `TRUST-004` (Should), sequenced strictly one-then-the-other per a real data
+dependency (not priority order): `TRUST-004`'s reproducibility-statement subsection is populated from
+`engine_version`/`config_fingerprint`, fields that don't exist until `TRUST-003` ships. `TRUST-003` spans
+`services/validation-service` + `libs/common` (one logical unit — new migration/columns plus the
+matching contract fields); `TRUST-004` is `services/reporting-service` template-only.
+
+| Ticket | Story | Module(s) | Depends on | Status |
+|---|---|---|---|---|
+| [TRUST-003](TRUST-003.md) | New nullable `runs.engine_version`/`runs.config_fingerprint` columns (migration 0012, no `server_default` — deliberately different from the 0008/0009 backfill precedent), populated at `POST /runs` time via a new `app/fingerprint.py` (SHA-256 of canonicalized `split_config`, `importlib.metadata` engine version); `RunDetailResponse` gains both fields | validation-service, libs/common | none | done |
+| [TRUST-004](TRUST-004.md) | New "2.5. Reproducibility statement" subsection in `validation_audit.html.jinja`, between today's section 2 and 3, rendering `engine_version`/`config_fingerprint`/`dataset_id` + a fixed reproducibility sentence, with an explicit null-case note for pre-migration runs | reporting-service | TRUST-003 | done |
+
+**Outcome**: `TRUST-003` shipped migration `0012_add_runs_engine_fingerprint_columns.py`
+(`runs.engine_version`/`runs.config_fingerprint`, both nullable `String`, deliberately **no**
+`server_default` — unlike the `warnings`/`feature_lineage` backfill precedent, so a pre-migration row
+stays honestly `NULL` forever, never fabricated) and a new `services/validation-service/src/app/
+fingerprint.py` (`get_engine_version()` — memoized `importlib.metadata.version("naive_first_engine")`;
+`compute_config_fingerprint()` — SHA-256 of the run's own `split_config`, canonicalized via
+`json.dumps(..., sort_keys=True)`), wired into `_persist_new_run` so every run row created from this
+migration forward gets both fields populated at `create_run` time — including a run that subsequently
+*fails*, a deliberate, disclosed decision (the fingerprint describes the engine/config that were about
+to be used, a fact knowable independent of run outcome). `libs/common`'s `RunDetailResponse` gained
+matching `engine_version`/`config_fingerprint: str | None = None` fields, consumed verbatim by every
+downstream service that already reconstructs `RunDetailResponse(**response.json())`
+(`gateway-api`/`dashboard-web`/`reporting-service`, all confirmed unaffected by this additive,
+default-`None` change). Tech Lead personally re-ran `services/validation-service`'s full suite (**208
+passed, 22 skipped**, matching the dev agent's own report) and `libs/common`'s (**44 passed**), and
+statically verified the migration chain (`alembic`'s `ScriptDirectory` walk confirms `0012` is the sole
+head, resolving cleanly back to `0001`) — no live Postgres/Docker was available in this sandbox (`docker
+ps` failed with a daemon-connection error), so a real `alembic upgrade head` against Postgres was not
+executed; the SQLite path *was* live-exercised via `tests/test_models.py::
+test_alembic_upgrade_head_creates_matching_schema` and the new round-trip tests
+(`tests/test_engine_fingerprint_roundtrip.py`), which do run a real `alembic upgrade head` against a
+throwaway SQLite DB.
+
+`TRUST-004` then added `services/reporting-service/src/app/templates/validation_audit.html.jinja`'s new
+"2.5. Reproducibility statement" subsection — a pure, verified insertion between section 2 and section 3
+inside the existing `{% if run.status != "completed" %}...{% else %}` guard, requiring **zero** Python
+change in `ValidationAuditRenderer`/`generation.py` (confirmed by `git diff --stat`) since `run` already
+passes into the Jinja2 context unmodified. Renders `engine_version`/`config_fingerprint`/`dataset_id`
+plus a fixed reproducibility sentence for a fingerprinted run, or an explicit "not available for runs
+created before this platform tracked engine fingerprints" note for a null-fingerprint run — proven by a
+dedicated test that also asserts no bare `"None"` string leaks into the rendered subsection. Tech Lead
+personally re-ran `services/reporting-service`'s full suite (**63 passed, 9 skipped** — Postgres-RLS
+tests skipped, no live DB in this sandbox — matching the dev agent's own report exactly). **QA verdict
+(independent `qa` subagent pass, raised per this platform's standing rule)**: **GO**. Independently
+re-verified the deterministic-hash claim (existing tests plus its own throwaway 20-shuffle/
+single-field-perturbation/cross-process probe), traced every `engine_version`/`config_fingerprint` write
+site (grepped 20 files repo-wide; the only writer is `_persist_new_run`'s three call sites, all strictly
+before `run_validation_protocol`; confirmed `update_run_status` never touches either field, so no
+pre-migration row can ever be backfilled), confirmed the migration has no `server_default` on either
+column, confirmed the reproducibility-statement template's `{% else %}` branch interpolates no field at
+all (so a `None` can never leak through Jinja's default string coercion), confirmed zero diff in
+`libs/naive_first_engine` and no leakage/positioning violation, confirmed scope stayed inside the three
+declared modules (the other uncommitted working-tree changes present alongside this sprint's diff were
+independently traced to `RPT-003`/Sprint 55 leftovers, not this sprint's own scope creep), and
+independently re-ran all three test suites with the same real, personally-observed numbers (**208+63+44
+= 315 passed, 31 skipped, 0 failed**). Same disclosed no-live-Postgres/Docker sandbox gap as the Tech
+Lead's own review. No bugs found. See `docs/tickets/TRUST-003.md`/`docs/tickets/TRUST-004.md` for the
+full ticket records, including the Tech Lead's disclosed two-module-single-ticket scoping call for
+`TRUST-003` and the `2.5` section-numbering call for `TRUST-004`.
+
+## Sprint 57 (docs/sprints/sprint-57.md, backlog: docs/product/backlog-trust-and-admin-ops.md)
+
+`TRUST-001` (Should) then `TRUST-005` (Should, reuses `TRUST-001`'s shared-wording mechanism) then
+`TRUST-002` (Should, independent) -- see sprint-57.md for the full re-verification/sequencing
+rationale. Each of `TRUST-001`/`TRUST-005` spans two modules (`dashboard-web` + `reporting-service`)
+and is split into two module-scoped tickets each (`-01` dashboard-web, `-02` reporting-service, no
+file overlap, dispatched in parallel); `TRUST-002` is `dashboard-web`-only, sequenced strictly after
+both `-01` tickets to avoid concurrent edits to the same files.
+
+| Ticket | Story | Module | Depends on | Status |
+|---|---|---|---|---|
+| [TRUST-001-01](TRUST-001-01.md) | Always-visible "Methodology" panel on `run_detail.html`, outside `{% if splits %}`; originates the shared `METHODOLOGY_FACTS` wording + same-text-test mechanism | dashboard-web | none | done |
+| [TRUST-001-02](TRUST-001-02.md) | Always-visible "2. Methodology" subsection in `validation_audit.html.jinja`, before the completed-only status gate; independently-authored copy of `TRUST-001-01`'s wording, own same-text test | reporting-service | none | done |
+| [TRUST-005-01](TRUST-005-01.md) | `build_headline_verdict_summary` appends the "not beating naive is expected" sentence when `has_client_model=True` and `better_count==0` | dashboard-web | TRUST-001-01 | todo |
+| [TRUST-005-02](TRUST-005-02.md) | One additive sentence inside `validation_audit.html.jinja`'s existing `{% if better_count == 0 %}` branch | reporting-service | TRUST-001-02 | todo |
+| [TRUST-002](TRUST-002.md) | New static `/help/leakage-demo` route + template using `da-tese-ao-produto.md` section 1.3's real numbers, linked from the methodology panel and `/help/concepts` | dashboard-web | TRUST-001-01, TRUST-005-01 | todo |
