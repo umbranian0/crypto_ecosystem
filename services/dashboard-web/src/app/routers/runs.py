@@ -348,7 +348,7 @@ from naive_first_common.contracts import (
     SplitPointResponse,
     SplitResultResponse,
 )
-from naive_first_common.disclosures import METHODOLOGY_FACTS
+from naive_first_common.disclosures import METHODOLOGY_FACTS, METHODOLOGY_INTRO
 from pydantic import ValidationError
 
 from app.charting import (
@@ -463,14 +463,6 @@ CAVEAT_SENTENCE = (
     "horizon -- treat any deviation shown here as unproven until independently "
     "reconfirmed."
 )
-
-# TRUST-001-01: the four always-visible methodology facts rendered by
-# `_methodology_panel.html`, outside `{% if splits %}` -- unlike
-# `CAVEAT_SENTENCE` above (only shown once splits/a shareable summary exist),
-# this is the platform's one methodology statement that must render for a
-# zero-split run too (Analysis section's verified gap). Imported from
-# `libs/common`, which `reporting-service` renders from as well, so the UI and
-# the audit report cannot drift apart -- see that module's own docstring.
 
 # DASH-119: a pre-RSS-004 run can carry an unbounded number of persisted splits
 # (RSS-004's 500-split guardrail on `POST /runs`, `services/validation-service/
@@ -1237,6 +1229,7 @@ def run_detail(
             "run": run,
             "splits": rendered_splits,
             "methodology_facts": METHODOLOGY_FACTS,
+            "methodology_intro": METHODOLOGY_INTRO,
             "error_chart": build_error_chart(rendered_splits, metric=metric),
             "metric_options": METRIC_REGISTRY,
             "dm_verdict_chart": build_dm_verdict_chart(rendered_splits),

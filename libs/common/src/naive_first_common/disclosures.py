@@ -16,6 +16,11 @@ the intent -- one edit, one place.
 
 from __future__ import annotations
 
+METHODOLOGY_INTRO = (
+    "Every validation run on this platform follows the same leakage-aware protocol, "
+    "regardless of this run's own status or outcome:"
+)
+
 METHODOLOGY_FACTS: tuple[str, str, str, str] = (
     "Rolling-origin walk-forward validation: each split trains on data up to a point in "
     "time and tests only on the period immediately after it -- never on rows the model "

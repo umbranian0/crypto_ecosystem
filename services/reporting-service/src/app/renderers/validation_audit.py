@@ -27,7 +27,7 @@ from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from naive_first_common.contracts import RunDetailResponse, SplitResultResponse
-from naive_first_common.disclosures import METHODOLOGY_FACTS
+from naive_first_common.disclosures import METHODOLOGY_FACTS, METHODOLOGY_INTRO
 
 from app.renderers.base import ReportRenderer
 
@@ -54,4 +54,5 @@ class ValidationAuditRenderer(ReportRenderer):
             splits=splits,
             narrative_html=narrative_html,
             methodology_facts=METHODOLOGY_FACTS,
+            methodology_intro=METHODOLOGY_INTRO,
         )
