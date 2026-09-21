@@ -48,7 +48,7 @@ wait_for_service_health() {
     done
 }
 
-echo "==> Step 0/8: checking for infra/.env"
+echo "==> Step 1/8: checking for infra/.env"
 if [ ! -f "$script_dir/.env" ]; then
     cp "$script_dir/.env.example" "$script_dir/.env" || fail "step 0 (copying .env.example to .env)"
     echo "    created $script_dir/.env from .env.example"

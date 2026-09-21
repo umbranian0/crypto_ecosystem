@@ -40,7 +40,7 @@ directory (one per Postgres schema — `ingestion`, `validation`, `reporting`, `
 `economic` — see [../docs/implementation-plan.md](../docs/implementation-plan.md) section 5).
 
 **(`BOOT-001`)** Copying `infra/.env.example` to `infra/.env` now happens automatically, as the
-first step (`Step 0/8`) of `infra/bootstrap.sh`/`infra/bootstrap.ps1` — see "First-boot bootstrap
+first step (`Step 1/8`) of `infra/bootstrap.sh`/`infra/bootstrap.ps1` — see "First-boot bootstrap
 (INF-015)" below. If you're running services individually without the bootstrap script (or
 otherwise not starting anything via those scripts), copy `infra/.env.example` to `infra/.env` (or
 a repo-root `.env`) by hand before starting anything — every variable below has a working default,

@@ -69,7 +69,7 @@ function Wait-ForServiceHealth {
     }
 }
 
-Write-Host "==> Step 0/8: checking for infra/.env"
+Write-Host "==> Step 1/8: checking for infra/.env"
 if (-not (Test-Path (Join-Path $scriptDir ".env"))) {
     try {
         Copy-Item (Join-Path $scriptDir ".env.example") (Join-Path $scriptDir ".env")
