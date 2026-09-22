@@ -120,6 +120,37 @@ from naive_first_common.disclosures import NOT_BEATING_NAIVE_IS_EXPECTED_SENTENC
 MODEL_COLUMN_LABEL = "Model"
 MODEL_COLUMN_PLACEHOLDER_LABEL = "Model (NaiveLast placeholder -- no client model submitted)"
 
+# UAT finding (live Selenium pass, 2026-09-21): the full placeholder label above is
+# right for a chart legend, a text export, or a single grouped `colspan` header, but
+# `_forecast_horizon_summary_panel.html` repeats its column label once per metric --
+# seven times in one header row -- which overflowed the viewport and forced the core
+# results table to scroll horizontally. The disclosure is mandatory and is not
+# weakened here: the short label below carries the word "placeholder" in every header,
+# and `MODEL_PLACEHOLDER_NOTE` states the full meaning once, always visible, in that
+# panel's existing caption rather than hidden behind a tooltip or a scroll.
+MODEL_COLUMN_PLACEHOLDER_SHORT_LABEL = "Model (placeholder)"
+MODEL_PLACEHOLDER_NOTE = (
+    "No client model was submitted for this run, so every \"Model\" column below is "
+    "the NaiveLast baseline's own output, not a model of yours."
+)
+
+
+def model_column_short_label(run: RunDetailResponse) -> str:
+    """The `model_column_label` variant for a header repeated once per column.
+
+    Same honesty contract -- a placeholder is never labelled plain "Model" -- in
+    a form that fits a table header. Callers that render the label once (legend,
+    export, grouped header) should use `model_column_label` and its fuller text.
+    """
+    return MODEL_COLUMN_LABEL if run.has_client_model else MODEL_COLUMN_PLACEHOLDER_SHORT_LABEL
+
+
+def model_placeholder_note(run: RunDetailResponse) -> str:
+    """The sentence spelling out what the short placeholder label means, or an
+    empty string when a real client model was submitted and none is needed.
+    """
+    return "" if run.has_client_model else MODEL_PLACEHOLDER_NOTE
+
 
 def model_column_label(run: RunDetailResponse) -> str:
     """Returns the honest "Model" column/legend/export label: the plain label

@@ -12,6 +12,7 @@ evidence directory afterward doesn't have to eyeball every number by hand.
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import re
 import time
@@ -117,6 +118,24 @@ def _rendered_text_contains(html: str, value: Any) -> bool:
     return False
 
 
+def _save_full_page_screenshot(driver: webdriver.Chrome, path: Path) -> None:
+    """Capture the WHOLE page, not just the viewport.
+
+    `save_screenshot` stops at the fold, so anything below it -- which on a run
+    detail page is most of the results -- never reached the evidence an agent
+    reviews. Chrome can capture beyond the viewport over CDP; fall back to the
+    plain viewport shot if that ever fails, since truncated evidence still beats
+    none.
+    """
+    try:
+        result = driver.execute_cdp_cmd(
+            "Page.captureScreenshot", {"captureBeyondViewport": True, "fromSurface": True}
+        )
+        path.write_bytes(base64.b64decode(result["data"]))
+    except Exception:
+        driver.save_screenshot(str(path))
+
+
 def run_step(
     driver: webdriver.Chrome,
     step: dict[str, Any],
@@ -206,7 +225,7 @@ def run_step(
     screenshot_path = out_dir / f"{name}.png"
     html_path = out_dir / f"{name}.html"
     if step.get("screenshot", True):
-        driver.save_screenshot(str(screenshot_path))
+        _save_full_page_screenshot(driver, screenshot_path)
     html_path.write_text(driver.page_source, encoding="utf-8")
 
     record: dict[str, Any] = {

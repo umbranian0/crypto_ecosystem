@@ -961,6 +961,22 @@ per the backlog's own explicit scope limit):
 
 ## Honest "Model" label -- placeholder disclosure when no client model submitted (DASH-125)
 
+> **Short-label revision (UAT finding, live Selenium pass 2026-09-21).** `FHS-003`'s summary panel
+> repeated the full placeholder label once per metric column -- seven times in a single header row --
+> which overflowed the viewport and forced the core results table to scroll horizontally. That panel
+> now uses `MODEL_COLUMN_PLACEHOLDER_SHORT_LABEL` ("Model (placeholder)") in its column headers, with
+> `MODEL_PLACEHOLDER_NOTE` rendered once above the table, in the panel's existing `chart-caption`,
+> spelling out that every "Model" column is the NaiveLast baseline's own output. **The disclosure is
+> not weakened by this**: the word "placeholder" still appears in every column header, and the full
+> meaning moved from a cramped repeated parenthetical into an always-visible sentence -- more legible
+> than before, not less. Every other consumer (the grouped `colspan` header on the per-split table,
+> the error-chart title/legend, the copy-summary export) still uses the original full
+> `model_column_label`, which renders once and has room for it. `tests/test_charting.py` asserts the
+> short label still contains "placeholder" and is never the bare `MODEL_COLUMN_LABEL`;
+> `tests/test_runs_detail.py` asserts the short header and its note render together, so the header
+> can never be shortened without the sentence that makes it honest.
+
+
 `GET /runs/{run_id}`'s "Model MAE"/"Model RMSE"/etc. column headers, RAV-002's error chart legend/
 title, FHS-003's summary panel column headers, and FHS-004's copy-summary export all previously
 labeled every "Model ..." metric with the plain word "Model" even for a run submitted with no

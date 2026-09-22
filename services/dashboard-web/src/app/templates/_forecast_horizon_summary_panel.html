@@ -21,24 +21,27 @@
     <p class="chart-caption">Backtested performance of the model against the Naive0 baseline for
     each walk-forward split, with the Diebold-Mariano benchmark-comparison verdict shown alongside
     each pair. This is a validation/audit summary only.</p>
+    {% if model_placeholder_note %}
+    <p class="chart-caption form-status-warn">{{ model_placeholder_note }}</p>
+    {% endif %}
     <div class="table-scroll">
     <table class="horizon-summary-table">
         <thead>
             <tr>
                 <th>Split</th>
-                <th>{{ model_column_label }} MAE</th>
+                <th>{{ model_column_short_label }} MAE</th>
                 <th>Naive0 MAE</th>
-                <th>{{ model_column_label }} RMSE</th>
+                <th>{{ model_column_short_label }} RMSE</th>
                 <th>Naive0 RMSE</th>
-                <th>{{ model_column_label }} sMAPE</th>
+                <th>{{ model_column_short_label }} sMAPE</th>
                 <th>Naive0 sMAPE</th>
-                <th>{{ model_column_label }} MASE</th>
+                <th>{{ model_column_short_label }} MASE</th>
                 <th>Naive0 MASE</th>
-                <th>{{ model_column_label }} DA</th>
+                <th>{{ model_column_short_label }} DA</th>
                 <th>Naive0 DA</th>
-                <th>{{ model_column_label }} F1</th>
+                <th>{{ model_column_short_label }} F1</th>
                 <th>Naive0 F1</th>
-                <th>{{ model_column_label }} OOS R2</th>
+                <th>{{ model_column_short_label }} OOS R2</th>
                 <th>Naive0 OOS R2</th>
                 <th>DM p-value</th>
                 <th>Benchmark comparison verdict</th>

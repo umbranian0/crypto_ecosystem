@@ -383,6 +383,8 @@ from app.charting import (
     build_trend_chart,
     compute_consistency_indicator,
     model_column_label,
+    model_column_short_label,
+    model_placeholder_note,
     round_display_value,
     verdict_category_and_css_slug,
 )
@@ -1172,6 +1174,8 @@ def run_split_points_chart(
             "split_index": split_index,
             "points_chart": build_predicted_vs_actual_chart(points),
             "model_column_label": model_column_label(run),
+            "model_column_short_label": model_column_short_label(run),
+            "model_placeholder_note": model_placeholder_note(run),
         },
     )
 
@@ -1263,5 +1267,7 @@ def run_detail(
             "total_splits_count": total_splits_count,
             "rendered_splits_count": len(rendered_splits),
             "model_column_label": model_column_label(run),
+            "model_column_short_label": model_column_short_label(run),
+            "model_placeholder_note": model_placeholder_note(run),
         },
     )

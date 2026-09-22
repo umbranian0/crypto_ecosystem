@@ -17,6 +17,10 @@ from naive_first_common.disclosures import (
 )
 
 from app.charting import (
+    MODEL_COLUMN_PLACEHOLDER_SHORT_LABEL,
+    MODEL_PLACEHOLDER_NOTE,
+    model_column_short_label,
+    model_placeholder_note,
     METRIC_REGISTRY,
     MODEL_COLUMN_LABEL,
     MODEL_COLUMN_PLACEHOLDER_LABEL,
@@ -573,6 +577,48 @@ def test_model_column_label_plain_when_client_model_present() -> None:
     run = RunDetailResponse(**{**_RUN_DETAIL_BODY, "has_client_model": True})
 
     assert model_column_label(run) == MODEL_COLUMN_LABEL
+
+
+# UAT finding (live Selenium pass): `model_column_short_label` -- the same
+# honesty contract in a form that fits a header repeated once per metric column.
+
+
+def test_model_column_short_label_still_discloses_placeholder() -> None:
+    run = RunDetailResponse(**{**_RUN_DETAIL_BODY, "has_client_model": False})
+
+    label = model_column_short_label(run)
+
+    assert label == MODEL_COLUMN_PLACEHOLDER_SHORT_LABEL
+    # The whole point of the short form: shorter, but never a bare "Model".
+    assert "placeholder" in label.lower()
+    assert label != MODEL_COLUMN_LABEL
+    assert len(label) < len(MODEL_COLUMN_PLACEHOLDER_LABEL)
+
+
+def test_model_column_short_label_plain_when_client_model_present() -> None:
+    run = RunDetailResponse(**{**_RUN_DETAIL_BODY, "has_client_model": True})
+
+    assert model_column_short_label(run) == MODEL_COLUMN_LABEL
+
+
+def test_model_placeholder_note_spells_out_the_short_label() -> None:
+    """The short header is only honest because this note is always rendered
+    beside it; if the note were ever dropped, the disclosure would be weaker
+    than DASH-125 established.
+    """
+    run = RunDetailResponse(**{**_RUN_DETAIL_BODY, "has_client_model": False})
+
+    note = model_placeholder_note(run)
+
+    assert note == MODEL_PLACEHOLDER_NOTE
+    assert "NaiveLast" in note
+    assert "not a model of yours" in note
+
+
+def test_model_placeholder_note_empty_when_client_model_present() -> None:
+    run = RunDetailResponse(**{**_RUN_DETAIL_BODY, "has_client_model": True})
+
+    assert model_placeholder_note(run) == ""
 
 
 # UAT-003: `build_headline_verdict_summary` -- must reuse the exact same

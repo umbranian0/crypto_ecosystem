@@ -1093,6 +1093,54 @@ def test_run_detail_renders_plain_model_label_when_client_model_present(monkeypa
     assert "<th>Model MAE</th>" in response.text or "colspan=\"7\">Model</th>" in response.text
 
 
+def test_run_detail_summary_panel_uses_short_label_with_the_note_beside_it(monkeypatch) -> None:
+    """UAT finding: the summary panel repeated the full placeholder label once
+    per metric column (seven times), overflowing the table. It now uses the
+    short label, which is only honest because the spelled-out note renders
+    beside it -- so assert both, never the short label alone.
+    """
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == f"/runs/{RUN_ID}":
+            return httpx.Response(200, json={**RUN_DETAIL_BODY, "has_client_model": False})
+        if request.url.path == f"/runs/{RUN_ID}/splits":
+            return httpx.Response(200, json=[SPLIT_BODY])
+        raise AssertionError(f"unexpected path {request.url.path}")
+
+    _patch_transport(monkeypatch, handler)
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get(f"/runs/{RUN_ID}")
+
+    assert response.status_code == 200
+    assert "Model (placeholder) MAE" in response.text
+    assert "the NaiveLast baseline&#39;s own output, not a model of yours." in response.text
+    # The long label must no longer be repeated per metric column. It stays
+    # legitimate in the chart legend and the grouped colspan header, which
+    # render it once and have room for it -- so assert on the <th> form only.
+    assert f"<th>{PLACEHOLDER_LABEL} MAE</th>" not in response.text
+
+
+def test_run_detail_summary_panel_plain_label_and_no_note_with_client_model(monkeypatch) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == f"/runs/{RUN_ID}":
+            return httpx.Response(200, json={**RUN_DETAIL_BODY, "has_client_model": True})
+        if request.url.path == f"/runs/{RUN_ID}/splits":
+            return httpx.Response(200, json=[SPLIT_BODY])
+        raise AssertionError(f"unexpected path {request.url.path}")
+
+    _patch_transport(monkeypatch, handler)
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get(f"/runs/{RUN_ID}")
+
+    assert response.status_code == 200
+    assert "Model MAE" in response.text
+    assert "not a model of yours" not in response.text
+    assert "placeholder" not in response.text.lower()
+
+
 def test_build_shareable_summary_text_contains_placeholder_when_no_client_model() -> None:
     run = RunDetailResponse(**{**RUN_DETAIL_BODY, "has_client_model": False})
     split = SplitResultResponse(**SPLIT_BODY)
