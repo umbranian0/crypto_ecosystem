@@ -68,7 +68,9 @@ warn_if_image_predates_source() {
         age_days=$(( ( $(date +%s) - image_epoch ) / 86400 ))
         echo "    WARNING: ${name}'s image was built ${age_days} day(s) ago, but its source has"
         echo "      changed since -- you are testing older code than you have checked out."
-        echo "      Rebuild with: docker compose -f $compose_file up -d --build $name"
+        echo "      Re-run this script to rebuild AND migrate. Do not just rebuild the"
+        echo "      container: new code against an unmigrated database fails at every"
+        echo "      endpoint while still passing its own health check."
     fi
 }
 

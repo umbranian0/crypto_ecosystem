@@ -120,6 +120,14 @@ message naming the failed step) rather than silently continuing:
    `docker compose ... up -d --build` command to fix it. Warning only: it never rebuilds for you and
    never fails the run, since pinning an older image is a legitimate thing to do deliberately.
 
+   **The warning deliberately points back at this script, not at `docker compose up -d --build`.**
+   Rebuilding a container on its own deploys new code against whatever schema the database currently
+   has. On 2026-09-22 that produced a total outage that looked like a healthy stack: `validation-service`
+   was rebuilt with `TRUST-003`'s code, migration `0012` had never been applied, and every endpoint
+   returned 500 (`column runs.engine_version does not exist`) while `/health` kept answering 200 --
+   because the health check does not touch the database. Bootstrap runs migrations at step 4, so
+   re-running it rebuilds and migrates together; a bare rebuild does neither.
+
    This exists because of a real incident on 2026-09-21: a full browser-driven UAT pass ran against a
    stack where every service reported healthy while serving a **six-day-old image**. `docker compose
    build` had been failing since Sprint 50 for `dashboard-web` and `reporting-service` (both

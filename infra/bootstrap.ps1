@@ -93,7 +93,9 @@ function Warn-IfImagePredatesSource {
         $ageDays = [int]((Get-Date) - $imageTime).TotalDays
         Write-Host "    WARNING: $Name's image was built $ageDays day(s) ago, but its source has"
         Write-Host "      changed since -- you are testing older code than you have checked out."
-        Write-Host "      Rebuild with: docker compose -f $composeFile up -d --build $Name"
+        Write-Host "      Re-run this script to rebuild AND migrate. Do not just rebuild the"
+        Write-Host "      container: new code against an unmigrated database fails at every"
+        Write-Host "      endpoint while still passing its own health check."
     }
 }
 
