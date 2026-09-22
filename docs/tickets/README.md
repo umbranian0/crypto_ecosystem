@@ -1367,7 +1367,7 @@ Fresh-checkout bootstrap reliability. Both stories touch the same numbered-step 
 two files (`infra/bootstrap.sh`, `infra/bootstrap.ps1`) plus the same `infra/README.md` section —
 sequenced `BOOT-001` then `BOOT-002`, not parallel, per sprint-54.md's own "Sequencing decision"
 section (`BOOT-001` establishes the new 0–7 step baseline `BOOT-002` needs to insert into cleanly).
-`BOOT-003` (env-drift warning, Could) is explicitly deferred, not scheduled this sprint.
+`BOOT-003` (env-drift warning, Could) was deferred at sprint-54 planning, then built later out of sprint, after a live bootstrap on a real machine found `infra/.env` holding 4 of the 29 keys `.env.example` defines -- the exact drift this story describes, surfacing as nothing at all because docker-compose defaults covered it. See `infra/README.md`'s "Env drift warning (BOOT-003)" section.
 
 | Ticket | Story | Module | Depends on | Status |
 |---|---|---|---|---|

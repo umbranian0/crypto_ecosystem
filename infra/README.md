@@ -68,10 +68,21 @@ message naming the failed step) rather than silently continuing:
    disclosed-insecure dev-only defaults that should be changed before any non-local deployment
    (`OPERATOR_TOKEN`, `POSTGRES_PASSWORD`, `POSTGRES_APP_PASSWORD`,
    `INGESTION_CREDENTIAL_ENCRYPTION_KEY`, `INGESTION_INTERNAL_TOKEN`). If `infra/.env` already
-   exists, this step is a silent no-op — it never overwrites an existing file, even one that looks
-   drifted from `.env.example` (drift detection is `BOOT-003`'s deferred territory, not this step's).
+   exists, this step never overwrites it — an operator's own file is never rewritten. It is no longer
+   silent, though: **(`BOOT-003`)** it compares the variable *names* defined in `.env.example` against
+   those present in `.env` and warns about any the real file is missing. Warning only — nothing is
+   appended, merged, or changed, and a missing key never fails the script, because this check cannot
+   tell "optional and intentionally unset" from "required and forgotten" (e.g. `NARRATIVE_API_URL` is
+   documented as unset in normal operation). Values are never compared or printed, only key names.
    Any real failure here (e.g. `infra/.env.example` itself missing) fails loudly through the same
-   `fail`/`Fail-Step` convention every other step uses, naming step 0.
+   `fail`/`Fail-Step` convention every other step uses, naming step 1.
+
+   Why this earns its place despite being scoped Could: on the machine this was built on, `infra/.env`
+   held **4 of the 29 keys** `.env.example` defines — missing `OPERATOR_TOKEN`,
+   `POSTGRES_APP_PASSWORD`, `INGESTION_CREDENTIAL_ENCRYPTION_KEY` and 22 others — and the stack came up
+   anyway, because docker-compose defaults silently covered every one of them. The drift produced no
+   error to notice. That is the failure mode this warning exists for: not a service crashing, but a
+   stack that looks fine while running on defaults nobody chose.
 2. `docker compose -f infra/docker-compose.yml up -d postgres redis`.
 3. Wait for `postgres`'s own `pg_isready`-based healthcheck to report `healthy` (via `docker inspect
    --format '{{.State.Health.Status}}' naive-first-postgres`, bounded retry loop — not a new ad hoc

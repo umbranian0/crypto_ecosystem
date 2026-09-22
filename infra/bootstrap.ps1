@@ -74,11 +74,27 @@ if (-not (Test-Path (Join-Path $scriptDir ".env"))) {
     try {
         Copy-Item (Join-Path $scriptDir ".env.example") (Join-Path $scriptDir ".env")
     } catch {
-        Fail-Step "step 0 (copying .env.example to .env)"
+        Fail-Step "step 1 (copying .env.example to .env)"
     }
     Write-Host "    created $(Join-Path $scriptDir '.env') from .env.example"
     Write-Host "    Change these disclosed insecure dev-only defaults before any non-local deployment:"
     Write-Host "    OPERATOR_TOKEN, POSTGRES_PASSWORD, POSTGRES_APP_PASSWORD, INGESTION_CREDENTIAL_ENCRYPTION_KEY, INGESTION_INTERNAL_TOKEN"
+} else {
+    # BOOT-003: same drift warning bootstrap.sh prints, same structure -- an .env that
+    # predates a variable added to .env.example since surfaces today only as a confusing
+    # runtime failure. Variable NAMES only; the operator's file is never rewritten.
+    $envKeyPattern = '^[A-Za-z_][A-Za-z0-9_]*='
+    $exampleKeys = Select-String -Path (Join-Path $scriptDir ".env.example") -Pattern $envKeyPattern |
+        ForEach-Object { ($_.Line -split '=', 2)[0] } | Sort-Object -Unique
+    $currentKeys = Select-String -Path (Join-Path $scriptDir ".env") -Pattern $envKeyPattern |
+        ForEach-Object { ($_.Line -split '=', 2)[0] } | Sort-Object -Unique
+    $missingKeys = @($exampleKeys | Where-Object { $currentKeys -notcontains $_ })
+    if ($missingKeys.Count -gt 0) {
+        Write-Host "    WARNING: infra/.env is missing $($missingKeys.Count) key(s) that infra/.env.example defines:"
+        $missingKeys | ForEach-Object { Write-Host "      $_" }
+        Write-Host "    Not added for you -- your .env is never rewritten. Some may be intentionally"
+        Write-Host "    unset; a service that needs one will fail at startup or fall back to a default."
+    }
 }
 
 Write-Host "==> Step 2/8: starting postgres, redis"

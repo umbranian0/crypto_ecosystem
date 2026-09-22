@@ -50,10 +50,22 @@ wait_for_service_health() {
 
 echo "==> Step 1/8: checking for infra/.env"
 if [ ! -f "$script_dir/.env" ]; then
-    cp "$script_dir/.env.example" "$script_dir/.env" || fail "step 0 (copying .env.example to .env)"
+    cp "$script_dir/.env.example" "$script_dir/.env" || fail "step 1 (copying .env.example to .env)"
     echo "    created $script_dir/.env from .env.example"
     echo "    Change these disclosed insecure dev-only defaults before any non-local deployment:"
     echo "    OPERATOR_TOKEN, POSTGRES_PASSWORD, POSTGRES_APP_PASSWORD, INGESTION_CREDENTIAL_ENCRYPTION_KEY, INGESTION_INTERNAL_TOKEN"
+else
+    # BOOT-003: an .env that predates a variable added to .env.example since is the
+    # common case for a returning developer, and today it surfaces only as a confusing
+    # runtime failure in whichever service falls back to a default. Compare variable
+    # NAMES only, warn, and never touch the operator's file.
+    missing_keys="$(comm -23         <(grep -oE '^[A-Za-z_][A-Za-z0-9_]*=' "$script_dir/.env.example" | tr -d '=' | sort -u)         <(grep -oE '^[A-Za-z_][A-Za-z0-9_]*=' "$script_dir/.env" | tr -d '=' | sort -u))"
+    if [ -n "$missing_keys" ]; then
+        echo "    WARNING: infra/.env is missing $(echo "$missing_keys" | wc -l | tr -d ' ') key(s) that infra/.env.example defines:"
+        echo "$missing_keys" | sed 's/^/      /'
+        echo "    Not added for you -- your .env is never rewritten. Some may be intentionally"
+        echo "    unset; a service that needs one will fail at startup or fall back to a default."
+    fi
 fi
 
 echo "==> Step 2/8: starting postgres, redis"

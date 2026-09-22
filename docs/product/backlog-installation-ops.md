@@ -177,19 +177,19 @@ keys `.env.example` now defines, so that I find out at bootstrap time rather tha
 failure in whichever service silently falls back to a default or fails to start.
 
 Acceptance criteria:
-- [ ] After `BOOT-001`'s existence check (this story only runs when `infra/.env` already exists — a freshly
+- [x] After `BOOT-001`'s existence check (this story only runs when `infra/.env` already exists — a freshly
   auto-provisioned one is by definition not drifted), the script compares the set of variable *names*
   (left-hand side of each `KEY=value` line) present in `infra/.env.example` against those present in
   `infra/.env`, and prints a warning listing any keys present in the example file but missing from the
   real one.
-- [ ] **Warn only, never auto-edit `infra/.env`** — this story does not append missing keys, does not
+- [x] **Warn only, never auto-edit `infra/.env`** — this story does not append missing keys, does not
   merge files, and does not change any existing value; an operator's own file is never silently rewritten,
   the same "never destroy operator-set state" discipline `BOOT-001` already commits to.
-- [ ] A missing-keys warning does not fail the script (non-zero exit) — it's advisory only, since a
+- [x] A missing-keys warning does not fail the script (non-zero exit) — it's advisory only, since a
   missing key might be genuinely optional (e.g. `NARRATIVE_API_URL`, already documented as "unset by
   default" in normal operation) and the script cannot distinguish "optional and intentionally unset" from
   "required and forgotten" without a second layer of metadata this story does not introduce.
-- [ ] Both scripts implement this identically in structure, same as every other story in this backlog.
+- [x] Both scripts implement this identically in structure, same as every other story in this backlog.
 
 Rationale for priority: Could — a real, disclosed nicety (fits the "reliably end up correctly configured"
 ask) but lower-stakes than `BOOT-001`/`BOOT-002`: an operator hitting drift today gets a real, if less
