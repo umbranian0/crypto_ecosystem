@@ -211,7 +211,16 @@ def test_trend_consistency_indicator_renders_correct_ratio(monkeypatch) -> None:
     assert "Beat Naive0 in 1 of 2 completed runs" in response.text
 
 
-def test_trend_consistency_indicator_no_group_selected_shows_no_data(monkeypatch) -> None:
+def test_trend_no_group_selected_prompts_instead_of_claiming_no_runs(monkeypatch) -> None:
+    """UAT finding (2026-09-22): landing on /runs/trend told a tenant with three
+    completed runs "No completed runs matched this selection." Nothing is
+    selected on arrival, so nothing has matched or failed to match yet -- the
+    message read as "your data is missing" when the real state is "pick one".
+
+    This test previously asserted the misleading string, so the suite pinned the
+    defect in place rather than catching it; only looking at the rendered page
+    surfaced it. The assertion is inverted here deliberately.
+    """
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json=RUNS_BODY)
 
@@ -223,8 +232,27 @@ def test_trend_consistency_indicator_no_group_selected_shows_no_data(monkeypatch
     response = client.get("/runs/trend")
 
     assert response.status_code == 200
-    assert "No completed runs matched this selection." in response.text
+    assert "No completed runs matched this selection." not in response.text
+    assert "Select a dataset/horizon configuration above" in response.text
     assert "0 of 0" not in response.text
+
+
+def test_trend_selected_group_with_no_completed_runs_still_says_so(monkeypatch) -> None:
+    """The complement: once a group IS selected and genuinely has no completed
+    runs, saying so is correct and must not regress into the generic prompt.
+    """
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=RUNS_BODY)
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get("/runs/trend?dataset_id=no-such-dataset&horizon=99")
+
+    assert response.status_code == 200
+    assert "Select a dataset/horizon configuration above" not in response.text
 
 
 def test_trend_zero_matching_group_renders_no_chart(monkeypatch) -> None:

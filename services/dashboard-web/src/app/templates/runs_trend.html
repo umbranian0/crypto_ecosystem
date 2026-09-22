@@ -41,8 +41,15 @@ already-computed validation results only, never an indication of what a future r
     (majority of splits with a "better" DM verdict against Naive0, among runs with at least one
     split whose DM statistic is defined). This is a plain count of already-completed, already-tested
     runs -- not a statement about how any future run would turn out.
-{% else %}
+{% elif selected_group %}
     No completed runs matched this selection.
+{% else %}
+    {# UAT finding (2026-09-22): this branch previously fell through to "No completed
+       runs matched this selection" before the user had selected anything, telling a
+       tenant with completed runs that they had none. Nothing is selected here, so
+       nothing has been matched or failed to match yet. #}
+    Select a dataset/horizon configuration above to see how its results have varied
+    across completed runs.
 {% endif %}
 </p>
 

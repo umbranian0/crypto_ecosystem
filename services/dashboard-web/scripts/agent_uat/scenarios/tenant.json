@@ -94,6 +94,24 @@
       "screenshot": true
     },
     {
+      "name": "leakage_demo",
+      "action": "get",
+      "path": "/help/leakage-demo",
+      "screenshot": true
+    },
+    {
+      "name": "cross_run_trend",
+      "action": "get",
+      "path": "/runs/trend",
+      "screenshot": true
+    },
+    {
+      "name": "assistant",
+      "action": "get",
+      "path": "/assistant",
+      "screenshot": true
+    },
+    {
       "name": "logout",
       "action": "post",
       "path": "/logout",
