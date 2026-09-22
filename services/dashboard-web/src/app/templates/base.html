@@ -21,8 +21,12 @@
                 <a href="/datasets" class="{{ 'active' if request.url.path == '/datasets' else '' }}">Datasets</a>
                 <a href="/assistant" class="{{ 'active' if request.url.path == '/assistant' else '' }}">Assistant</a>
                 <a href="/help/concepts" class="{{ 'active' if request.url.path == '/help/concepts' else '' }}">Concepts</a>
+                {# UAT finding (2026-09-22): with both a tenant and an operator session
+                   active, these two navs each rendered a button labelled exactly "Log out",
+                   stacked and indistinguishable, ending different sessions. Each now names
+                   what it ends. #}
                 <form method="post" action="/logout" class="logout-form">
-                    <button type="submit" class="nav-logout">Log out</button>
+                    <button type="submit" class="nav-logout">Log out (tenant)</button>
                 </form>
             </nav>
             {% endif %}
@@ -32,7 +36,7 @@
                 <a href="/settings/environment" class="{{ 'active' if request.url.path == '/settings/environment' else '' }}">Environment</a>
                 <a href="/monitoring" class="{{ 'active' if request.url.path == '/monitoring' else '' }}">Monitoring</a>
                 <form method="post" action="/operator-logout" class="logout-form">
-                    <button type="submit" class="nav-logout">Log out</button>
+                    <button type="submit" class="nav-logout">Log out (operator)</button>
                 </form>
             </nav>
             {% endif %}

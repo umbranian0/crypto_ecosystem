@@ -9,6 +9,8 @@ cookies are present.
 
 from __future__ import annotations
 
+import re
+
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -89,3 +91,21 @@ def test_operator_nav_links_present() -> None:
     assert 'href="/settings/tenants"' in response.text
     assert 'href="/settings/environment"' in response.text
     assert 'href="/monitoring"' in response.text
+
+def test_logout_buttons_name_which_session_they_end() -> None:
+    """UAT finding (2026-09-22): with both a tenant and an operator session
+    active, the two navs each rendered a button labelled exactly "Log out" --
+    stacked, visually identical, ending different sessions. Whatever the
+    wording, the two labels must never be identical.
+    """
+    from pathlib import Path
+
+    base_html = (
+        Path(__file__).resolve().parents[1] / "src" / "app" / "templates" / "base.html"
+    ).read_text(encoding="utf-8")
+
+    labels = re.findall(r'<button type="submit" class="nav-logout">([^<]+)</button>', base_html)
+
+    assert len(labels) == 2, f"expected one logout button per nav, found {labels}"
+    assert len(set(labels)) == 2, f"the two logout buttons share a label: {labels}"
+    assert all(label.strip() for label in labels)
