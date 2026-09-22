@@ -384,6 +384,24 @@ fieldset {
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
   background-color: rgba(139, 123, 255, 0.03);
+  /* UAT finding (live pass, 2026-09-22): a fieldset defaults to
+     `min-width: min-content`, so a wide child stretches it rather than being
+     constrained by it. The stored-dataset <select> carries option labels up to
+     ~102 chars (source + full date range + row count), which pushed that one
+     fieldset 168px past the 560px form above -- visibly breaking out of the
+     panel. Only reproducible once a tenant actually has ingested datasets,
+     which is why an empty-tenant render never showed it. */
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+/* Same finding: cap the control itself, so a long <option> can never drive the
+   layout. The option text is not shortened -- source, range and row count are
+   all real information a tenant uses to pick a dataset. */
+select {
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 fieldset label:first-of-type {
