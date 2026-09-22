@@ -16,6 +16,7 @@
 set -e
 
 script_dir="$(cd "$(dirname "$0")" && pwd)"
+repo_root="$(dirname "$script_dir")"
 compose_file="$script_dir/docker-compose.yml"
 
 fail() {
@@ -46,6 +47,29 @@ wait_for_service_health() {
         fi
         sleep 2
     done
+}
+
+# BOOT-002 (extended): "healthy" only means the process answers. It does not mean
+# the process is running the code you are looking at. A live UAT pass on 2026-09-21
+# drove a stack whose every service reported healthy while serving a six-day-old
+# image -- `docker compose build` had been failing since Sprint 50, so `up -d`
+# silently reused stale images and nothing anywhere said so. This warns when a
+# running service's image predates its own source. Warning only: it never rebuilds,
+# never blocks, and a stale image is legitimate if you meant to pin one.
+warn_if_image_predates_source() {
+    name="$1"
+    created="$(docker image inspect "infra-${name}" --format '{{.Created}}' 2>/dev/null)"
+    [ -n "$created" ] || return 0   # never built locally; nothing to compare against
+    image_epoch="$(date -d "$created" +%s 2>/dev/null)"
+    [ -n "$image_epoch" ] || return 0
+
+    newer="$(find "$repo_root/services/$name/src" "$repo_root/libs"         -type f -name '*.py' -newermt "@$image_epoch" -print -quit 2>/dev/null)"
+    if [ -n "$newer" ]; then
+        age_days=$(( ( $(date +%s) - image_epoch ) / 86400 ))
+        echo "    WARNING: ${name}'s image was built ${age_days} day(s) ago, but its source has"
+        echo "      changed since -- you are testing older code than you have checked out."
+        echo "      Rebuild with: docker compose -f $compose_file up -d --build $name"
+    fi
 }
 
 echo "==> Step 1/8: checking for infra/.env"
@@ -118,6 +142,9 @@ wait_for_service_health "validation-service" "$validation_service_port"
 wait_for_service_health "gateway-api" "$gateway_api_port"
 wait_for_service_health "dashboard-web" "$dashboard_port"
 echo "    all services healthy"
+warn_if_image_predates_source "validation-service"
+warn_if_image_predates_source "gateway-api"
+warn_if_image_predates_source "dashboard-web"
 
 echo "==> Step 8/8: opening the setup wizard"
 opened=0

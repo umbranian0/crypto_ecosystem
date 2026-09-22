@@ -16,6 +16,7 @@
 $ErrorActionPreference = "Stop"
 
 $scriptDir = $PSScriptRoot
+$repoRoot = Split-Path $PSScriptRoot -Parent
 $composeFile = Join-Path $scriptDir "docker-compose.yml"
 
 function Fail-Step {
@@ -66,6 +67,33 @@ function Wait-ForServiceHealth {
             Fail-Step "step 7 ($Name did not become healthy within $maxAttempts attempts; last status: '$lastStatus')"
         }
         Start-Sleep -Seconds 2
+    }
+}
+
+# BOOT-002 (extended): same stale-image warning bootstrap.sh prints, same structure.
+# "Healthy" only means the process answers; it does not mean the process is running
+# the code you are looking at. See bootstrap.sh's copy of this note for the incident
+# that prompted it.
+function Warn-IfImagePredatesSource {
+    param([string]$Name)
+
+    $created = docker image inspect "infra-$Name" --format '{{.Created}}' 2>$null
+    if (-not $created) { return }   # never built locally; nothing to compare against
+    try { $imageTime = [datetime]::Parse($created) } catch { return }
+
+    $sourceDirs = @(
+        (Join-Path $repoRoot "services/$Name/src"),
+        (Join-Path $repoRoot "libs")
+    ) | Where-Object { Test-Path $_ }
+    if (-not $sourceDirs) { return }
+
+    $newer = Get-ChildItem -Path $sourceDirs -Recurse -File -Filter *.py -ErrorAction SilentlyContinue |
+        Where-Object { $_.LastWriteTime -gt $imageTime } | Select-Object -First 1
+    if ($newer) {
+        $ageDays = [int]((Get-Date) - $imageTime).TotalDays
+        Write-Host "    WARNING: $Name's image was built $ageDays day(s) ago, but its source has"
+        Write-Host "      changed since -- you are testing older code than you have checked out."
+        Write-Host "      Rebuild with: docker compose -f $composeFile up -d --build $Name"
     }
 }
 
@@ -155,6 +183,9 @@ Wait-ForServiceHealth -Name "validation-service" -Port $validationServicePort
 Wait-ForServiceHealth -Name "gateway-api" -Port $gatewayApiPort
 Wait-ForServiceHealth -Name "dashboard-web" -Port $dashboardPort
 Write-Host "    all services healthy"
+Warn-IfImagePredatesSource -Name "validation-service"
+Warn-IfImagePredatesSource -Name "gateway-api"
+Warn-IfImagePredatesSource -Name "dashboard-web"
 
 Write-Host "==> Step 8/8: opening the setup wizard"
 $opened = $false

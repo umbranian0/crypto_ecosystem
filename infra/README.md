@@ -112,6 +112,22 @@ message naming the failed step) rather than silently continuing:
    fails loudly (non-zero exit), naming that specific service — never a generic message, and the
    script never proceeds to the browser-open step below in that case. Prints "all services healthy"
    once every service in this step has passed.
+
+   **Stale-image warning (same step).** Passing this health check means each service answers on its
+   port. It does **not** mean the service is running the code in your working tree. After the health
+   checks pass, the script compares each service's local image build time against the mtime of that
+   service's own `src/` and of `libs/`, and warns when the image is older -- naming the exact
+   `docker compose ... up -d --build` command to fix it. Warning only: it never rebuilds for you and
+   never fails the run, since pinning an older image is a legitimate thing to do deliberately.
+
+   This exists because of a real incident on 2026-09-21: a full browser-driven UAT pass ran against a
+   stack where every service reported healthy while serving a **six-day-old image**. `docker compose
+   build` had been failing since Sprint 50 for `dashboard-web` and `reporting-service` (both
+   Dockerfiles copied only `libs/common` while their `pyproject.toml` also declared
+   `naive_first_ai_assist` at `libs/ai_assist`), so `up -d` silently reused whatever image already
+   existed. The UAT exercised code predating every feature it was supposed to be testing, and nothing
+   anywhere said so -- the Dockerfile bug is fixed, but "healthy" meaning "answers" rather than
+   "current" is the more durable trap.
 8. **(`SETUP-004`)** Open the default browser at `http://localhost:${DASHBOARD_WEB_PORT:-8004}/` —
    bash: `xdg-open`/`open`, whichever exists (platform-conditional); PowerShell: `Start-Process`. On an
    environment with no way to launch a browser (e.g. a headless CI runner), this **prints the URL

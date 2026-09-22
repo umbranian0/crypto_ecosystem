@@ -1373,6 +1373,7 @@ section (`BOOT-001` establishes the new 0–7 step baseline `BOOT-002` needs to 
 |---|---|---|---|---|
 | [BOOT-001](BOOT-001.md) | Auto-provision `infra/.env` from `infra/.env.example` when missing (new step 0, renumbers 1–6 to 2–7) | infra | none | done |
 | [BOOT-002](BOOT-002.md) | Post-startup health verification for validation-service/gateway-api/dashboard-web, not just postgres (new step before browser-open, final count 8) | infra | BOOT-001 (file-region sequencing only) | done |
+| BOOT-002-01 | Extends BOOT-002's step 7 with a stale-image warning: a service can pass a health check while serving an image older than its own source, which is exactly what happened during the 2026-09-21 UAT pass | infra | BOOT-002 | done |
 
 **Outcome**: `infra/bootstrap.sh` gained `wait_for_service_health` (bash function, `name`/`port`
 args) and `infra/bootstrap.ps1` gained `Wait-ForServiceHealth` (PowerShell function, `-Name`/`-Port`
