@@ -3177,3 +3177,35 @@ constant, confirmed the right test fails, reverted) rather than only re-running 
    `naive-first-dashboard-web` container now returns `200` with the real rendered page (confirmed via
    response body, not just the status code) -- closing the gap QA flagged above, where that same route
    404'd on the live container despite the code fix already being complete and test-covered.
+
+## Sprint 58 (docs/sprints/sprint-58.md, backlog: docs/product/backlog-trust-and-admin-ops.md)
+
+`ADMIN-002` (operator action audit log) and `ADMIN-003` (surface why a crawl failed) -- zero file overlap
+between the two stories, no dependency on each other (see sprint-58.md's own file-overlap section). Each
+story spans two modules and is split into two module-scoped tickets, same `TRUST-001`-style `-01`/`-02`
+split Sprint 57 established: `ADMIN-002-01` (gateway-api) / `ADMIN-002-02` (dashboard-web), `ADMIN-003-01`
+(ingestion-service) / `ADMIN-003-02` (dashboard-web). All four tickets dispatched fully in parallel --
+each pair's dashboard-web half builds against a contract fixed in its own ticket file rather than waiting
+on the backend half's real code, and the two dashboard-web tickets touch fully disjoint files
+(`settings_audit_log.py`/new template/`base.html` nav vs. `_crawl_status_panel.html` only).
+
+| Ticket | Story | Module | Depends on | Status |
+|---|---|---|---|---|
+| [ADMIN-002-01](ADMIN-002-01.md) | `identity.operator_audit_log` table (migration 0006, no RLS -- disclosed design decision), write-on-success wiring on `POST /tenants`/`POST .../revoke`, new `GET /operator-audit-log` | gateway-api | none | done |
+| [ADMIN-002-02](ADMIN-002-02.md) | Read-only `/settings/audit-log` Settings page + operator-nav link | dashboard-web | none (contract-only) | done |
+| [ADMIN-003-01](ADMIN-003-01.md) | `crawl_runs.failure_detail` column (migration 0009); fixes **both** real failure write sites -- `connectors/base.py`'s `run_incremental` (CLI path, the sprint plan's cited site) and `routers/connectors.py`'s `_execute_crawl` (the real live-API path, found during this ticket's own independent Analysis, not named in the sprint plan) | ingestion-service | none | done |
+| [ADMIN-003-02](ADMIN-003-02.md) | `_crawl_status_panel.html` renders `failure_detail` next to the status cell when `status == "failed"` | dashboard-web | none (contract-only) | done |
+
+**Sprint 58 status: all four tickets done, Tech-Lead-verified 2026-09-25.** All four dev agents dispatched
+fully in parallel (synchronous, `run_in_background: false`, per this platform's standing instruction).
+Tech Lead personally read every diff and re-ran each affected service's full test suite: `gateway-api`
+233 passed / 1 pre-existing unrelated failure (`test_runs_routing.py`, reproduced identically on a clean
+`main` stash with none of this sprint's changes applied -- not caused by this sprint); `ingestion-service`
+167 passed / 0 failed; `dashboard-web` 422 passed / 0 failed / 8 deselected (after a Tech Lead-applied
+one-line word-boundary-regex fix to a pre-existing `test_crawl_progress.py` banned-word-scan false
+positive that this sprint's required `failure_detail` field name exposed -- see `ADMIN-003-02.md`'s
+Status line for the full record). `ADMIN-003-01`'s own Analysis independently found and fixed a real gap
+in the sprint plan's own citation: the plan named only `connectors/base.py`'s CLI-only `run_incremental`
+as the failure write site, but the actual live/API-triggered crawl path (`routers/connectors.py`'s
+`_execute_crawl`) is a second, separate implementation with its own identical gap -- both are now fixed.
+QA gate raised next per this platform's standing rule.

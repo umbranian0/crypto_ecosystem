@@ -458,23 +458,29 @@ correlation id and a JSON shape, but log lines are not a durable, queryable audi
 guarantee, no schema, not scoped to "privileged action" specifically) — and no `audit_log`-shaped table
 exists anywhere in `identity`/`gateway-api`'s schema today.
 
+**Status: done.** `gateway-api` half (`ADMIN-002-01`, see `docs/tickets/ADMIN-002-01.md`) — table,
+write-on-success wiring, and `GET /operator-audit-log` all landed. `dashboard-web` half (`ADMIN-002-02`,
+see `docs/tickets/ADMIN-002-02.md`) — read-only `/settings/audit-log` Settings page landed against the
+contract `ADMIN-002-01` fixed. Both Tech-Lead-verified done, 2026-09-25.
+
 Acceptance criteria:
-- [ ] A new `identity.operator_audit_log` table (`gateway-api` owns the `identity` schema per
+- [x] A new `identity.operator_audit_log` table (`gateway-api` owns the `identity` schema per
   implementation-plan.md section 5) with, at minimum: `id`, `action` (e.g. `"tenant.create"`,
   `"api_key.revoke"`), `target_tenant_id` (nullable, the tenant acted upon), `at` (timestamp),
   `correlation_id` (joins back to `OPS-006`'s existing structured logs for full request context) — never
   the operator token itself, hashed or otherwise (there is only one shared token today, `SETUP-010`;
-  logging it, even hashed, adds no value and is a needless secret-adjacent surface).
-- [ ] Every existing operator-authenticated mutating endpoint (`POST /tenants`, the API-key revoke
+  logging it, even hashed, adds no value and is a needless secret-adjacent surface). Done, `ADMIN-002-01`.
+- [x] Every existing operator-authenticated mutating endpoint (`POST /tenants`, the API-key revoke
   endpoint, both `SETUP-011`) writes one row on success — write-on-success only in this story's scope; a
   rejected/`403` attempt is already captured by `OPS-006`'s existing structured logs and is not duplicated
-  into this table (a deliberate, disclosed scope line, not an oversight).
-- [ ] A new operator-authenticated `GET /operator-audit-log` (paginated, same `limit`/`offset` convention
+  into this table (a deliberate, disclosed scope line, not an oversight). Done, `ADMIN-002-01`.
+- [x] A new operator-authenticated `GET /operator-audit-log` (paginated, same `limit`/`offset` convention
   `GET /runs`/`GET /tenants` already use) is added, and surfaced read-only in `dashboard-web`'s Settings
   area (a new, small page, or a section on an existing one — Tech Lead's call), matching `SETUP-012`'s
-  existing "operator session required" gate.
-- [ ] Positioning/security check: this log is additive audit trail only — it introduces no new way to
-  mutate tenant state, and no raw secret (API key, operator token) ever appears in a row.
+  existing "operator session required" gate. Done: endpoint by `ADMIN-002-01`, page (`/settings/audit-log`)
+  by `ADMIN-002-02`, both Tech-Lead-verified.
+- [x] Positioning/security check: this log is additive audit trail only — it introduces no new way to
+  mutate tenant state, and no raw secret (API key, operator token) ever appears in a row. Done, `ADMIN-002-01`.
 
 Rationale for priority: Should — directly closes a real credibility gap for a platform whose entire value
 proposition is "we audit rigorously" (`da-tese-ao-produto.md` section 2.2) while having no persisted trail
@@ -498,20 +504,23 @@ anywhere. This story closes that specific, real gap — it does not build the br
 quality-gate subsystem, which remains unscoped (and would need its own trigger discussion, since
 coverage/gap-detection heuristics are new capability, not a visibility fix).
 
+**Status: done.** `ingestion-service` half (`ADMIN-003-01`) and `dashboard-web` half (`ADMIN-003-02`) both
+Tech-Lead-verified done, 2026-09-25.
+
 Acceptance criteria:
-- [ ] `ingestion.crawl_runs` gains a nullable `failure_detail` column (new migration, same additive
-  precedent `validation-service`'s `runs.failure_reason` already established for exactly this shape of
-  problem) — populated with `str(exc)` (or a curated message where the connector already raises a
-  descriptive exception) at the same call site that already sets `status="failed"`.
-- [ ] `GET /connectors/{source}/status` includes `failure_detail` (nullable, `null` for any non-`"failed"`
-  status) in its response.
-- [ ] `dashboard-web`'s crawl-status panel (`DASH-109`/`115`) renders `failure_detail` when present, next
-  to the existing status badge — no new page, extends the existing panel.
-- [ ] No raw credential, connection string, or stack trace is ever placed in `failure_detail` — same
-  discipline every other user-facing error message in this platform already follows (`GET /health`'s
-  generic `"database unreachable"` convention is the model to follow, adapted to be more specific here
-  since this is operator/tenant-facing troubleshooting context, not a public unauthenticated endpoint — the
-  Tech Lead should define the exact allowed message shape per connector at ticket time).
+- [x] `ingestion.crawl_runs` gains a nullable `failure_detail` column (migration `0009`,
+  `docs/tickets/ADMIN-003-01.md`) — populated by a safe-by-construction helper
+  (`connectors.base.describe_crawl_failure`, source name + exception class name only, never
+  `str(exc)`/args) at **both** real call sites that set `status="failed"`: `connectors/base.py`'s
+  `run_incremental` (CLI-only path) and `routers/connectors.py`'s `_execute_crawl` (the real, live-API
+  path a prior sprint-plan citation had missed — see that ticket's own Analysis section).
+- [x] `GET /connectors/{source}/status` includes `failure_detail` (nullable, `null` for any non-`"failed"`
+  status) in its response (`docs/tickets/ADMIN-003-01.md`).
+- [x] `dashboard-web`'s crawl-status panel (`DASH-109`/`115`) renders `failure_detail` when present, next
+  to the existing status badge — no new page, extends the existing panel. Done, `ADMIN-003-02`.
+- [x] No raw credential, connection string, or stack trace is ever placed in `failure_detail` — enforced
+  by construction (`describe_crawl_failure` never reads the caught exception's message/args), verified by
+  `test_describe_crawl_failure_never_includes_exception_message` (`docs/tickets/ADMIN-003-01.md`).
 
 Rationale for priority: Should — real, concrete, narrowly-scoped visibility gap with an existing
 column-precedent to follow; explicitly does not overreach into the unbuilt, larger "data quality gate"
