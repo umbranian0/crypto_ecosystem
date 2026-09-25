@@ -22,6 +22,17 @@ GW-005/006 -- this ticket only defines the column). There is no
 `key_plaintext`/`raw_key` column of any kind anywhere in this model -- the
 raw key is never persisted, per backlog AC3. `revoked_at` is nullable:
 revocation is a flag set on the row (GW-004/GW-010), not a delete.
+
+`operator_audit_log` (ADMIN-002-01) is a fourth, append-only table: a
+durable, queryable record of privileged operator actions (`tenant.create`,
+`api_key.revoke`), joinable back to OPS-006's existing structured logs via
+`correlation_id` (the same contextvar-sourced id, not a second id-minting
+mechanism). There is no `key_hash`/raw-token/hashed-token column anywhere on
+this table -- see `docs/product/backlog-trust-and-admin-ops.md`'s ADMIN-002
+AC: logging the one shared `OPERATOR_TOKEN`, even hashed, adds no value and
+is a needless secret-adjacent surface. `target_tenant_id` is nullable: not
+every future action type necessarily targets one tenant, even though both of
+today's two actions do set it.
 """
 
 from __future__ import annotations
@@ -67,3 +78,17 @@ class ApiKey(Base):
     key_hash: Mapped[str] = mapped_column(String, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class OperatorAuditLog(Base):
+    __tablename__ = "operator_audit_log"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    action: Mapped[str] = mapped_column(String, nullable=False)
+    # Nullable: not every future action type necessarily targets one tenant
+    # (AC's own "nullable" wording) -- both of today's two actions do set it.
+    target_tenant_id: Mapped[str | None] = mapped_column(
+        String, ForeignKey("tenants.id"), nullable=True
+    )
+    correlation_id: Mapped[str] = mapped_column(String, nullable=False)
+    at: Mapped[datetime] = mapped_column(DateTime, nullable=False)

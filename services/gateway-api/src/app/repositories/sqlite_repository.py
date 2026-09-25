@@ -36,11 +36,16 @@ from datetime import datetime
 from uuid import uuid4
 
 from naive_first_common.db import build_engine
-from sqlalchemy import Engine, select, update
+from sqlalchemy import Engine, func, select, update
 from sqlalchemy.orm import Session
 
-from app.models import ApiKey, Base, Tenant, User
-from app.repositories.interfaces import ApiKeyRecord, TenantRecord, UserRecord
+from app.models import ApiKey, Base, OperatorAuditLog, Tenant, User
+from app.repositories.interfaces import (
+    ApiKeyRecord,
+    OperatorAuditLogRecord,
+    TenantRecord,
+    UserRecord,
+)
 
 
 def _tenant_to_record(tenant: Tenant) -> TenantRecord:
@@ -64,6 +69,16 @@ def _api_key_to_record(api_key: ApiKey) -> ApiKeyRecord:
         key_hash=api_key.key_hash,
         created_at=api_key.created_at,
         revoked_at=api_key.revoked_at,
+    )
+
+
+def _operator_audit_log_to_record(entry: OperatorAuditLog) -> OperatorAuditLogRecord:
+    return OperatorAuditLogRecord(
+        id=entry.id,
+        action=entry.action,
+        target_tenant_id=entry.target_tenant_id,
+        correlation_id=entry.correlation_id,
+        at=entry.at,
     )
 
 
@@ -184,3 +199,42 @@ class SQLiteApiKeyRepository:
                 select(ApiKey).where(ApiKey.tenant_id == tenant_id)
             ).scalars().all()
             return [_api_key_to_record(api_key) for api_key in api_keys]
+
+
+class SQLiteOperatorAuditLogRepository:
+    """SQLite implementation of `OperatorAuditLogRepository` (ADMIN-002-01).
+
+    Tenant-agnostic by construction (interfaces.py's docstring): this
+    backend has no RLS concept at all, so `record`/`list_entries` are
+    naturally already unfiltered by tenant.
+    """
+
+    def __init__(self, db_path: str, engine: Engine | None = None) -> None:
+        self._engine = engine if engine is not None else build_engine(f"sqlite:///{db_path}", Base)
+
+    def record(
+        self, action: str, target_tenant_id: str | None, correlation_id: str
+    ) -> OperatorAuditLogRecord:
+        entry = OperatorAuditLog(
+            id=uuid4().hex,
+            action=action,
+            target_tenant_id=target_tenant_id,
+            correlation_id=correlation_id,
+            at=datetime.utcnow(),
+        )
+        with Session(self._engine) as session:
+            session.add(entry)
+            session.commit()
+            session.refresh(entry)
+            return _operator_audit_log_to_record(entry)
+
+    def list_entries(self, limit: int, offset: int) -> tuple[list[OperatorAuditLogRecord], int]:
+        with Session(self._engine) as session:
+            entries = session.execute(
+                select(OperatorAuditLog)
+                .order_by(OperatorAuditLog.at.desc())
+                .limit(limit)
+                .offset(offset)
+            ).scalars().all()
+            total = session.execute(select(func.count()).select_from(OperatorAuditLog)).scalar_one()
+            return [_operator_audit_log_to_record(entry) for entry in entries], total

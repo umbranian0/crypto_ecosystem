@@ -52,6 +52,21 @@ re-stamped with a new timestamp.
 `scripts/revoke_api_key.py` are unchanged by this ticket and still work --
 they and this router are two separate callers of the same underlying
 `provision()`/`revoke_key()` functions, not two competing implementations.
+
+**Operator audit log (ADMIN-002-01)**: `create_tenant`/`revoke_api_key`
+each write one `operator_audit_log` row (via `OperatorAuditLogRepositoryDep`,
+`app.repositories.interfaces.OperatorAuditLogRepository`) on every
+`201`/`200` response, right before the handler's own `return` -- after the
+underlying mutation has already succeeded. `revoke_api_key` writes
+unconditionally on every 200, **including the already-revoked no-op
+branch**: "on success" is read here as "on 200 response" (the request the
+operator made succeeded either way), not "state actually changed" -- the
+only other outcome, `404`, never reaches this line at all. `correlation_id`
+is sourced from `naive_first_common.logging.correlation_id_var` (OPS-006's
+existing contextvar, already set by `CorrelationIdMiddleware` before any
+handler runs) -- reused, not a second id-minting mechanism, so a row can be
+joined back to OPS-006's structured logs for the same request. `list_tenants`
+(a read) is unchanged -- writes only, per the backlog AC's own scope line.
 """
 
 from __future__ import annotations
@@ -61,8 +76,14 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from naive_first_common.logging import correlation_id_var
+
 from app.dependencies.operator_auth import get_authenticated_operator
-from app.dependencies.repositories import ApiKeyRepositoryDep, TenantRepositoryDep
+from app.dependencies.repositories import (
+    ApiKeyRepositoryDep,
+    OperatorAuditLogRepositoryDep,
+    TenantRepositoryDep,
+)
 from app.provisioning import provision
 
 router = APIRouter()
@@ -121,9 +142,11 @@ def create_tenant(
     body: TenantCreateRequest,
     tenant_repository: TenantRepositoryDep,
     api_key_repository: ApiKeyRepositoryDep,
+    audit_log_repository: OperatorAuditLogRepositoryDep,
     _operator: None = Depends(get_authenticated_operator),
 ) -> TenantCreateResponse:
     tenant, raw_key = provision(body.tenant_name, tenant_repository, api_key_repository)
+    audit_log_repository.record("tenant.create", tenant.id, correlation_id_var.get())
     return TenantCreateResponse(tenant_id=tenant.id, tenant_name=tenant.name, api_key=raw_key)
 
 
@@ -138,6 +161,7 @@ def revoke_api_key(
     tenant_id: str,
     key_id: str,
     api_key_repository: ApiKeyRepositoryDep,
+    audit_log_repository: OperatorAuditLogRepositoryDep,
     _operator: None = Depends(get_authenticated_operator),
 ) -> RevokeApiKeyResponse:
     keys = api_key_repository.list_api_keys(tenant_id)
@@ -150,4 +174,8 @@ def revoke_api_key(
         keys = api_key_repository.list_api_keys(tenant_id)
         matched = next(key for key in keys if key.id == key_id)
 
+    # Written unconditionally on every 200 (including the already-revoked
+    # no-op branch above) -- see this module's docstring, "Operator audit
+    # log (ADMIN-002-01)".
+    audit_log_repository.record("api_key.revoke", tenant_id, correlation_id_var.get())
     return RevokeApiKeyResponse(tenant_id=tenant_id, key_id=key_id, revoked_at=matched.revoked_at)

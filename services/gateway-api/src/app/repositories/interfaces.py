@@ -43,6 +43,13 @@ different reason a tenant isn't yet known at call time:
 No other method has an exception: `create_key`, `revoke_key`, `create_user`,
 and `list_api_keys` all take `tenant_id` first, since in each of those cases
 a tenant is already known by the caller.
+
+`OperatorAuditLogRepository` (ADMIN-002-01) adds a sixth and seventh
+tenant-agnostic exception, `record`/`list_entries` below -- this whole
+interface is an operator-only, cross-tenant resource (`operator_audit_log`
+has no RLS, see migration `0006`'s docstring), so there is no tenant scoping
+concept for either method to apply in the first place, not merely a
+per-method exception the way the five above are.
 """
 
 from __future__ import annotations
@@ -157,5 +164,40 @@ class ApiKeyRepository(typing.Protocol):
         does-this-key-belong-to-this-tenant lookup. `tenant_id`-first, the
         ordinary case -- unlike `get_by_hash`, the caller here already knows
         the tenant.
+        """
+        ...
+
+
+@dataclass(frozen=True)
+class OperatorAuditLogRecord:
+    """Mirrors `app.models.OperatorAuditLog`'s columns exactly."""
+
+    id: str
+    action: str
+    target_tenant_id: str | None
+    correlation_id: str
+    at: datetime
+
+
+@typing.runtime_checkable
+class OperatorAuditLogRepository(typing.Protocol):
+    """Repository for the `operator_audit_log` table (ADMIN-002-01).
+
+    Tenant-agnostic by nature (every method here is a sixth-and-seventh
+    documented exception to the tenant_id-first convention, alongside the
+    five already listed above) -- this whole interface is an operator-only,
+    cross-tenant resource; there is no tenant scoping concept for it to
+    apply.
+    """
+
+    def record(
+        self, action: str, target_tenant_id: str | None, correlation_id: str
+    ) -> OperatorAuditLogRecord: ...
+
+    def list_entries(self, limit: int, offset: int) -> tuple[list[OperatorAuditLogRecord], int]:
+        """Returns `(page, total)` -- `total` is the full unpaginated row
+        count, backing `GET /operator-audit-log`'s `{items, limit, offset,
+        total}` envelope (same shape as `GET /runs`'s existing
+        `RunListResponse`).
         """
         ...

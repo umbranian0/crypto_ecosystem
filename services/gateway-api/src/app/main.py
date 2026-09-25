@@ -19,7 +19,17 @@ from naive_first_common import CorrelationIdMiddleware, configure_structured_log
 
 from app.dependencies.diagnostics import recent_errors_handler
 from app.dependencies.repositories import HealthCheckEngineDep
-from app.routers import diagnostics, ingestion, operator, reports, runs, setup, system, tenants
+from app.routers import (
+    audit_log,
+    diagnostics,
+    ingestion,
+    operator,
+    reports,
+    runs,
+    setup,
+    system,
+    tenants,
+)
 
 # OPS-006: configure the shared JSON logging convention before the app is
 # constructed, so every log line emitted from import time onward (including
@@ -67,6 +77,10 @@ app.include_router(setup.router)
 # reasoning as setup.router/system.router above -- this router doesn't proxy
 # to a single downstream service.
 app.include_router(tenants.router)
+# ADMIN-002-01: operator-only audit-log read surface, no tags= per ARCH-007,
+# same reasoning as setup.router/system.router/tenants.router above -- this
+# router doesn't proxy to a single downstream service.
+app.include_router(audit_log.router)
 # SETUP-021: operator-only recent-errors ring-buffer surface, no tags= per
 # ARCH-007, same reasoning as setup.router/system.router/tenants.router above.
 app.include_router(diagnostics.router)

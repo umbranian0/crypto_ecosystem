@@ -66,13 +66,19 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import uuid4
 
-from sqlalchemy import Engine, select, update
+from sqlalchemy import Engine, func, select, update
 from sqlalchemy.orm import Session
 
-from app.models import ApiKey, Tenant, User
-from app.repositories.interfaces import ApiKeyRecord, TenantRecord, UserRecord
+from app.models import ApiKey, OperatorAuditLog, Tenant, User
+from app.repositories.interfaces import (
+    ApiKeyRecord,
+    OperatorAuditLogRecord,
+    TenantRecord,
+    UserRecord,
+)
 from app.repositories.sqlite_repository import (
     _api_key_to_record,
+    _operator_audit_log_to_record,
     _tenant_to_record,
     _user_to_record,
 )
@@ -241,3 +247,44 @@ class PostgresApiKeyRepository:
                 select(ApiKey).where(ApiKey.tenant_id == tenant_id)
             ).scalars().all()
             return [_api_key_to_record(api_key) for api_key in api_keys]
+
+
+class PostgresOperatorAuditLogRepository:
+    """Postgres implementation of `OperatorAuditLogRepository` (ADMIN-002-01).
+
+    Deliberately does **not** call `_set_tenant_scope` on either method --
+    per this table's no-RLS design decision (migration `0006`'s docstring),
+    the same tenant-agnostic-by-nature category as `list_tenants()`/
+    `tenant_exists()` above, except here there is no RLS policy at all to
+    even have a fallback clause for.
+    """
+
+    def __init__(self, engine: Engine) -> None:
+        self._engine = engine
+
+    def record(
+        self, action: str, target_tenant_id: str | None, correlation_id: str
+    ) -> OperatorAuditLogRecord:
+        entry = OperatorAuditLog(
+            id=uuid4().hex,
+            action=action,
+            target_tenant_id=target_tenant_id,
+            correlation_id=correlation_id,
+            at=datetime.utcnow(),
+        )
+        with Session(self._engine) as session:
+            session.add(entry)
+            session.commit()
+            session.refresh(entry)
+            return _operator_audit_log_to_record(entry)
+
+    def list_entries(self, limit: int, offset: int) -> tuple[list[OperatorAuditLogRecord], int]:
+        with Session(self._engine) as session:
+            entries = session.execute(
+                select(OperatorAuditLog)
+                .order_by(OperatorAuditLog.at.desc())
+                .limit(limit)
+                .offset(offset)
+            ).scalars().all()
+            total = session.execute(select(func.count()).select_from(OperatorAuditLog)).scalar_one()
+            return [_operator_audit_log_to_record(entry) for entry in entries], total

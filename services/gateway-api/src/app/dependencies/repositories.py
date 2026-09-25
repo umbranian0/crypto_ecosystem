@@ -43,14 +43,21 @@ from fastapi import Depends
 from sqlalchemy import Engine
 
 from app.models import Base
-from app.repositories.interfaces import ApiKeyRepository, TenantRepository, UserRepository
+from app.repositories.interfaces import (
+    ApiKeyRepository,
+    OperatorAuditLogRepository,
+    TenantRepository,
+    UserRepository,
+)
 from app.repositories.postgres_repository import (
     PostgresApiKeyRepository,
+    PostgresOperatorAuditLogRepository,
     PostgresTenantRepository,
     PostgresUserRepository,
 )
 from app.repositories.sqlite_repository import (
     SQLiteApiKeyRepository,
+    SQLiteOperatorAuditLogRepository,
     SQLiteTenantRepository,
     SQLiteUserRepository,
 )
@@ -120,6 +127,12 @@ def get_api_key_repository() -> ApiKeyRepository:
     return _select_backend(PostgresApiKeyRepository, SQLiteApiKeyRepository)
 
 
+def get_operator_audit_log_repository() -> OperatorAuditLogRepository:
+    # ADMIN-002-01: fourth repository provider, same `_select_backend` seam
+    # every other provider already shares (DRY reuse, no new branching).
+    return _select_backend(PostgresOperatorAuditLogRepository, SQLiteOperatorAuditLogRepository)
+
+
 def get_health_check_engine() -> Engine:
     # OPS-005-02: reuses the exact same URL-resolution helpers the three
     # repository providers above already call (via `_select_backend`) -- no
@@ -135,4 +148,7 @@ def get_health_check_engine() -> Engine:
 TenantRepositoryDep = Annotated[TenantRepository, Depends(get_tenant_repository)]
 UserRepositoryDep = Annotated[UserRepository, Depends(get_user_repository)]
 ApiKeyRepositoryDep = Annotated[ApiKeyRepository, Depends(get_api_key_repository)]
+OperatorAuditLogRepositoryDep = Annotated[
+    OperatorAuditLogRepository, Depends(get_operator_audit_log_repository)
+]
 HealthCheckEngineDep = Annotated[Engine, Depends(get_health_check_engine)]

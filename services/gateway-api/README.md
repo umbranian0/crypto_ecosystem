@@ -66,7 +66,7 @@ The operator presents the raw key they already have on hand (printed once at pro
 - `api_key_revoked` (`scripts/revoke_api_key.py`'s `revoke()`, **GW-010**, the revocation path this ticket instruments) -- logged after `revoke_key` succeeds. `extra`: `event_type="api_key_revoked"`, `outcome="success"`, `tenant_id=record.tenant_id`. The already-revoked no-op path logs nothing new -- there is no new revocation outcome to record.
 - `auth_failed` (`src/app/dependencies/auth.py`'s `get_authenticated_tenant`, **GW-006**) -- logged immediately before each of the four existing `401` raises (missing both headers; malformed `Authorization`; empty `X-Api-Key`; unknown-or-revoked key), never after (a raised exception never skips the log call). `extra`: `event_type="auth_failed"`, `outcome="failure"`, `tenant_id=record.tenant_id` for the one case where a real `ApiKeyRecord` was actually resolved (a revoked key) or `tenant_id=None` for the other three cases (no record was ever resolved -- there is nothing non-secret to attribute the attempt to yet).
 - **No raw keys/secrets, ever**: every log call above references only already-resolved, non-secret fields (`tenant.id`/`record.tenant_id`/a fixed literal string) -- never `raw_key`, `key_hash`, or any variable derived from the presented credential, mirroring the same "raw key never logged/printed" rule `provision_tenant.py`/`revoke_api_key.py`/`auth.py` already enforced before this ticket. Proven non-tautologically in `tests/test_audit_logging.py` -- a real `caplog` capture across all three call sites, asserting the actual raw key string used in each test case is absent from the actual captured log record's rendered output.
-- **Scope, stated explicitly**: this stays a "structured local log line" -- no log retention/shipping/aggregation to any external system is added by this ticket (that remains declined, `docs/product/backlog-operability.md` OPS-007), and this is not a compliance-grade retained audit trail until a real auditor/compliance conversation defines retention requirements.
+- **Scope, stated explicitly**: this stays a "structured local log line" -- no log retention/shipping/aggregation to any external system is added by this ticket (that remains declined, `docs/product/backlog-operability.md` OPS-007), and this is not a compliance-grade retained audit trail until a real auditor/compliance conversation defines retention requirements. **Update (`ADMIN-002-01`)**: a durable, queryable table now exists **alongside** -- not instead of -- these structured log lines: `identity.operator_audit_log` (see "Operator audit log (ADMIN-002)" above) persists one row per privileged operator action (`tenant.create`, `api_key.revoke`), joinable back to these very log lines via the same `correlation_id`. This narrows, but does not remove, the caveat above -- `operator_audit_log` only covers the two write-on-success actions `ADMIN-002-01` instruments, not the full `api_key_issued`/`api_key_revoked`/`auth_failed` event set this section describes, and still carries no retention policy of its own beyond "the row exists in the database until something explicitly deletes it" -- this is still not a compliance-grade retained audit trail in the sense a real auditor/compliance conversation would define one.
 - **Real-usage caveat, found and fixed during Sprint 17 live verification, not left implicit**:
   `provision_tenant.py`/`revoke_api_key.py` each call `naive_first_common.configure_structured_logging()`
   themselves, at the top of their own `main()` -- both run as standalone CLI processes that never
@@ -148,6 +148,53 @@ unauthenticated path onto this surface.
 - Registered in `main.py` as `app.include_router(tenants.router)`, no `tags=` -- same `ARCH-007`
   reasoning as `setup.router`/`system.router` above (this router doesn't proxy to a single downstream
   service).
+
+**Operator audit log (ADMIN-002)**: `identity.operator_audit_log` (`src/app/models.py`'s
+`OperatorAuditLog`, migration `migrations/versions/0006_create_operator_audit_log.py`) is a durable,
+queryable record of privileged operator actions, closing the "we audit rigorously but don't audit
+ourselves" gap `docs/product/backlog-trust-and-admin-ops.md`'s `ADMIN-002` story names. Covers the
+`gateway-api` half of that story (ticket `ADMIN-002-01`); the read-only `dashboard-web` Settings page
+that surfaces this data is `ADMIN-002-02`, a separate, parallel ticket against a contract fixed by this
+one.
+- **Table**: `id`, `action` (e.g. `"tenant.create"`, `"api_key.revoke"`), `target_tenant_id` (nullable --
+  not every future action type necessarily targets one tenant, though both of today's two actions do set
+  it), `correlation_id`, `at`. **No `key_hash`/raw-token/hashed-token column of any kind exists anywhere
+  on this model** -- there is only one shared `OPERATOR_TOKEN` secret today (`SETUP-010`), and logging
+  it, even hashed, would add no value and be a needless secret-adjacent surface (backlog AC).
+- **No RLS on this table, a deliberate design decision (migration `0006`'s own docstring)**:
+  `operator_audit_log` is an operator-only, cross-tenant resource, never queried under a tenant-scoped
+  session -- unlike `tenants`/`users`/`api_keys`, which are both operator- and tenant-facing in different
+  code paths. Every repository method on this table (`OperatorAuditLogRepository.record`/`list_entries`,
+  both storage backends) is deliberately tenant-agnostic and never calls `_set_tenant_scope`, the same
+  category as `list_tenants()`/`tenant_exists()` above -- so an RLS policy here would never actually be
+  exercised from a tenant angle.
+- **Write-on-success wiring**: `create_tenant` (`POST /tenants`) writes one row
+  (`action="tenant.create"`, `target_tenant_id=<new tenant's id>`) on every `201` response, right before
+  its own `return`, after `provision()` has already succeeded; `provision()` raising unhandled (the only
+  failure branch that exists today) legitimately writes no row, since nothing succeeded.
+  `revoke_api_key` (`POST /tenants/{tenant_id}/api-keys/{key_id}/revoke`) writes one row
+  (`action="api_key.revoke"`, `target_tenant_id=<tenant_id>`) on **every** `200` response, including the
+  already-revoked no-op branch -- a deliberate reading of the backlog AC's ambiguous "write-on-success"
+  wording as "on 200 response" (the operator's request succeeded either way), not "state actually
+  changed"; the only other outcome, `404`, never reaches the write call at all. Both handlers source
+  `correlation_id` from `naive_first_common.logging.correlation_id_var` (OPS-006's existing contextvar,
+  already set by `CorrelationIdMiddleware` before any handler runs) -- reused, not a second id-minting
+  mechanism, so a row joins back to OPS-006's existing structured logs for the same request. `list_tenants`
+  (a read) is unchanged -- writes only, per the backlog AC's own scope line.
+- **`GET /operator-audit-log`** (`src/app/routers/audit_log.py`, new module, same "one disjoint module per
+  distinct concern" precedent `tenants.py`/`diagnostics.py` establish): operator-gated
+  (`get_authenticated_operator`, `SETUP-010`), paginated via `limit`/`offset` query params (defaults
+  `20`/`0`, matching `GET /runs`'s own defaults/convention). Returns `{items: [{id, action,
+  target_tenant_id, correlation_id, at}], limit, offset, total}` -- `total` is the full unpaginated row
+  count, same envelope shape as `GET /runs`'s `RunListResponse`. This exact contract is what
+  `ADMIN-002-02`'s `dashboard-web` Settings page consumes.
+- Repository: `OperatorAuditLogRepository` (`repositories/interfaces.py`) follows the same three-piece
+  shape (Protocol + `SQLiteOperatorAuditLogRepository` + `PostgresOperatorAuditLogRepository`) as the
+  three existing repositories, selected via the same `_select_backend` DI seam
+  (`dependencies/repositories.py`'s `get_operator_audit_log_repository`/`OperatorAuditLogRepositoryDep`)
+  -- no new branching logic invented, DRY reuse of the helper every other provider already shares.
+- Registered in `main.py` as `app.include_router(audit_log.router)`, no `tags=` -- same `ARCH-007`
+  reasoning as `tenants.router` above (this router doesn't proxy to a single downstream service).
 
 **Fresh-install detection (SETUP-001) -- the one deliberate unauthenticated endpoint**: `GET
 /setup/status` (`src/app/routers/setup.py`) is the **only** route on this service with no auth
