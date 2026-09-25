@@ -1374,6 +1374,7 @@ section (`BOOT-001` establishes the new 0–7 step baseline `BOOT-002` needs to 
 | [BOOT-001](BOOT-001.md) | Auto-provision `infra/.env` from `infra/.env.example` when missing (new step 0, renumbers 1–6 to 2–7) | infra | none | done |
 | [BOOT-002](BOOT-002.md) | Post-startup health verification for validation-service/gateway-api/dashboard-web, not just postgres (new step before browser-open, final count 8) | infra | BOOT-001 (file-region sequencing only) | done |
 | BOOT-002-01 | Extends BOOT-002's step 7 with a stale-image warning: a service can pass a health check while serving an image older than its own source, which is exactly what happened during the 2026-09-21 UAT pass | infra | BOOT-002 | done |
+| BOOT-003 | Warns (never auto-edits) when `infra/.env` is missing keys `.env.example` now defines -- no ticket file (small, mechanical, same precedent as `INF-020`), see `infra/README.md`'s "Env drift warning" section and `docs/product/backlog-installation-ops.md`'s `BOOT-003` entry | infra | BOOT-001 (reuses its existence-check gate) | done |
 
 **Outcome**: `infra/bootstrap.sh` gained `wait_for_service_health` (bash function, `name`/`port`
 args) and `infra/bootstrap.ps1` gained `Wait-ForServiceHealth` (PowerShell function, `-Name`/`-Port`
@@ -1394,6 +1395,32 @@ the bound and fails naming the service, (c) a `503` response is treated the same
 silently accepted — see `docs/tickets/BOOT-002.md`'s Test section for the exact commands/output. The
 full-Docker-stack dry run (Test AC's third bullet) was **not** run — no working Docker daemon in this
 environment — left unchecked in the ticket file, honestly.
+
+**Ad hoc UAT hardening wave (2026-09-21/22, out of sprint, no backlog story IDs — disclosed here per the
+"docs updated as part of the work" rule rather than left untracked).** A Docker daemon became reachable
+and a real browser-driven pass ran against the live `naive-first-*` stack for the first time in several
+sprints, surfacing bugs invisible to the stub-backed `tests/e2e/` suite:
+- `services/dashboard-web/scripts/agent_uat/` added (`d84ada6`, `627194c`): a Selenium harness, separate
+  from `tests/e2e/`, that drives `dashboard-web` against the real containers and captures a screenshot +
+  rendered HTML + matching raw `gateway-api` JSON per step, with a mechanical check that every displayed
+  value traces back to the API response. `test_agent_uat_smoke.py` exercises the driver itself against the
+  existing stub fixtures so the harness has coverage without needing Docker in CI. See
+  `services/dashboard-web/scripts/agent_uat/README.md`.
+- Four real bugs the harness/pass found and fixed, each covered by a new regression test:
+  `a6229ad` (a long "Stored dataset" `<select>` option overflowed the run form's fieldset by 168px —
+  `services/dashboard-web/src/app/static/style.css`, `test_static_css.py`), `c76edc7` (`BOOT-002-01`'s
+  stale-image warning pointed operators at a bare `docker compose up -d --build`, which deploys code
+  without migrating the database — now points at bootstrap's own step 4 instead — `infra/README.md`,
+  both bootstrap scripts), `b5635c5` (two identically-labelled "Log out" buttons for the tenant vs.
+  operator session — now "Log out (tenant)"/"Log out (operator)" — `base.html`, `test_base_nav.py`), and
+  `bb4a31c` (two pages telling tenants something untrue: an unselected cross-run comparison read as "no
+  data matched" instead of "pick one"; the leakage-demo heading implied a leaky re-run exists when the
+  page's own text says none is fabricated — `runs_trend.html`, `help_leakage_demo.html`,
+  `test_runs_trend.py`).
+- See `services/dashboard-web/README.md`'s "Ad hoc UAT hardening wave" section for the dashboard-web-side
+  detail. No dedicated ticket files were written for the four bug fixes (small, self-contained,
+  fully-described-in-commit-message fixes — same no-ticket-file precedent `INF-020` set); recorded here so
+  the index stays the single source of truth for what shipped between sprints.
 
 # services/ingestion-service (INGEST-*)
 

@@ -169,7 +169,7 @@ of false-positive a "stand up a fresh instance correctly and repeatably" promise
 Depends on: none (composes with, but does not require, `BOOT-001` — the two can be built/reviewed
 independently and merged in either order; final step renumbering just needs to account for both)
 
-### BOOT-003 — Warn (don't auto-fix) on drift between an existing `infra/.env` and `infra/.env.example` [Could]
+### BOOT-003 — Warn (don't auto-fix) on drift between an existing `infra/.env` and `infra/.env.example` [Could] — **Status: done (2026-09-22, built out of sprint after a live bootstrap surfaced the exact drift this story describes), see `infra/README.md`'s "Env drift warning (BOOT-003)" section and `docs/tickets/README.md`'s Sprint 54 section — no dedicated ticket file (small, mechanical, orchestration-only change, same no-ticket-file precedent as `INF-020`)**
 
 As a returning developer whose `infra/.env` predates a variable added to `infra/.env.example` since
 (e.g. a new service's required env var), I want the bootstrap script to warn me that my `.env` is missing

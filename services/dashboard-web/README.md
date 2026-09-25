@@ -2555,3 +2555,40 @@ backend already supported and what a tenant could actually reach from this form.
   `dataset_reference` test in that file passing unmodified (proving the shared-helper extraction did not
   change `dataset_reference`'s own observable behavior). 390 unit tests passing (plus 8 `e2e`-marked
   Selenium tests excluded from the default run, unrelated to this ticket).
+
+## Ad hoc UAT hardening wave (2026-09-21/22, out of sprint)
+
+**Status: done.** No backlog story IDs — a Docker daemon became reachable and a real browser-driven pass
+ran against the live `naive-first-*` stack, surfacing bugs the stub-backed `tests/e2e/` suite cannot see.
+Recorded here per this repo's standing "docs updated as part of the work" rule; full detail in
+`docs/tickets/README.md`'s Sprint 54 section.
+
+- **`scripts/agent_uat/`** (`d84ada6`, `627194c`) — a Selenium harness, deliberately separate from
+  `tests/e2e/`, that drives this service against the real containers (not a stub `gateway-api`) and saves
+  a screenshot, the rendered HTML, and the matching raw `gateway-api` JSON per step, plus a mechanical
+  check that every value shown on screen traces back to that API response. An agent then reads the saved
+  evidence and files findings against `AGENT_BRIEF.md`. `tests/e2e/test_agent_uat_smoke.py` exercises the
+  driver itself against the existing stub fixtures, so the harness has coverage without needing Docker in
+  CI. See `scripts/agent_uat/README.md` for how to run it.
+- **Run form layout bug** (`a6229ad`) — a long "Stored dataset" `<select>` option (~100-char source/
+  date-range/row-count labels) overflowed the "Stored dataset" fieldset by 168px past the 560px form,
+  because a `<fieldset>` defaults to `min-width: min-content`. Fixed in `src/app/static/style.css`
+  (constrains the fieldset instead of shortening the option text, since all three pieces of information
+  are things a tenant picks on); regression test in `tests/test_static_css.py`. Invisible to the existing
+  suite because it cannot reproduce without a tenant that has ingested datasets, and this service's `e2e`
+  suite runs against a stub `gateway-api` with none.
+- **Ambiguous "Log out" buttons** (`b5635c5`) — `base.html` renders one nav nav for the tenant session and
+  one for the operator session; both buttons read exactly "Log out," stacked and visually identical, but
+  end different sessions. Now "Log out (tenant)" / "Log out (operator)" (`test_base_nav.py` asserts the
+  two labels differ without pinning exact wording). Also fixed the `agent_uat` operator-login scenario,
+  which matched the first `<form>` on the page and logged the tenant out instead of submitting.
+- **Two pages telling tenants something untrue** (`bb4a31c`) — `runs_trend.html`'s cross-run comparison
+  said "No completed runs matched this selection" on arrival, before a tenant has selected anything to
+  match (fixed: only shown once a selection genuinely returns nothing, `test_runs_trend.py`);
+  `help_leakage_demo.html`'s heading read "What a leaky evaluation would have reported," implying a leaky
+  re-run exists, when the section's own first sentence says none is fabricated (per the platform's
+  positioning rules) — reworded to describe the mechanism instead.
+
+No dedicated ticket files were written for the four bug fixes above (small, self-contained fixes, each
+fully described in its own commit message) — same no-ticket-file precedent `INF-020` set for a
+similarly-sized packaging fix.
