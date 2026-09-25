@@ -3247,4 +3247,20 @@ shutdown. Reverted incidental `uv.lock` regeneration from local `pytest` runs (b
 the Tech Lead's own) before finishing, per this repo's standing convention (`ADMIN-002-01` established the
 same check).
 
-**QA verdict: pending.**
+**QA verdict: GO** (independently re-verified: same 242/1 gateway-api pass count, plus a regression check
+of `dashboard-web`'s full suite -- 422 passed/8 deselected -- since it's the one adjacent module that
+consumes `GET /system/health`; rebuilt and redeployed the real `naive-first-gateway-api` Docker container
+from this diff -- found stale, image predated the commit -- then exercised the feature live end-to-end
+against the real Compose stack with a real local webhook receiver and a shortened
+`HEALTH_MONITOR_POLL_INTERVAL_SECONDS=5` override for the QA session only: all-healthy across multiple
+intervals produced zero webhook calls; stopping `naive-first-validation-service` produced exactly one real
+webhook POST with the correct `health_transition` payload; leaving it down produced zero further calls;
+restarting it produced exactly one more webhook POST for the recovery transition; killing the webhook
+receiver and forcing another transition produced a real `WARNING`-level structured log line and did not
+disrupt `gateway-api`'s own health or the polling task's continued operation; `GET /system/health`'s
+response shape was confirmed unaffected throughout). No bugs found. Two non-blocking findings, not
+requiring rework: (1) this ticket file's own "QA verdict: pending" line needed this update, routine
+housekeeping; (2) the standing QA convention's assumption that `dashboard-web` runs as a bare local
+process (not Dockerized) is stale for this environment -- unrelated to this ticket's correctness, worth a
+note to whoever maintains that convention. See the QA agent's full report (delivered to the Tech Lead)
+for detail.
