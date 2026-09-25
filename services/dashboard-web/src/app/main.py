@@ -74,6 +74,10 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 # imported above by the time this module loads. `settings_tenants`
 # (SETUP-012) also imports `_call_downstream`/`_render_error_for_status`
 # from `runs`, so it is imported alongside `settings`/`setup`.
+# `settings_audit_log` (ADMIN-002-02) also imports
+# `_call_downstream`/`_render_error_for_status` from `runs`, so it is
+# imported alongside `settings`/`setup`/`settings_tenants` for the same
+# reason.
 from app.routers import (  # noqa: E402
     assistant,
     auth,
@@ -81,6 +85,7 @@ from app.routers import (  # noqa: E402
     operator,
     runs,
     settings,
+    settings_audit_log,
     settings_environment,
     settings_tenants,
     setup,
@@ -92,6 +97,7 @@ app.include_router(operator.router)
 app.include_router(settings.router)
 app.include_router(settings_environment.router)
 app.include_router(settings_tenants.router)
+app.include_router(settings_audit_log.router)
 app.include_router(setup.router)
 app.include_router(help.router)
 app.include_router(assistant.router)

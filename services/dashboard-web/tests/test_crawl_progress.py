@@ -9,6 +9,7 @@ and tenant-session-cookie login helper -- no new mocking approach.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 
 import httpx
@@ -22,6 +23,21 @@ from app.routers.operator import _format_progress
 RAW_KEY = "crawl-progress-test-raw-api-key"
 
 _BANNED_WORDS = ("eta", "estimated completion", "time remaining", "prediction", "forecast")
+
+
+def _contains_banned_word(text: str, banned: str) -> bool:
+    """Word-boundary match, not a bare substring check (Tech Lead fix,
+    ADMIN-003-02 review): a plain `banned in text` false-positived on `"eta"`
+    matching inside `"detail"`/`"failure_detail"` once that field name
+    (required by ADMIN-003's fixed backend contract) landed in
+    `_crawl_status_panel.html`. `\\b` doesn't treat `_`/`-` as word
+    characters the way this codebase's own identifiers use them, so `\\b`
+    around a single-token banned phrase like `"eta"` still correctly matches
+    it as a standalone word (e.g. a literal "ETA" label) while no longer
+    matching the middle of `"detail"`. Multi-word banned phrases (e.g.
+    "estimated completion") are unaffected either way.
+    """
+    return re.search(rf"\b{re.escape(banned)}\b", text) is not None
 
 
 @pytest.fixture(autouse=True)
@@ -144,7 +160,7 @@ def test_format_progress_never_contains_banned_prediction_words(entry) -> None:
     result = _format_progress(entry, now).lower()
 
     for banned in _BANNED_WORDS:
-        assert banned not in result, f"banned word {banned!r} found in {result!r}"
+        assert not _contains_banned_word(result, banned), f"banned word {banned!r} found in {result!r}"
 
 
 # Route-level: blockchain.info-shaped stub (progress fields null) vs
@@ -272,4 +288,6 @@ def test_crawl_progress_column_has_no_banned_positioning_words_in_panel_template
     text = template_path.read_text(encoding="utf-8").lower()
 
     for banned in _BANNED_WORDS:
-        assert banned not in text, f"banned word {banned!r} found in _crawl_status_panel.html"
+        assert not _contains_banned_word(text, banned), (
+            f"banned word {banned!r} found in _crawl_status_panel.html"
+        )

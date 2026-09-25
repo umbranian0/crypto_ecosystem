@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Operator audit log -- dashboard-web{% endblock %}
+{% block content %}
+<h2>Audit log</h2>
+<p>Operator action history for this platform -- a read-only audit trail of operator-initiated actions
+(tenant management, API-key revocation, and similar).</p>
+<div class="table-scroll">
+<table>
+    <thead>
+        <tr>
+            <th>Action</th>
+            <th>Target tenant</th>
+            <th>At</th>
+            <th>Correlation id</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for item in items %}
+        <tr>
+            <td>{{ item.action }}</td>
+            <td>{{ item.target_tenant_id | default("—", true) }}</td>
+            <td>{{ item.at }}</td>
+            <td>{{ item.correlation_id }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+</div>
+{% if not items %}
+<p>No audit log entries yet.</p>
+{% endif %}
+<p>See also: <a href="/settings/tenants">Tenant management</a>.</p>
+{% endblock %}

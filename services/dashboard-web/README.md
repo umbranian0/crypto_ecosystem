@@ -123,11 +123,12 @@ form, runs list, an ingested-dataset browsing view (`DASH-111`), a minimal servi
 page, an operator-token session gate reusable by any `/settings/*` route (`DASH-113`), a first
 `/settings/*` route itself: a per-tenant, read-only connector credential-status lookup (`DASH-112`), an
 operator-only tenant/API-key management page (`SETUP-012`: list/create/revoke, backed by
-`gateway-api`'s `SETUP-011` tenant-admin endpoints), and two trigger actions on the monitoring page --
-"run this tenant's crawl now" per source, and "generate a report" for an existing run (`DASH-110`), both
-plain authenticated HTTP calls through `gateway-api`'s own already-existing proxies, never any
-container-runtime or OS-process control of their own. (A report viewer and degradation-alerts view are
-planned but not in scope yet -- see "Known gaps" below.)
+`gateway-api`'s `SETUP-011` tenant-admin endpoints), a read-only operator audit-log page (`ADMIN-002`:
+`/settings/audit-log`, backed by `gateway-api`'s `ADMIN-002-01` `GET /operator-audit-log`), and two
+trigger actions on the monitoring page -- "run this tenant's crawl now" per source, and "generate a
+report" for an existing run (`DASH-110`), both plain authenticated HTTP calls through `gateway-api`'s
+own already-existing proxies, never any container-runtime or OS-process control of their own. (A report
+viewer and degradation-alerts view are planned but not in scope yet -- see "Known gaps" below.)
 
 **Does not own**: any data access -- every page is rendered from calls to `gateway-api`'s public
 contract, same as an external client would use. This is deliberate: it keeps the UI honest to the same
@@ -1186,6 +1187,19 @@ criteria) with a second panel below the four-row service-status table:
   small error fragment via `_render_error_for_status` (a disclosed `502`, since that helper does not
   preserve which specific transport/status failure occurred) rather than the page's own login-prompt
   state, since `headers` is never `None` on this route.
+- **`ADMIN-003-02` (Sprint 58): failure-detail line on the status cell**. The "Last crawl status" `<td>`
+  renders `entry.failure_detail` on its own line (a `<br>` plus a `<span class="failure-detail">`,
+  visually subordinate to the status word) only when **both** `entry.status == "failed"` **and**
+  `entry.failure_detail` is truthy -- a pre-`ADMIN-003-01` row, or any row where the backend
+  legitimately has no detail, renders exactly as before (no empty line, no `"None"` text). `operator.py`
+  needed zero code change for this: `_fetch_crawl_statuses`'s existing `{"source": source,
+  **status_response.json()}` spread (DASH-109's own original design) already forwards whatever keys
+  `ingestion-service`'s `GET /connectors/{source}/status` response carries, so `failure_detail`
+  (`ADMIN-003-01`'s addition to that response) arrives on every `entry` for free once that ticket ships
+  -- the same "one call site, generic forwarding" precedent `progress_display`/`DASH-118` already
+  established for this same dict. Positioning: the detail text itself is ingestion-service-controlled
+  (redacted per `ADMIN-003-01`'s own design), so no template copy change was needed beyond the
+  conditional. See `tests/test_crawl_status_failure_detail.py`.
 
 ## Trigger actions on /monitoring (DASH-110)
 
@@ -2058,6 +2072,57 @@ route`/`test_revoke_own_session_cannot_reach_route`).
   `SETUP-003` tests re-run unmodified and pass. Full suite (`.venv\Scripts\python.exe -m pytest -q`):
   267 unit passed (up from 257), 7 deselected (the Selenium E2E suite, not re-run this ticket, not
   touched by this ticket's changes), zero regressions.
+
+## Operator audit log page (ADMIN-002)
+
+`src/app/routers/settings_audit_log.py` (new, disjoint router module -- not added to `settings.py`,
+`settings_tenants.py`, or `settings_connectors.py`, mirroring those files' own "one module per Settings
+concern" precedent) adds a single route, `GET /settings/audit-log`, gated by `OperatorTokenHeaderDep`
+(`app.dependencies.operator_session`, `DASH-113`) -- the same operator-only seam every other
+`/settings/*` route already uses. A tenant's own `session_id` cookie is never read by this gate, so it
+can never reach this route (proven by test:
+`tests/test_settings_audit_log.py::test_tenants_own_session_cannot_reach_settings_audit_log`).
+
+- **Read-only by design**: no `@router.post` route exists anywhere in `settings_audit_log.py`, and
+  `settings_audit_log.html` contains no `<form>`, `<button type="submit">`, `hx-post`, or `hx-delete` --
+  this page never writes anything. `ADMIN-002-01`'s new `identity.operator_audit_log` table is written
+  only by `gateway-api` itself, as a side effect of its own operator-gated write endpoints, never from
+  this page.
+- **Calls `ADMIN-002-01`'s new `GET /operator-audit-log` directly** -- no second audit-log surface
+  invented. Reuses `runs.py`'s `_call_downstream`/`_render_error_for_status` for the transport-failure/
+  non-200 path, the same DRY-reuse every other Settings route already established.
+- **Response contract consumed** (`ADMIN-002-01`'s fixed shape, do not deviate): `{"items": [{"id":
+  str, "action": str, "target_tenant_id": str | None, "correlation_id": str, "at": datetime}], "limit":
+  int, "offset": int, "total": int}`. `limit`/`offset` query params are forwarded to gateway-api
+  unmodified, defaulting to `20`/`0` (matching the backend's own defaults, not re-validated at this
+  layer).
+- **`settings_audit_log.html`** renders one `<table>` row per `items` entry (Action / Target tenant / At
+  / Correlation id columns); `target_tenant_id` renders as `—` when `None` (Jinja's `| default("—",
+  true)` filter, the same "honest absence" convention `operator.py`'s `_format_progress` established for
+  a `None` field, never the literal string `"None"`/`"null"`), plus a "See also" cross-link paragraph to
+  `/settings/tenants` (matching `settings_tenants.html`'s/`settings_connectors.html`'s own existing
+  cross-link convention).
+- **Nav link**: `base.html`'s operator-nav block (visible only when `operator_session_id` is set, same
+  existing gate, unchanged) gained one new link, `/settings/audit-log` ("Audit log"), alongside
+  `Tenants`/`Environment`/`Monitoring`.
+- **Positioning**: `settings_audit_log.html` describes the rendered rows as "operator action history"/
+  "audit trail" only -- never "prediction," "forecast," "signal," or "recommendation" (CLAUDE.md's core
+  positioning constraint), proven by
+  `tests/test_settings_audit_log.py::test_settings_audit_log_partial_has_no_banned_positioning_words`.
+- **Tests**: `tests/test_settings_audit_log.py` (new) covers the operator gate (no session and a
+  tenant's own `session_id` cookie both `303` to `/operator-login`), an authenticated render of 2+ mocked
+  items, the `—` placeholder for a `None` `target_tenant_id`, `limit`/`offset` forwarding, a no-
+  mutating-controls scan of `settings_audit_log.html`'s own source (not the full rendered response body
+  -- `base.html`'s pre-existing "Log out (operator)" `<form>`/`<button>` renders on every operator-gated
+  page in this service regardless of this ticket, so a whole-response-body scan would incorrectly flag
+  every such page, not just this one), and the banned-word scan.
+- **Downstream not yet merged at implementation time**: this ticket (`ADMIN-002-02`) was implemented in
+  parallel with its backend counterpart (`ADMIN-002-01`, `gateway-api`'s new `GET /operator-audit-log`) --
+  this route was built directly against `ADMIN-002-01`'s own fixed Design-section contract (restated
+  above), and every test here mocks that downstream call via `httpx.MockTransport`
+  (`tests/test_settings_tenants.py`'s established `_patch_transport` pattern, reused not reinvented),
+  never a live `gateway-api`. Confirm `ADMIN-002-01`'s merged `routers/audit_log.py` matches this
+  contract field-for-field before marking this ticket's own Review acceptance criteria done.
 
 ### Recent-errors panel on /monitoring (SETUP-021)
 

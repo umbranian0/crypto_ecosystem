@@ -36,7 +36,16 @@
    for every row, no status-based special-casing here -- `_format_progress`
    (`operator.py`) is the only place that decides between the honest-absence
    string and a real row-count/"ago" string, for every status value
-   including `queued`/`cancelling`/`cancelled`/`failed`. #}
+   including `queued`/`cancelling`/`cancelled`/`failed`.
+
+   ADMIN-003-02: the status cell's own `entry.failure_detail` line is gated
+   on both `entry.status == "failed"` and a truthy `entry.failure_detail`,
+   not `status == "failed"` alone -- a pre-`ADMIN-003-01`-migration row or
+   any row where the backend legitimately has no detail must not render an
+   empty/`None` line. `operator.py` needed no change for this: `entry` is
+   already a full spread of `ingestion-service`'s status response
+   (`_fetch_crawl_statuses`), so `failure_detail` arrives on the dict for
+   free once `ingestion-service` emits it. #}
 <div id="crawl-status-panel" hx-get="/monitoring/crawl-status-fragment" hx-trigger="load, every 5s" hx-swap="outerHTML">
 {% if crawl_statuses|length == 0 %}
 <p>No ingested sources yet.</p>
@@ -57,7 +66,12 @@
         {% for entry in crawl_statuses %}
         <tr>
             <td>{{ entry.source }}</td>
-            <td>{{ entry.status }}</td>
+            <td>
+                {{ entry.status }}
+                {% if entry.status == "failed" and entry.failure_detail %}
+                <br><span class="failure-detail">{{ entry.failure_detail }}</span>
+                {% endif %}
+            </td>
             <td>{{ entry.timestamp }}</td>
             <td>{{ entry.row_count }}</td>
             <td>{{ entry.progress_display }}</td>
