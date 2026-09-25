@@ -407,6 +407,8 @@ scoped anywhere)
 
 ### ADMIN-001 — Narrow, single-signal notification on health-state transition (re-evaluated from `SETUP-023`'s decline) [Should]
 
+**Status: done (Sprint 59).** See `docs/tickets/ADMIN-001-01.md` for the full implementation writeup.
+
 As an operator, I want a single, minimal notification (not a paging/alerting stack) fired when
 `gateway-api`'s aggregate `GET /system/health` (`SETUP-020`) flips from all-healthy to any-degraded/
 unreachable, so that I don't have to be actively looking at `/monitoring` at the exact moment something
@@ -425,19 +427,19 @@ correct escalation from "Won't" is a single one-way push on the one binary signa
 the aggregate health check still green), not a rebuilt alerting product.
 
 Acceptance criteria:
-- [ ] A single, optional `MONITORING_WEBHOOK_URL` env var (unset by default, same disclosed-optional
+- [x] A single, optional `MONITORING_WEBHOOK_URL` env var (unset by default, same disclosed-optional
   convention `NARRATIVE_API_URL` already uses) — when set, `gateway-api` POSTs a small, fixed-shape JSON
   payload (`{"event": "health_transition", "previous_status": ..., "current_status": ..., "at": ...}`) to
   that URL exactly once per transition (healthy to degraded/unreachable, and the reverse recovery
   transition), never on every poll.
-- [ ] No retry/backoff/queueing logic beyond a single best-effort POST with a short timeout — a failed
+- [x] No retry/backoff/queueing logic beyond a single best-effort POST with a short timeout — a failed
   webhook delivery is logged (`OPS-006`'s structured logging) and dropped, never blocks or crashes the
   health-check path itself.
-- [ ] Explicitly out of scope, stated in this story itself (so it cannot silently reopen `OPS-007`'s
+- [x] Explicitly out of scope, stated in this story itself (so it cannot silently reopen `OPS-007`'s
   declined scope): no escalation policy, no multiple channels/recipients, no acknowledgement/snooze
   mechanism, no paging-service integration (PagerDuty/Opsgenie/etc.) — one URL, one event shape, fire and
   forget.
-- [ ] `infra/README.md`/`gateway-api`'s README document this as a deliberately minimal notification
+- [x] `infra/README.md`/`gateway-api`'s README document this as a deliberately minimal notification
   primitive, not a monitoring/alerting subsystem, with the same "revisit when a real trigger fires" framing
   `SETUP-023`/`OPS-007` already use for the fuller version.
 

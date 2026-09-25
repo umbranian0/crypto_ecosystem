@@ -359,6 +359,29 @@ network (`http://validation-service:8000`), executed there, and the response pro
 unmodified in shape. See `services/gateway-api/README.md` / `services/validation-service/README.md`
 for the full request/response contract.
 
+## gateway-api health-transition webhook notification (ADMIN-001)
+
+Two new optional env vars this ticket introduces for `gateway-api`'s health-transition webhook
+notification feature (`services/gateway-api/src/app/health_monitor.py`), added to the
+`gateway-api` Compose entry above alongside its existing `VALIDATION_SERVICE_URL`/`DATABASE_URL`
+entries — **unset by default in dev**, same "optional and intentionally unset" framing the
+First-boot bootstrap section already uses for `NARRATIVE_API_URL`:
+
+- `MONITORING_WEBHOOK_URL` (unset by default, deliberately **no** default value — no real operator
+  webhook receiver exists yet) — when unset, the background task still runs (keeps its
+  `previous_status` baseline warm) but never attempts an HTTP `POST`; fully inert, no behavior
+  change, no log noise.
+- `HEALTH_MONITOR_POLL_INTERVAL_SECONDS` (default `60.0`) — how often the background task
+  re-evaluates `gateway-api`'s own aggregate health.
+
+**This is the platform's first recurring in-process background task** — a new *kind* of runtime
+behavior for this container (it now does something on a fixed timer, not just in response to
+inbound requests), wired via `services/gateway-api/src/app/main.py`'s new `lifespan` context
+manager, not a new Compose service/container — no `docker-compose.yml` entry changes beyond the
+two env vars above. See `services/gateway-api/README.md`'s "Health-transition webhook notification
+(ADMIN-001)" section for the full payload shape, transition semantics, and declared out-of-scope
+list.
+
 ## reporting-service (INF-018)
 
 `reporting-service` compose entry: `build.context` is `../services/reporting-service`

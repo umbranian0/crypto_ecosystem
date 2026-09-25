@@ -9,6 +9,8 @@ follows. Mirrors validation-service's app.main precedent.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 
 from fastapi import FastAPI
@@ -19,6 +21,7 @@ from naive_first_common import CorrelationIdMiddleware, configure_structured_log
 
 from app.dependencies.diagnostics import recent_errors_handler
 from app.dependencies.repositories import HealthCheckEngineDep
+from app.health_monitor import run_health_monitor
 from app.routers import (
     audit_log,
     diagnostics,
@@ -42,10 +45,27 @@ configure_structured_logging()
 # configure_structured_logging() just attached.
 logging.getLogger().addHandler(recent_errors_handler)
 
+
+@contextlib.asynccontextmanager
+async def lifespan(app: FastAPI):
+    # ADMIN-001: gateway-api's first recurring in-process background task --
+    # see health_monitor.py's module docstring / docs/sprints/sprint-59.md
+    # for why lifespan+asyncio.Task, not an external cron endpoint, and why
+    # single-instance in-memory state is the right scope call for this phase.
+    task = asyncio.create_task(run_health_monitor())
+    try:
+        yield
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+
 app = FastAPI(
     title="gateway-api",
     description="The only internet-facing service (see README.md).",
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 # OPS-006: assigns/reads X-Correlation-Id for every request; build_downstream_

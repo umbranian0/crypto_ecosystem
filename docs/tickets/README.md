@@ -3219,3 +3219,32 @@ running Docker containers were 3-10 days stale before QA's own rebuild -- a depl
 process check, not a code defect; (2) `describe_crawl_failure`'s "safe by construction" claim doesn't
 cover a hypothetical dynamically-class-named exception (not exploitable by any current connector, no
 code change recommended by QA). See the QA agent's full report (delivered to the Tech Lead) for detail.
+
+## Sprint 59 (docs/sprints/sprint-59.md, backlog: docs/product/backlog-trust-and-admin-ops.md)
+
+`ADMIN-001` (health-state-transition webhook notification) -- single-story sprint, single ticket, entirely
+inside `gateway-api`. This is the platform's first recurring in-process background task anywhere
+(`FastAPI` `lifespan`-launched `asyncio` task, confirmed by repo-wide grep in the sprint plan and
+independently re-confirmed in the ticket's own Analysis). Single-instance, in-memory `previous_status`
+only -- a deliberate, disclosed scope decision, not an oversight (see the ticket's Analysis/Design
+sections for the CLAUDE.md/implementation-plan.md citations backing it).
+
+| Ticket | Story | Module | Depends on | Status |
+|---|---|---|---|---|
+| [ADMIN-001-01](ADMIN-001-01.md) | `MONITORING_WEBHOOK_URL` optional env var, `lifespan`-launched polling task reusing `GET /system/health`'s aggregate logic, single best-effort webhook POST exactly once per healthy<->non-healthy transition | gateway-api | none | done |
+
+**Sprint 59 status: done, Tech-Lead-verified 2026-09-25.** Dispatched one dev agent synchronously
+(`run_in_background: false`, per this platform's standing instruction). Tech Lead personally read the
+full diff (`routers/system.py`'s `compute_system_health` extraction, the new `health_monitor.py` module,
+`main.py`'s new `lifespan` hook, `tests/test_health_monitor.py`) and independently re-ran
+`services/gateway-api`'s full suite: **242 passed / 1 pre-existing unrelated failure**
+(`tests/test_runs_routing.py::test_get_run_forwards_and_returns_full_detail_shape`, the same failure
+already tracked since Sprint 58 — not caused by this ticket). Confirmed `GET /system/health`'s response
+shape is byte-for-byte unchanged, `MONITORING_WEBHOOK_URL` unset genuinely produces zero `httpx.post`
+calls, a first-ever evaluation (`previous_status=None`) never fires a webhook, a failed delivery is
+caught narrowly and logged (never raised), and the `lifespan` hook cancels its background task cleanly on
+shutdown. Reverted incidental `uv.lock` regeneration from local `pytest` runs (both the dev agent's and
+the Tech Lead's own) before finishing, per this repo's standing convention (`ADMIN-002-01` established the
+same check).
+
+**QA verdict: pending.**

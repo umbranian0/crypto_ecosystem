@@ -117,6 +117,25 @@ def _downstream_health_status(client: httpx.Client) -> str:
     return "ok"
 
 
+def compute_system_health(
+    engine,
+    validation_client: httpx.Client,
+    reporting_client: httpx.Client,
+    ingestion_client: httpx.Client,
+) -> dict[str, str]:
+    """ADMIN-001: extracted out of `get_system_health` so `health_monitor.py`'s
+    background polling task can reuse this exact four-way aggregation
+    (imported, not reimplemented) -- the route handler below now just calls
+    this and returns the result, no behavior change.
+    """
+    return {
+        "gateway-api": _own_health_status(engine),
+        "validation-service": _downstream_health_status(validation_client),
+        "reporting-service": _downstream_health_status(reporting_client),
+        "ingestion-service": _downstream_health_status(ingestion_client),
+    }
+
+
 @router.get("/system/health")
 def get_system_health(
     engine: HealthCheckEngineDep,
@@ -124,12 +143,7 @@ def get_system_health(
     reporting_client: ReportingServiceClientDep,
     ingestion_client: IngestionServiceClientDep,
 ) -> dict[str, str]:
-    return {
-        "gateway-api": _own_health_status(engine),
-        "validation-service": _downstream_health_status(validation_client),
-        "reporting-service": _downstream_health_status(reporting_client),
-        "ingestion-service": _downstream_health_status(ingestion_client),
-    }
+    return compute_system_health(engine, validation_client, reporting_client, ingestion_client)
 
 
 class RunsSummaryResponse(BaseModel):
