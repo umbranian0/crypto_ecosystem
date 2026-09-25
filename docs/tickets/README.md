@@ -3208,4 +3208,14 @@ Status line for the full record). `ADMIN-003-01`'s own Analysis independently fo
 in the sprint plan's own citation: the plan named only `connectors/base.py`'s CLI-only `run_incremental`
 as the failure write site, but the actual live/API-triggered crawl path (`routers/connectors.py`'s
 `_execute_crawl`) is a second, separate implementation with its own identical gap -- both are now fixed.
-QA gate raised next per this platform's standing rule.
+
+**QA verdict: GO** (independently re-verified: same 233/1, 167/0, 422/0/8 pass counts across
+`gateway-api`/`ingestion-service`/`dashboard-web`; rebuilt and redeployed the real Docker containers
+-- found stale -- then exercised both features live end-to-end: a real `POST /tenants` writing a real
+`operator_audit_log` row rendered on the live `/settings/audit-log` page, and a real forced network
+failure on a live `binance_price_btcusdt_1h` crawl producing a real redacted `failure_detail` rendered on
+the live `/monitoring` crawl-status panel). Two non-blocking findings, not requiring rework: (1) the
+running Docker containers were 3-10 days stale before QA's own rebuild -- a deploy-step gap worth a
+process check, not a code defect; (2) `describe_crawl_failure`'s "safe by construction" claim doesn't
+cover a hypothetical dynamically-class-named exception (not exploitable by any current connector, no
+code change recommended by QA). See the QA agent's full report (delivered to the Tech Lead) for detail.
