@@ -15,7 +15,14 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from connectors.base import FetchResult, IngestionSource, latest_watermark, latest_watermark_from_db, run_incremental
+from connectors.base import (
+    FetchResult,
+    IngestionSource,
+    describe_crawl_failure,
+    latest_watermark,
+    latest_watermark_from_db,
+    run_incremental,
+)
 from fake_repository import FakeConnectorRecordRepository
 
 SEED = datetime(2020, 1, 1, tzinfo=timezone.utc)
@@ -286,7 +293,7 @@ def test_run_incremental_records_crawl_run_on_successful_write(tmp_path: Path) -
     )
 
     assert len(repository.crawl_runs) == 1
-    tenant_id, source, since_watermark, fetched_at, row_count, status, _rows_so_far, _updated_at = (
+    tenant_id, source, since_watermark, fetched_at, row_count, status, _rows_so_far, _updated_at, _failure_detail = (
         repository.crawl_runs[0]
     )
     assert tenant_id == "tenant-a"
@@ -317,7 +324,7 @@ def test_run_incremental_records_crawl_run_on_empty_success(tmp_path: Path) -> N
     )
 
     assert len(repository.crawl_runs) == 1
-    _tenant_id, _source, _since, _fetched_at, row_count, status, _rows_so_far, _updated_at = (
+    _tenant_id, _source, _since, _fetched_at, row_count, status, _rows_so_far, _updated_at, _failure_detail = (
         repository.crawl_runs[0]
     )
     assert row_count == 0
@@ -348,11 +355,30 @@ def test_run_incremental_records_crawl_run_as_failed_when_write_raises(tmp_path:
         )
 
     assert len(repository.crawl_runs) == 1
-    _tenant_id, _source, _since, _fetched_at, row_count, status, _rows_so_far, _updated_at = (
+    _tenant_id, _source, _since, _fetched_at, row_count, status, _rows_so_far, _updated_at, failure_detail = (
         repository.crawl_runs[0]
     )
     assert row_count == 0
     assert status == "failed"
+    assert failure_detail
+    # Proves the redaction is real, not incidental: the caught exception's
+    # own message ("write failed") must never reach this field.
+    assert "write failed" not in failure_detail
+
+
+def test_describe_crawl_failure_never_includes_exception_message() -> None:
+    """ADMIN-003's non-negotiable constraint, proven concretely: a
+    credential/connection-string-bearing exception message must never reach
+    `describe_crawl_failure`'s return value -- only the source name (already
+    non-secret) and the exception's class name are used."""
+    exc = ValueError("super-secret-connection-string=postgres://user:pass@host/db")
+
+    result = describe_crawl_failure("some_source", exc)
+
+    assert "super-secret" not in result
+    assert "pass@host" not in result
+    assert "some_source" in result
+    assert "ValueError" in result
 
 
 def test_run_incremental_two_tenants_have_independent_crawl_runs_and_watermarks(tmp_path: Path) -> None:

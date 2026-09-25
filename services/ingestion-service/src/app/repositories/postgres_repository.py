@@ -272,6 +272,7 @@ class PostgresConnectorRecordRepository:
         fetched_at: datetime,
         row_count: int,
         status: str,
+        failure_detail: str | None = None,
     ) -> None:
         now = datetime.now(timezone.utc)
         row = CrawlRun(
@@ -283,6 +284,7 @@ class PostgresConnectorRecordRepository:
             row_count=row_count,
             status=status,
             updated_at=now,
+            failure_detail=failure_detail,
         )
         with _tenant_scoped_session(self._engine, tenant_id) as session:
             session.add(row)
@@ -411,6 +413,7 @@ class PostgresConnectorRecordRepository:
                 row_count=row.row_count,
                 rows_fetched_so_far=row.rows_fetched_so_far,
                 updated_at=row.updated_at,
+                failure_detail=row.failure_detail,
             )
 
 

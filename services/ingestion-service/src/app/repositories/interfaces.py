@@ -126,6 +126,7 @@ class ConnectorRecordRepository(typing.Protocol):
         fetched_at: datetime,
         row_count: int,
         status: str,
+        failure_detail: str | None = None,
     ) -> None:
         """Writes one `crawl_runs` row (INGEST-005) for a single `fetch()`
         outcome -- `since_watermark` is whatever `run_incremental` resolved
@@ -134,6 +135,12 @@ class ConnectorRecordRepository(typing.Protocol):
         empty-but-successful fetch, "failed" if the subsequent write attempt
         raised). Callers must call this after every `fetch()` attempt, not
         only the happy path with rows written.
+
+        `failure_detail` (ADMIN-003, defaulted/trailing so every existing
+        call site is unaffected): a redacted, readable reason -- see
+        `connectors.base.describe_crawl_failure` -- passed only by the two
+        call sites that write `status="failed"`. `None` for every other
+        status.
         """
         ...
 
@@ -218,6 +225,9 @@ class CrawlRunSummary:
     # progress (or never entered "running") -- never a fabricated `0`.
     rows_fetched_so_far: int | None = None
     updated_at: datetime | None = None
+    # ADMIN-003: redacted failure reason, `None` for every non-"failed"
+    # status -- see `connectors.base.describe_crawl_failure`.
+    failure_detail: str | None = None
 
 
 @dataclass(frozen=True)

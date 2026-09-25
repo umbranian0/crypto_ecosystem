@@ -93,7 +93,7 @@ from pydantic import BaseModel
 
 from naive_first_common import TenantContext, get_tenant_context
 
-from connectors.base import latest_watermark_from_db, utcnow
+from connectors.base import describe_crawl_failure, latest_watermark_from_db, utcnow
 from connectors.binance_price import BinancePriceConnector, default_backfill_start as binance_backfill_start
 from connectors.blockchain_onchain import (
     SEED_WATERMARKS as ONCHAIN_SEED_WATERMARKS,
@@ -398,8 +398,16 @@ def _execute_crawl(
         # observed it must still resolve to "completed", not "cancelled".
         terminal_status = "cancelled" if result.cancelled else "completed"
         repository.record_crawl_run(tenant_id, connector.name, since, result.fetched_at, row_count, terminal_status)
-    except Exception:
-        repository.record_crawl_run(tenant_id, connector.name, since, utcnow(), 0, "failed")
+    except Exception as exc:
+        repository.record_crawl_run(
+            tenant_id,
+            connector.name,
+            since,
+            utcnow(),
+            0,
+            "failed",
+            failure_detail=describe_crawl_failure(connector.name, exc),
+        )
     finally:
         registry.release(tenant_id, connector.name)
 

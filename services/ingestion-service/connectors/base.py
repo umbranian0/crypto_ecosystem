@@ -125,6 +125,21 @@ def latest_watermark_from_db(
     return repository.latest_event_time(tenant_id, source)
 
 
+def describe_crawl_failure(source: str, exc: Exception) -> str:
+    """Redacted, readable `crawl_runs.failure_detail` value (ADMIN-003) derived
+    from a caught fetch/write exception. Never includes `str(exc)` or any
+    part of the exception's own message text -- some exception types (a DB
+    driver's OperationalError, in particular) can embed a connection
+    string/credential in their message, and this must never reach a
+    tenant/operator-visible field (AC's own non-negotiable constraint,
+    "no raw credential, connection string, or stack trace"). Safe by
+    construction rather than by best-effort redaction: only the source
+    name (already non-secret, already visible everywhere this value is
+    shown) and the exception's class name are used -- never its args/message.
+    """
+    return f"{source}: {type(exc).__name__} while fetching or writing -- see service logs for detail"
+
+
 def run_incremental(
     connector: IngestionSource,
     incremental_dir: str | Path,
@@ -171,8 +186,16 @@ def run_incremental(
             write_method = getattr(repository, f"add_{record_kind}_records")
             try:
                 rows_written = write_method(tenant_id, connector.name, records)
-            except Exception:
-                repository.record_crawl_run(tenant_id, connector.name, since, result.fetched_at, 0, "failed")
+            except Exception as exc:
+                repository.record_crawl_run(
+                    tenant_id,
+                    connector.name,
+                    since,
+                    result.fetched_at,
+                    0,
+                    "failed",
+                    failure_detail=describe_crawl_failure(connector.name, exc),
+                )
                 raise
             repository.record_crawl_run(
                 tenant_id, connector.name, since, result.fetched_at, rows_written, "completed"

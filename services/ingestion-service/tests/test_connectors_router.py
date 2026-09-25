@@ -921,6 +921,40 @@ def test_execute_crawl_wires_on_progress_into_fetch():
     assert running_run[6] == 2
 
 
+def test_execute_crawl_records_failure_detail_when_fetch_raises():
+    """ADMIN-003 (this ticket's own corrected scope): `_execute_crawl` is the
+    real, live-API-triggered crawl path (`POST /connectors/{source}/run` and
+    dashboard-web's "Restart crawl" button) -- structurally parallel to, and
+    independent of, `connectors/base.py`'s `run_incremental`. A `fetch()`
+    exception here must produce a `crawl_runs` row with `status="failed"` and
+    a non-null, redacted `failure_detail` that never contains the triggering
+    exception's own raw message text."""
+    from app.routers.connectors import _execute_crawl
+
+    tenant_id = "tenant-a"
+
+    class _FakeConnector:
+        name = "binance_price_btcusdt_1h"
+
+        def fetch(self, since, should_cancel=None, on_progress=None, **_kwargs):
+            raise ConnectionError("connection refused by db://user:secret@host/db")
+
+    repository = FakeConnectorRecordRepository()
+    registry = CrawlRegistry()
+    connector = _FakeConnector()
+    registry.try_acquire(tenant_id, connector.name)
+
+    _execute_crawl(repository, registry, tenant_id, connector, "price", None)
+
+    terminal_status = repository.crawl_runs[-1][5]
+    failure_detail = repository.crawl_runs[-1][8]
+    assert terminal_status == "failed"
+    assert failure_detail
+    assert "connection refused" not in failure_detail
+    assert "user:secret" not in failure_detail
+    assert "ConnectionError" in failure_detail
+
+
 def test_multi_page_binance_crawl_reports_progress_before_completion(client, monkeypatch):
     """INGEST-025: a real (not stand-in) `BinancePriceConnector`, given a
     fake `requests.Session` that returns two pages, drives `on_progress` via

@@ -86,6 +86,11 @@ class ConnectorStatusResponse(BaseModel):
     # fabricated `0`.
     rows_fetched_so_far: int | None = None
     updated_at: datetime | None = None
+    # ADMIN-003: redacted failure reason, `null` for every non-"failed"
+    # status -- falls out by construction (only the two write sites that
+    # set status="failed" ever pass a non-None value), never a placeholder
+    # string for any other status.
+    failure_detail: str | None = None
 
 
 @router.get("/datasets", response_model=DatasetListResponse)
@@ -149,4 +154,5 @@ def connector_status(
         row_count=summary.row_count,
         rows_fetched_so_far=summary.rows_fetched_so_far,
         updated_at=summary.updated_at,
+        failure_detail=summary.failure_detail,
     )

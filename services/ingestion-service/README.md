@@ -186,6 +186,24 @@ finished without error), `"failed"` (any exception during fetch or write), `"can
 proof the crawl has actually stopped), and `"cancelled"` (written by `_execute_crawl`'s terminal write
 when `FetchResult.cancelled` is `True` — the crawl actually honored the cancel request).
 
+**`crawl_runs.failure_detail`** (`ADMIN-003`, migration `0009`, nullable `String`): a redacted, readable
+reason for a `"failed"` row, `None` for every other status. Two independent, structurally parallel call
+sites write `status="failed"`, and — this is the concrete gap this ticket closed — **both** now populate
+`failure_detail`, not just one: `connectors/base.py`'s `run_incremental` (the CLI-only/standalone
+`__main__`-block path, unreachable from any HTTP request) and `routers/connectors.py`'s `_execute_crawl`
+(the real, live-API-triggered path — the one `POST /connectors/{source}/run` and `dashboard-web`'s
+"Restart crawl" button actually invoke). A prior sprint-plan citation named only the first of these;
+fixing only that one would have left every real, tenant-triggered crawl failure showing
+`failure_detail: null` forever, since a real failure never goes through `run_incremental`. Both
+`except` blocks call the same shared helper, `connectors.base.describe_crawl_failure(source, exc) ->
+str`, defined once and imported by `routers/connectors.py` (not duplicated). The value is
+`f"{source}: {type(exc).__name__} while fetching or writing -- see service logs for detail"` — safe by
+construction, not by best-effort redaction: it never reads `str(exc)`/`exc.args`/`repr(exc)`, only the
+already-non-secret source name and the exception's class name, so a DB driver's `OperationalError`
+embedding a connection string/credential in its message can never reach this field. `GET
+/connectors/{source}/status`'s `failure_detail` field mirrors this exactly — `null` for every
+non-`"failed"` status, the populated redacted string for `"failed"`.
+
 **`crawl_runs.rows_fetched_so_far`/`updated_at`** (`INGEST-024`, migration `0008`, both nullable):
 `rows_fetched_so_far` is the running row count reported via `record_crawl_progress`, `None` for a source
 that never called `on_progress` (e.g. `blockchain_info_*`, whose one pre-request checkpoint reports
@@ -333,7 +351,13 @@ by the range-read shape below.
   it (e.g. `blockchain_info_*`, or a Binance crawl still on its first page);
   `updated_at` is `None` for a `crawl_runs` row written before migration
   `0008` and never subsequently touched (pre-existing rows are not
-  backfilled).
+  backfilled). Since `ADMIN-003` (migration `0009`), the response also
+  includes `failure_detail`: `null` for every status other than `"failed"`
+  (this falls out by construction — only the two write sites named in the
+  `crawl_runs.failure_detail` section above ever pass a non-`None` value,
+  and only when `status="failed"`), a redacted, readable string for
+  `"failed"` (see that section for the exact shape and the
+  `describe_crawl_failure` helper).
 
 **`POST /connectors/{source}/cancel`** (`INGEST-024`, `src/app/routers/connectors.py`, mirrors
 `POST /connectors/{source}/run`'s async "202 now, poll status" shape): tenant-authenticated

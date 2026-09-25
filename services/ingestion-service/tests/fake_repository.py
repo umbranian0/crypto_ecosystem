@@ -56,12 +56,15 @@ class FakeConnectorRecordRepository:
         self.onchain: list[tuple[str, str, pd.DataFrame]] = []
         self.sentiment: list[tuple[str, str, pd.DataFrame]] = []
         # (tenant_id, source, since_watermark, fetched_at, row_count, status,
-        # rows_fetched_so_far, updated_at) -- the last two are INGEST-024's
-        # additions, mutated in place by `record_crawl_progress` (never
-        # appended to), mirroring `PostgresConnectorRecordRepository`'s own
-        # UPDATE-not-INSERT semantics for that one call path.
+        # rows_fetched_so_far, updated_at, failure_detail) -- the middle two
+        # are INGEST-024's additions, mutated in place by
+        # `record_crawl_progress` (never appended to), mirroring
+        # `PostgresConnectorRecordRepository`'s own UPDATE-not-INSERT
+        # semantics for that one call path. `failure_detail` (ADMIN-003) is
+        # appended last so every existing index-based access (`[5]`, `[-1][5]`)
+        # stays valid.
         self.crawl_runs: list[
-            tuple[str, str, datetime | None, datetime, int, str, int | None, datetime | None]
+            tuple[str, str, datetime | None, datetime, int, str, int | None, datetime | None, str | None]
         ] = []
 
     def add_price_records(self, tenant_id: str, source: str, records: pd.DataFrame) -> int:
@@ -109,12 +112,15 @@ class FakeConnectorRecordRepository:
         fetched_at: datetime,
         row_count: int,
         status: str,
+        failure_detail: str | None = None,
     ) -> None:
         # INGEST-024: mirrors the real repository's own `updated_at=utcnow()`
         # addition on every insert -- `rows_fetched_so_far` starts `None`
         # (never a fabricated 0), only ever set by `record_crawl_progress`.
         now = datetime.now(timezone.utc)
-        self.crawl_runs.append((tenant_id, source, since_watermark, fetched_at, row_count, status, None, now))
+        self.crawl_runs.append(
+            (tenant_id, source, since_watermark, fetched_at, row_count, status, None, now, failure_detail)
+        )
 
     def record_crawl_progress(self, tenant_id: str, source: str, rows_fetched_so_far: int) -> None:
         """INGEST-024: updates the most recent `status="running"` entry for
@@ -141,6 +147,7 @@ class FakeConnectorRecordRepository:
             run[5],
             rows_fetched_so_far,
             datetime.now(timezone.utc),
+            run[8],
         )
 
     def list_datasets(self, tenant_id: str) -> list[DatasetSummary]:
@@ -209,6 +216,7 @@ class FakeConnectorRecordRepository:
             status,
             rows_fetched_so_far,
             updated_at,
+            failure_detail,
         ) = max(matches, key=lambda c: c[3])
         return CrawlRunSummary(
             status=status,
@@ -216,6 +224,7 @@ class FakeConnectorRecordRepository:
             row_count=row_count,
             rows_fetched_so_far=rows_fetched_so_far,
             updated_at=updated_at,
+            failure_detail=failure_detail,
         )
 
 

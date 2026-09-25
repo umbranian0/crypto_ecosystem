@@ -226,6 +226,48 @@ def test_connector_status_returns_latest_crawl_run(client):
     assert body["timestamp"].startswith("2026-02-01")
 
 
+def test_connector_status_failure_detail_null_for_non_failed_status(client):
+    """ADMIN-003: `failure_detail` is `null`, not a fabricated placeholder,
+    for every non-"failed" status."""
+    test_client, repo = client
+    fetched_at = datetime(2026, 2, 1, tzinfo=timezone.utc)
+    repo.record_crawl_run("tenant-a", "binance_btcusdt_1h", None, fetched_at, 5, "completed")
+
+    response = test_client.get("/connectors/binance_btcusdt_1h/status", headers={"X-Tenant-Id": "tenant-a"})
+
+    assert response.status_code == 200
+    assert response.json()["failure_detail"] is None
+
+    repo.record_crawl_run("tenant-a", "blockchain_info_hash-rate", None, fetched_at, 0, "running")
+
+    running_response = test_client.get(
+        "/connectors/blockchain_info_hash-rate/status", headers={"X-Tenant-Id": "tenant-a"}
+    )
+
+    assert running_response.status_code == 200
+    assert running_response.json()["failure_detail"] is None
+
+
+def test_connector_status_failure_detail_populated_for_failed_status(client):
+    """ADMIN-003: a `"failed"` row's redacted `failure_detail` is surfaced
+    verbatim through `GET /connectors/{source}/status`."""
+    test_client, repo = client
+    fetched_at = datetime(2026, 2, 1, tzinfo=timezone.utc)
+    detail = "binance_price_btcusdt_1h: ConnectionError while fetching or writing -- see service logs for detail"
+    repo.record_crawl_run(
+        "tenant-a", "binance_price_btcusdt_1h", None, fetched_at, 0, "failed", failure_detail=detail
+    )
+
+    response = test_client.get(
+        "/connectors/binance_price_btcusdt_1h/status", headers={"X-Tenant-Id": "tenant-a"}
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "failed"
+    assert body["failure_detail"] == detail
+
+
 def test_connector_status_unknown_source_returns_404(client):
     test_client, _repo = client
 

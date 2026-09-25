@@ -132,3 +132,7 @@ class CrawlRun(Base):
     # "Last touched" timestamp, distinct from `fetched_at` (which keeps its
     # existing "crawl outcome time"/ordering role, unchanged by this ticket).
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # ADMIN-003: redacted, readable failure reason (see `connectors.base.
+    # describe_crawl_failure`), populated only when `status == "failed"`,
+    # `None` for every other status -- never a raw exception message.
+    failure_detail: Mapped[str | None] = mapped_column(String, nullable=True)
