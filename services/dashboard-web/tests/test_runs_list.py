@@ -332,6 +332,24 @@ def test_runs_list_pagination_absent_for_single_page_total(monkeypatch) -> None:
     assert "pagination-prev" not in response.text
 
 
+def test_runs_list_links_to_trend_view_when_runs_present(monkeypatch) -> None:
+    """RAV-011: a non-empty runs list surfaces a visible link to the existing
+    cross-run trend view (`/runs/trend`, RAV-009)."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=RUNS_LIST_BODY)
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get("/runs")
+
+    assert response.status_code == 200
+    assert '<a href="/runs/trend"' in response.text
+
+
 def test_runs_list_template_has_no_banned_positioning_words() -> None:
     template_path = (
         __import__("pathlib").Path(__file__).parent.parent

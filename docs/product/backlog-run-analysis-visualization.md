@@ -371,3 +371,194 @@ reuses the same fetched data with no new capability.
 Depends on: RAV-009
 
 **Status: DONE (Sprint 28, `docs/tickets/RAV-010.md`).**
+
+## Epic D — Runs-list visualization and chart prominence (founder-scoped closure of two specific gaps)
+
+Source (in addition to the file-level Source line above): confirmed by direct reading on 2026-09-25 of
+`services/dashboard-web/src/app/templates/run_detail.html` (per-split table; line 115 carries the current
+plain-text link `<a href="/runs/{{ run.id }}/splits/{{ split.split_index }}/points-chart">Actual vs. predicted
+value</a>`), `services/dashboard-web/src/app/templates/runs_list.html` (plain `<table>`, zero charts, no link to
+`/runs/trend`), `services/dashboard-web/src/app/routers/runs.py` (`runs_list`, line 727 — calls only `GET /runs`,
+no split data fetched; `runs_trend`, line 1059; `run_split_points_chart`, line 1131 — one split's points fetched
+per call via `GET /runs/{run_id}/splits/{split_index}/points`, no batch/cross-split endpoint; `run_detail`, line
+1184, with its own existing `MAX_RENDERED_SPLITS = 500` truncation at line 1230), `services/dashboard-web/src/app/
+charting.py` (existing `build_error_chart`, `build_dm_verdict_chart`, `_verdict_category`/
+`verdict_category_and_css_slug`, `build_headline_verdict_summary`, `build_predicted_vs_actual_chart` — the only
+chart-building logic this epic may reuse, never duplicate), `docs/adr/0006-dashboard-web-charting-server-rendered-
+svg.md` (binding: server-rendered inline SVG only, no new dependency), `services/gateway-api/src/app/routers/
+runs.py` (`get_splits`, line 203) and `services/validation-service/src/app/routers/splits.py` (`get_splits`, line
+116) — confirmed no batched/cross-run or cross-split summary endpoint exists anywhere today.
+
+Scope: closes exactly two founder-confirmed gaps, and nothing beyond them. (1) `runs_list.html` has zero
+visualization and no discoverable link to the already-shipped `/runs/trend` cross-run view. (2) `run_detail.html`
+sends a tenant to a separate page per split for the predicted-vs-actual chart instead of showing it inline.
+Explicitly out of scope, per the founder's own instruction: any new chart type (no residual-distribution chart, no
+error-over-time chart, no metric-pair scatter plot — this epic presents already-computed/already-charted data at
+new locations, it does not compute anything new), and a links-only change to `runs_list.html` (the verdict
+indicator and sparkline are required scope, not optional extras). This epic does not touch `naive_first_engine`,
+`services/economic-service`, or any pricing/prediction surface, and does not reopen Epic B's own scope (its
+backend capability is confirmed already shipped, used as-is here — see RAV-015).
+
+### RAV-011 — Visible link from the runs list to the existing cross-run trend view [Must]
+**As** dashboard-web, **I want** `runs_list.html` to include a visible link to the already-shipped `/runs/trend`
+page, **so that** a tenant browsing the plain runs list can discover the cross-run trend/consistency view without
+already knowing its URL.
+
+Acceptance criteria:
+- [x] A link to `/runs/trend` (the same route `runs_trend`, `routers/runs.py` line 1059, already renders) appears
+      on `runs_list.html` whenever there is at least one run to show; no broken/dead link when the run list is
+      empty (the existing "No validation runs yet" branch is unaffected).
+- [x] Link copy reuses `/runs/trend`'s own existing framing (RAV-009's "how this model configuration's validation
+      results have varied across runs" language) — no new, independently-worded marketing copy for the same
+      destination.
+- [x] No new route, endpoint, or backend logic — this is a single template-level addition.
+- [x] Test: rendered `runs_list.html` contains an `<a href="/runs/trend">` (or equivalent) when `runs` is
+      non-empty.
+
+Rationale for priority: trivial to ship and a real, founder-named gap (the page exists but is undiscoverable
+today), but on its own it is explicitly **not** sufficient to satisfy the founder's request — grouped as Must
+alongside RAV-013/RAV-014 because it is the third, smallest piece of the same "prominence" requirement, not a
+substitute for the other two.
+Depends on: none (links to RAV-009, already DONE)
+
+**Status: DONE (Sprint 60, `docs/tickets/RAV-011.md`).**
+
+### RAV-012 — Bounded per-run split-summary data available to the runs-list page [Must]
+**As** dashboard-web, **I want** the `runs_list` route to have access to each displayed run's split-level verdict
+and error data without turning one page load into an unbounded number of downstream calls, **so that** RAV-013's
+verdict indicator and RAV-014's sparkline have real data to render, and the page stays fast regardless of how many
+runs a tenant has.
+
+This is the open design question named explicitly in this epic's own brief — the acceptance criteria below require
+that one bounding approach be chosen and proven bounded; they do not prescribe which one.
+
+Acceptance criteria:
+- [ ] `runs_list` (`routers/runs.py`, currently only calling `GET /runs` at line 727) gains access, for every run
+      on the currently rendered page only, to the same per-split `model_mae`/`naive0_mae` and `dm_verdict` data
+      already returned by `GET /runs/{run_id}/splits` (gateway-api `routers/runs.py:get_splits`, line 203;
+      validation-service `routers/splits.py:get_splits`, line 116) — reusing that existing `SplitResultResponse`
+      contract shape, never a parallel/duplicate field set.
+- [ ] The sprint's sequencing/Tech Lead decision picks **exactly one** bounding approach and states it explicitly
+      in the ticket: (a) a new batched/summary endpoint on gateway-api + validation-service accepting a page of
+      run IDs and returning per-run split-summary data in one round trip; (b) a bounded per-page N+1, with a hard,
+      enforced page-size cap on `runs_list`'s own `limit` parameter, so the number of downstream calls per page
+      load is capped at that same limit; or (c) a precomputed summary field persisted on the run row and kept in
+      sync as splits complete. Whichever is chosen, this story does not authorize skipping the choice — one runs-
+      list page load must issue a bounded, page-size-proportional number of downstream calls, never one uncapped
+      call per run regardless of how many runs a tenant has accumulated.
+- [ ] If (b) is chosen, `runs_list`'s `limit` parameter (already accepted today, line 731, currently unbounded)
+      gets an enforced hard maximum — the bound must be real, not "usually small in practice."
+- [ ] No change to `GET /runs/{run_id}/splits`'s own existing contract or behavior — this is additive only (a new
+      endpoint, or a new call pattern against the existing one), never a repurposing of the per-run detail
+      endpoint.
+- [ ] Test: a fixture page of N runs results in a provably bounded number of downstream HTTP calls from
+      dashboard-web (not O(N) uncapped, and not asserted only in a docstring).
+
+Rationale for priority: prerequisite/enabler for RAV-013 and RAV-014 — neither can render real per-run data
+without it, and this epic's own brief requires the N+1 question to be a named, resolved concern before those
+stories ship rather than discovered during implementation. Must, because both of its dependents are Must.
+Depends on: none (blocks RAV-013, RAV-014)
+
+### RAV-013 — Per-run verdict indicator on the runs list [Must]
+**As** dashboard-web, **I want** each row on `runs_list.html` to show a compact indicator of that run's benchmark-
+comparison outcome against Naive0, **so that** a tenant scanning many runs can see which ones showed a "better"/
+"worse"/"no significant difference"/undefined DM-test outcome without opening each run individually.
+
+Acceptance criteria:
+- [ ] Computes one aggregate category per run by reusing `charting.py`'s existing per-split categorization
+      (`_verdict_category`/`verdict_category_and_css_slug`, and/or the same aggregation
+      `build_headline_verdict_summary` already performs for a single run's "beat Naive0 on N/M splits" sentence)
+      applied to RAV-012's split data — no second, independently-derived verdict rule written in the route or
+      template.
+- [ ] Uses the same four status-neutral categories/colors already defined for DM verdicts elsewhere
+      (`--color-status-completed-text` "better", `--color-status-failed-text` "worse",
+      `--color-status-running-text` "no significant difference", `--color-text-muted` "undefined") — never a
+      green/red pairing, matching `style.css`'s documented constraint and every existing verdict chart in this
+      backlog.
+- [ ] Indicator copy reads only as a benchmark-comparison outcome for this run (e.g. "Beat Naive0 on N/M splits"
+      or the equivalent compact form) — never phrased as "this model is good/bad to trade," never a buy/sell/
+      signal word, matching CLAUDE.md's positioning rule and the same wording precedent
+      `build_headline_verdict_summary` already sets on `run_detail.html`.
+- [ ] A run with zero splits (e.g. still running, or failed before any split completed) shows a plain "no results
+      yet" state in that column — never a fabricated or default verdict category.
+- [ ] Server-rendered inline SVG or plain styled text/badge (Tech Lead's call between the two — either way, per
+      ADR-0006, no client-side JS, no new dependency).
+- [ ] Test: rendered `runs_list.html` shows the correct verdict category/label for a fixture set of runs with
+      known split-verdict distributions, including a zero-split run.
+
+Rationale for priority: the core "visualization" gap the founder named for the runs list — reuses existing
+DM-verdict logic entirely (no new statistic, no new significance test); Must because the founder explicitly
+declined a links-only change and named this indicator as required scope.
+Depends on: RAV-012
+
+### RAV-014 — Per-run compact error sparkline on the runs list [Must]
+**As** dashboard-web, **I want** each row on `runs_list.html` to show a small sparkline of model-vs-Naive0 MAE
+across that run's splits, **so that** a tenant can see the shape/stability of a run's error at a glance, consistent
+with the same metric RAV-002's full-size chart already shows on `run_detail.html`.
+
+Acceptance criteria:
+- [ ] Reuses `charting.py`'s existing error-series data construction for `model_mae`/`naive0_mae` (the same
+      underlying series `build_error_chart` already assembles for RAV-002 — a new compact-rendering function may
+      be added to `charting.py`, but it must build on the same `Bar`/`SplitBars` data shapes, never a second
+      hand-rolled MAE-series computation).
+- [ ] Renders as a small server-rendered inline SVG (per ADR-0006 — no new dependency, no client-side JS charting
+      library, no Python plotting library), sized for a table cell (fixed small width/height, distinct from
+      RAV-002's full-size chart dimensions).
+- [ ] Uses the same two-series status-neutral palette RAV-002 already uses (`--color-accent`/`--color-accent-2`)
+      — no green/red pairing.
+- [ ] This is a compact re-rendering of already-charted data (RAV-002's own MAE pair) at run-list scale, not a new
+      chart type — no other metric pair, no new computed statistic, no interactivity (no selector/toggle at this
+      scale).
+- [ ] A run with zero or one split (insufficient to draw a meaningful line) renders an explicit empty/placeholder
+      state in that column — never a broken or misleadingly flat SVG.
+- [ ] Test: rendered `runs_list.html` contains a sparkline with correct point count/values for a fixture run's
+      splits; a zero/one-split run renders the placeholder state instead.
+
+Rationale for priority: the second half of the founder's explicitly required runs-list scope, paired with
+RAV-013's verdict indicator; Must because the founder named the sparkline as required, not optional — and it
+reuses data RAV-012 already makes available and logic RAV-002 already computes, so it is a small increment on top
+of existing capability, not new capability.
+Depends on: RAV-012
+
+### RAV-015 — Inline predicted-vs-actual chart per split on `run_detail` [Must]
+**As** dashboard-web, **I want** `run_detail.html` to render each rendered split's predicted-vs-actual chart
+inline, in place of today's separate-page text link, **so that** a tenant auditing a run's splits sees the chart
+directly alongside that split's row instead of navigating to a separate page per split.
+
+Acceptance criteria:
+- [x] Replaces the current text link (`run_detail.html` line 115: `<a href="/runs/{{ run.id }}/splits/
+      {{ split.split_index }}/points-chart">Actual vs. predicted value</a>`) with the chart rendered inline in
+      that split's own row/section, calling the exact same `build_predicted_vs_actual_chart(points)` function and
+      `PredictedVsActualChartData` shape `run_split_points_chart` (`routers/runs.py` line 1131) already uses — no
+      second implementation of point-series geometry.
+- [x] Fetches per-split points only for the same `rendered_splits` list `run_detail` already caps at
+      `MAX_RENDERED_SPLITS` (`routers/runs.py` line 1230, currently 500) — this story does not introduce a new
+      unbounded call pattern beyond that existing, already-accepted cap. The sequencing decision must state
+      explicitly, in the ticket, how many `GET /runs/{run_id}/splits/{split_index}/points` calls one page load
+      now makes (one per rendered split) and confirm that count stays bounded by that same existing cap — the
+      same N+1-awareness RAV-012 applies to the runs list applies here, even though `run_detail`'s own cap already
+      exists today and is not being newly invented by this story.
+- [x] The existing `PredictedVsActualChartData.has_data=False` placeholder path (already defined for a split with
+      no persisted/pruned points) is rendered inline exactly as it is today — never a broken/empty `<svg>`.
+- [x] Chart title/axis labels/copy carry forward the exact same "actual value vs. this split's predicted value,
+      test-window only" framing the existing `split_points_chart.html` page already uses, unchanged — no
+      extrapolation, no forecast language.
+- [x] Same status-neutral color constraints as every other chart in this backlog (no green/red pairing).
+- [x] The standalone `/runs/{run_id}/splits/{split_index}/points-chart` route/page may be kept (e.g. as a
+      shareable/printable single-split view) or removed — Tech Lead's call, not this story's — but if kept, it
+      must render via the same shared template partial/charting call as the new inline version, never a
+      diverging second copy (DRY, per `docs/implementation-plan.md` section 9).
+- [x] Test: `run_detail.html` renders the correct inline chart for a fixture split's persisted points; a split
+      with no persisted points (pruned or never captured) renders the placeholder, not an error.
+
+Rationale for priority: the second founder-named gap — surfaces an already-built chart (Epic B/RAV-006–008,
+confirmed shipped in production code — `build_predicted_vs_actual_chart` and `run_split_points_chart` both exist
+and are wired to a real `GET .../points` endpoint, even though this backlog file's own RAV-006/007/008 checkboxes
+were never marked done; flagged here for the PM/Tech Lead to reconcile, not silently corrected by this story) on
+the page a tenant is already looking at, instead of a per-split page navigation. Must, per the founder's explicit
+scope.
+Depends on: none (RAV-006/007/008's prerequisite backend capability is already built, confirmed by direct code
+read of `charting.py` and `routers/runs.py`)
+
+**Status: DONE (Sprint 60, `docs/tickets/RAV-015.md`). Standalone points-chart route kept (Tech Lead's call,
+stated in the ticket's Outcome section).**

@@ -106,6 +106,8 @@ def test_run_detail_success_with_splits(monkeypatch) -> None:
             return httpx.Response(200, json=RUN_DETAIL_BODY)
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[SPLIT_BODY])
+        if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
+            return httpx.Response(200, json={"items": [], "limit": 20, "offset": 0, "total": 0})
         raise AssertionError(f"unexpected path {request.url.path}")
 
     _patch_transport(monkeypatch, handler)
@@ -134,6 +136,8 @@ def test_run_detail_renders_label_when_present_and_id_stays_visible(monkeypatch)
             return httpx.Response(200, json={**RUN_DETAIL_BODY, "label": "weekly audit"})
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[SPLIT_BODY])
+        if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
+            return httpx.Response(200, json={"items": [], "limit": 20, "offset": 0, "total": 0})
         raise AssertionError(f"unexpected path {request.url.path}")
 
     _patch_transport(monkeypatch, handler)
@@ -154,6 +158,8 @@ def test_run_detail_renders_bare_id_when_label_absent(monkeypatch) -> None:
             return httpx.Response(200, json=RUN_DETAIL_BODY)
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[SPLIT_BODY])
+        if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
+            return httpx.Response(200, json={"items": [], "limit": 20, "offset": 0, "total": 0})
         raise AssertionError(f"unexpected path {request.url.path}")
 
     _patch_transport(monkeypatch, handler)
@@ -179,6 +185,8 @@ def test_run_detail_renders_warning_when_present(monkeypatch) -> None:
             return httpx.Response(200, json={**RUN_DETAIL_BODY, "warnings": [warning_text]})
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[SPLIT_BODY])
+        if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
+            return httpx.Response(200, json={"items": [], "limit": 20, "offset": 0, "total": 0})
         raise AssertionError(f"unexpected path {request.url.path}")
 
     _patch_transport(monkeypatch, handler)
@@ -199,6 +207,8 @@ def test_run_detail_renders_nothing_extra_when_warnings_empty(monkeypatch) -> No
             return httpx.Response(200, json={**RUN_DETAIL_BODY, "warnings": []})
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[SPLIT_BODY])
+        if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
+            return httpx.Response(200, json={"items": [], "limit": 20, "offset": 0, "total": 0})
         raise AssertionError(f"unexpected path {request.url.path}")
 
     _patch_transport(monkeypatch, handler)
@@ -221,6 +231,8 @@ def test_run_detail_metric_query_param_switches_chart(monkeypatch) -> None:
             return httpx.Response(200, json=RUN_DETAIL_BODY)
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[SPLIT_BODY])
+        if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
+            return httpx.Response(200, json={"items": [], "limit": 20, "offset": 0, "total": 0})
         raise AssertionError(f"unexpected path {request.url.path}")
 
     _patch_transport(monkeypatch, handler)
@@ -242,6 +254,8 @@ def test_run_detail_invalid_metric_falls_back_to_mae(monkeypatch) -> None:
             return httpx.Response(200, json=RUN_DETAIL_BODY)
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[SPLIT_BODY])
+        if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
+            return httpx.Response(200, json={"items": [], "limit": 20, "offset": 0, "total": 0})
         raise AssertionError(f"unexpected path {request.url.path}")
 
     _patch_transport(monkeypatch, handler)
@@ -262,6 +276,8 @@ def test_run_detail_metric_selector_offers_all_seven_metrics(monkeypatch) -> Non
             return httpx.Response(200, json=RUN_DETAIL_BODY)
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[SPLIT_BODY])
+        if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
+            return httpx.Response(200, json={"items": [], "limit": 20, "offset": 0, "total": 0})
         raise AssertionError(f"unexpected path {request.url.path}")
 
     _patch_transport(monkeypatch, handler)
@@ -285,6 +301,8 @@ def test_run_detail_running_with_no_splits(monkeypatch) -> None:
             return httpx.Response(200, json=body)
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[])
+        if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
+            return httpx.Response(200, json={"items": [], "limit": 20, "offset": 0, "total": 0})
         raise AssertionError(f"unexpected path {request.url.path}")
 
     _patch_transport(monkeypatch, handler)
@@ -482,6 +500,8 @@ def test_run_detail_renders_dm_verdict_chart_with_undefined_category(monkeypatch
             return httpx.Response(200, json=RUN_DETAIL_BODY)
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[SPLIT_BODY, UNDEFINED_DM_SPLIT_BODY])
+        if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
+            return httpx.Response(200, json={"items": [], "limit": 20, "offset": 0, "total": 0})
         raise AssertionError(f"unexpected path {request.url.path}")
 
     _patch_transport(monkeypatch, handler)
@@ -509,6 +529,8 @@ def test_run_detail_running_with_no_splits_renders_neither_chart(monkeypatch) ->
             return httpx.Response(200, json=body)
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[])
+        if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
+            return httpx.Response(200, json={"items": [], "limit": 20, "offset": 0, "total": 0})
         raise AssertionError(f"unexpected path {request.url.path}")
 
     _patch_transport(monkeypatch, handler)
@@ -556,6 +578,8 @@ def test_run_detail_renders_forecast_horizon_summary_panel_with_real_metrics(
             return httpx.Response(200, json=RUN_DETAIL_BODY)
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[SPLIT_BODY])
+        if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
+            return httpx.Response(200, json={"items": [], "limit": 20, "offset": 0, "total": 0})
         raise AssertionError(f"unexpected path {request.url.path}")
 
     _patch_transport(monkeypatch, handler)
@@ -585,6 +609,8 @@ def test_run_detail_forecast_horizon_summary_panel_renders_undefined_category(
             return httpx.Response(200, json=RUN_DETAIL_BODY)
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[SPLIT_BODY, UNDEFINED_DM_SPLIT_BODY])
+        if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
+            return httpx.Response(200, json={"items": [], "limit": 20, "offset": 0, "total": 0})
         raise AssertionError(f"unexpected path {request.url.path}")
 
     _patch_transport(monkeypatch, handler)
@@ -617,6 +643,8 @@ def test_run_detail_running_with_no_splits_does_not_render_horizon_summary_panel
             return httpx.Response(200, json=body)
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[])
+        if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
+            return httpx.Response(200, json={"items": [], "limit": 20, "offset": 0, "total": 0})
         raise AssertionError(f"unexpected path {request.url.path}")
 
     _patch_transport(monkeypatch, handler)
@@ -701,6 +729,8 @@ def test_run_detail_renders_shareable_summary_textarea(monkeypatch) -> None:
             return httpx.Response(200, json=RUN_DETAIL_BODY)
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[SPLIT_BODY])
+        if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
+            return httpx.Response(200, json={"items": [], "limit": 20, "offset": 0, "total": 0})
         raise AssertionError(f"unexpected path {request.url.path}")
 
     _patch_transport(monkeypatch, handler)
@@ -816,6 +846,8 @@ def test_run_detail_renders_client_baseline_disclaimer_when_present(monkeypatch)
             return httpx.Response(200, json=RUN_DETAIL_BODY)
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[SPLIT_BODY_WITH_CLIENT_BASELINE])
+        if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
+            return httpx.Response(200, json={"items": [], "limit": 20, "offset": 0, "total": 0})
         raise AssertionError(f"unexpected path {request.url.path}")
 
     _patch_transport(monkeypatch, handler)
@@ -839,6 +871,8 @@ def test_run_detail_omits_client_baseline_disclaimer_when_absent(monkeypatch) ->
             return httpx.Response(200, json=RUN_DETAIL_BODY)
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[SPLIT_BODY])
+        if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
+            return httpx.Response(200, json={"items": [], "limit": 20, "offset": 0, "total": 0})
         raise AssertionError(f"unexpected path {request.url.path}")
 
     _patch_transport(monkeypatch, handler)
@@ -909,6 +943,8 @@ def test_run_detail_large_split_count_returns_200_not_500(monkeypatch) -> None:
             return httpx.Response(200, json=RUN_DETAIL_BODY)
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=large_splits)
+        if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
+            return httpx.Response(200, json={"items": [], "limit": 20, "offset": 0, "total": 0})
         raise AssertionError(f"unexpected path {request.url.path}")
 
     _patch_transport(monkeypatch, handler)
@@ -933,6 +969,8 @@ def test_run_detail_large_split_count_shows_truncation_notice(monkeypatch) -> No
             return httpx.Response(200, json=RUN_DETAIL_BODY)
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=large_splits)
+        if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
+            return httpx.Response(200, json={"items": [], "limit": 20, "offset": 0, "total": 0})
         raise AssertionError(f"unexpected path {request.url.path}")
 
     _patch_transport(monkeypatch, handler)
@@ -979,6 +1017,8 @@ def test_run_detail_large_split_count_full_data_still_reachable_via_api(monkeypa
         if request.url.path == f"/runs/{RUN_ID}/splits":
             fetched_counts.append(len(large_splits))
             return httpx.Response(200, json=large_splits)
+        if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
+            return httpx.Response(200, json={"items": [], "limit": 20, "offset": 0, "total": 0})
         raise AssertionError(f"unexpected path {request.url.path}")
 
     _patch_transport(monkeypatch, handler)
@@ -1001,6 +1041,8 @@ def test_run_detail_under_cap_run_has_no_truncation_notice(monkeypatch) -> None:
             return httpx.Response(200, json=RUN_DETAIL_BODY)
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[SPLIT_BODY])
+        if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
+            return httpx.Response(200, json={"items": [], "limit": 20, "offset": 0, "total": 0})
         raise AssertionError(f"unexpected path {request.url.path}")
 
     _patch_transport(monkeypatch, handler)
@@ -1028,6 +1070,8 @@ def test_run_detail_under_cap_run_byte_identical_to_pre_fix_baseline(monkeypatch
             return httpx.Response(200, json=RUN_DETAIL_BODY)
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[SPLIT_BODY, UNDEFINED_DM_SPLIT_BODY])
+        if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
+            return httpx.Response(200, json={"items": [], "limit": 20, "offset": 0, "total": 0})
         raise AssertionError(f"unexpected path {request.url.path}")
 
     _patch_transport(monkeypatch, handler)
@@ -1056,6 +1100,8 @@ def test_run_detail_renders_placeholder_label_when_no_client_model(monkeypatch) 
             return httpx.Response(200, json={**RUN_DETAIL_BODY, "has_client_model": False})
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[SPLIT_BODY])
+        if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
+            return httpx.Response(200, json={"items": [], "limit": 20, "offset": 0, "total": 0})
         raise AssertionError(f"unexpected path {request.url.path}")
 
     _patch_transport(monkeypatch, handler)
@@ -1079,6 +1125,8 @@ def test_run_detail_renders_plain_model_label_when_client_model_present(monkeypa
             return httpx.Response(200, json={**RUN_DETAIL_BODY, "has_client_model": True})
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[SPLIT_BODY])
+        if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
+            return httpx.Response(200, json={"items": [], "limit": 20, "offset": 0, "total": 0})
         raise AssertionError(f"unexpected path {request.url.path}")
 
     _patch_transport(monkeypatch, handler)
@@ -1104,6 +1152,8 @@ def test_run_detail_summary_panel_uses_short_label_with_the_note_beside_it(monke
             return httpx.Response(200, json={**RUN_DETAIL_BODY, "has_client_model": False})
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[SPLIT_BODY])
+        if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
+            return httpx.Response(200, json={"items": [], "limit": 20, "offset": 0, "total": 0})
         raise AssertionError(f"unexpected path {request.url.path}")
 
     _patch_transport(monkeypatch, handler)
@@ -1127,6 +1177,8 @@ def test_run_detail_summary_panel_plain_label_and_no_note_with_client_model(monk
             return httpx.Response(200, json={**RUN_DETAIL_BODY, "has_client_model": True})
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[SPLIT_BODY])
+        if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
+            return httpx.Response(200, json={"items": [], "limit": 20, "offset": 0, "total": 0})
         raise AssertionError(f"unexpected path {request.url.path}")
 
     _patch_transport(monkeypatch, handler)
@@ -1251,6 +1303,8 @@ def test_run_detail_renders_feature_composition_for_multimodal_run(monkeypatch) 
             return httpx.Response(200, json=MULTIMODAL_RUN_DETAIL_BODY)
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[SPLIT_BODY])
+        if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
+            return httpx.Response(200, json={"items": [], "limit": 20, "offset": 0, "total": 0})
         raise AssertionError(f"unexpected path {request.url.path}")
 
     _patch_transport(monkeypatch, handler)
@@ -1278,6 +1332,8 @@ def test_run_detail_omits_feature_composition_for_single_series_run(monkeypatch)
             return httpx.Response(200, json=RUN_DETAIL_BODY)
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[SPLIT_BODY])
+        if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
+            return httpx.Response(200, json={"items": [], "limit": 20, "offset": 0, "total": 0})
         raise AssertionError(f"unexpected path {request.url.path}")
 
     _patch_transport(monkeypatch, handler)
@@ -1308,6 +1364,8 @@ def test_run_detail_not_beat_naive_verdict_identical_for_multimodal_and_single_s
                 return httpx.Response(200, json=run_body)
             if request.url.path == f"/runs/{RUN_ID}/splits":
                 return httpx.Response(200, json=[not_beat_naive_split])
+            if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
+                return httpx.Response(200, json={"items": [], "limit": 20, "offset": 0, "total": 0})
             raise AssertionError(f"unexpected path {request.url.path}")
 
         return handler
@@ -1346,6 +1404,8 @@ def test_run_detail_single_series_run_byte_identical_outside_feature_lineage_blo
             return httpx.Response(200, json=RUN_DETAIL_BODY)
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[SPLIT_BODY])
+        if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
+            return httpx.Response(200, json={"items": [], "limit": 20, "offset": 0, "total": 0})
         raise AssertionError(f"unexpected path {request.url.path}")
 
     _patch_transport(monkeypatch, handler)
@@ -1374,6 +1434,8 @@ def test_run_detail_shows_raw_levels_warning_unconditionally_when_splits_present
             return httpx.Response(200, json=RUN_DETAIL_BODY)
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[SPLIT_BODY])
+        if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
+            return httpx.Response(200, json={"items": [], "limit": 20, "offset": 0, "total": 0})
         raise AssertionError(f"unexpected path {request.url.path}")
 
     _patch_transport(monkeypatch, handler)
@@ -1400,6 +1462,8 @@ def test_run_detail_renders_headline_verdict_summary_with_client_model(monkeypat
             return httpx.Response(200, json={**RUN_DETAIL_BODY, "has_client_model": True})
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[SPLIT_BODY])
+        if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
+            return httpx.Response(200, json={"items": [], "limit": 20, "offset": 0, "total": 0})
         raise AssertionError(f"unexpected path {request.url.path}")
 
     _patch_transport(monkeypatch, handler)
@@ -1420,6 +1484,8 @@ def test_run_detail_renders_headline_verdict_summary_placeholder_caveat(monkeypa
             return httpx.Response(200, json={**RUN_DETAIL_BODY, "has_client_model": False})
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[SPLIT_BODY])
+        if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
+            return httpx.Response(200, json={"items": [], "limit": 20, "offset": 0, "total": 0})
         raise AssertionError(f"unexpected path {request.url.path}")
 
     _patch_transport(monkeypatch, handler)
@@ -1442,6 +1508,8 @@ def test_run_detail_omits_headline_verdict_summary_for_zero_splits(monkeypatch) 
             return httpx.Response(200, json=body)
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[])
+        if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
+            return httpx.Response(200, json={"items": [], "limit": 20, "offset": 0, "total": 0})
         raise AssertionError(f"unexpected path {request.url.path}")
 
     _patch_transport(monkeypatch, handler)
@@ -1466,6 +1534,8 @@ def test_run_detail_preexisting_elements_unchanged_alongside_headline(monkeypatc
             return httpx.Response(200, json=RUN_DETAIL_BODY)
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[SPLIT_BODY])
+        if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
+            return httpx.Response(200, json={"items": [], "limit": 20, "offset": 0, "total": 0})
         raise AssertionError(f"unexpected path {request.url.path}")
 
     _patch_transport(monkeypatch, handler)
@@ -1503,6 +1573,8 @@ def test_run_detail_rounds_displayed_values_to_four_decimal_places(monkeypatch) 
             return httpx.Response(200, json=RUN_DETAIL_BODY)
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[_PRECISE_SPLIT_BODY])
+        if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
+            return httpx.Response(200, json={"items": [], "limit": 20, "offset": 0, "total": 0})
         raise AssertionError(f"unexpected path {request.url.path}")
 
     _patch_transport(monkeypatch, handler)
@@ -1540,6 +1612,8 @@ def test_run_detail_chart_titles_render_as_heading_elements(monkeypatch) -> None
             return httpx.Response(200, json=RUN_DETAIL_BODY)
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[SPLIT_BODY])
+        if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
+            return httpx.Response(200, json={"items": [], "limit": 20, "offset": 0, "total": 0})
         raise AssertionError(f"unexpected path {request.url.path}")
 
     _patch_transport(monkeypatch, handler)
@@ -1585,6 +1659,8 @@ def test_run_detail_methodology_panel_renders_for_zero_split_run(monkeypatch) ->
             return httpx.Response(200, json=body)
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[])
+        if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
+            return httpx.Response(200, json={"items": [], "limit": 20, "offset": 0, "total": 0})
         raise AssertionError(f"unexpected path {request.url.path}")
 
     _patch_transport(monkeypatch, handler)
@@ -1611,6 +1687,8 @@ def test_run_detail_methodology_panel_renders_for_completed_multi_split_run(monk
             return httpx.Response(200, json=RUN_DETAIL_BODY)
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[SPLIT_BODY, UNDEFINED_DM_SPLIT_BODY])
+        if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
+            return httpx.Response(200, json={"items": [], "limit": 20, "offset": 0, "total": 0})
         raise AssertionError(f"unexpected path {request.url.path}")
 
     _patch_transport(monkeypatch, handler)
@@ -1659,6 +1737,8 @@ def test_run_detail_links_to_leakage_demo(monkeypatch) -> None:
             return httpx.Response(200, json=RUN_DETAIL_BODY)
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[SPLIT_BODY])
+        if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
+            return httpx.Response(200, json={"items": [], "limit": 20, "offset": 0, "total": 0})
         raise AssertionError(f"unexpected path {request.url.path}")
 
     _patch_transport(monkeypatch, handler)
@@ -1673,3 +1753,283 @@ def test_run_detail_links_to_leakage_demo(monkeypatch) -> None:
 
     follow_up = client.get("/help/leakage-demo")
     assert follow_up.status_code == 200
+
+
+# RAV-015: inline predicted-vs-actual chart per split on `run_detail`, reusing
+# `app.charting.build_predicted_vs_actual_chart`/`_predicted_vs_actual_chart.html`
+# exactly as `test_split_points_chart.py`'s own fixtures already establish for
+# the standalone `points-chart` route.
+
+RAV_015_POINTS_BODY = {
+    "items": [
+        {
+            "timestamp": "2026-01-10T06:00:00Z",
+            "predicted": 1.1,
+            "actual": 1.5,
+            "baseline_key": "naive_last",
+        },
+        {
+            "timestamp": "2026-01-10T07:00:00Z",
+            "predicted": 1.2,
+            "actual": 1.4,
+            "baseline_key": "naive_last",
+        },
+        {
+            "timestamp": "2026-01-10T06:00:00Z",
+            "predicted": 0.0,
+            "actual": 1.5,
+            "baseline_key": "naive0",
+        },
+        {
+            "timestamp": "2026-01-10T07:00:00Z",
+            "predicted": 0.0,
+            "actual": 1.4,
+            "baseline_key": "naive0",
+        },
+    ],
+    "limit": 20,
+    "offset": 0,
+    "total": 4,
+}
+
+SPLIT_BODY_INDEX_1 = {**SPLIT_BODY, "split_index": 1}
+
+
+def test_run_detail_renders_inline_chart_for_split_with_persisted_points(monkeypatch) -> None:
+    """Test AC: the sprint's own required test, verbatim from sprint-60.md's
+    Definition of Done -- `run_detail.html` renders the correct inline chart
+    for a fixture split's persisted points, using the real fetched values,
+    not a placeholder.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == f"/runs/{RUN_ID}":
+            return httpx.Response(200, json=RUN_DETAIL_BODY)
+        if request.url.path == f"/runs/{RUN_ID}/splits":
+            return httpx.Response(200, json=[SPLIT_BODY])
+        if request.url.path == f"/runs/{RUN_ID}/splits/0/points":
+            return httpx.Response(200, json=RAV_015_POINTS_BODY)
+        raise AssertionError(f"unexpected path {request.url.path}")
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get(f"/runs/{RUN_ID}")
+
+    assert response.status_code == 200
+    # The chart is rendered inline, inside this split's own in-page anchor
+    # target, not only reachable via the standalone points-chart route.
+    assert 'id="split-0-points-chart"' in response.text
+    assert 'href="#split-0-points-chart"' in response.text
+    assert "No per-point data available" not in response.text
+    inline_section = response.text.split('id="split-0-points-chart"')[1]
+    assert "<svg" in inline_section
+    assert "Actual value" in inline_section
+    assert "predicted value" in inline_section
+
+
+def test_run_detail_split_with_no_persisted_points_renders_placeholder_not_error(
+    monkeypatch,
+) -> None:
+    """Test AC: a split with no persisted points (pruned or never captured)
+    renders the existing `has_data=False` placeholder inline, not an error
+    and not a broken/empty `<svg>`.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == f"/runs/{RUN_ID}":
+            return httpx.Response(200, json=RUN_DETAIL_BODY)
+        if request.url.path == f"/runs/{RUN_ID}/splits":
+            return httpx.Response(200, json=[SPLIT_BODY])
+        if request.url.path == f"/runs/{RUN_ID}/splits/0/points":
+            return httpx.Response(200, json={"items": [], "limit": 20, "offset": 0, "total": 0})
+        raise AssertionError(f"unexpected path {request.url.path}")
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get(f"/runs/{RUN_ID}")
+
+    assert response.status_code == 200
+    inline_section = response.text.split('id="split-0-points-chart"')[1]
+    assert "No per-point data available for this split." in inline_section
+
+
+def test_run_detail_one_split_points_transport_failure_does_not_break_page(
+    monkeypatch,
+) -> None:
+    """Test AC: a transport failure on one split's points call does not
+    raise/500 the whole `run_detail` response -- the page still renders (the
+    existing table, other splits' rows/charts, etc.), and only the failing
+    split's own chart degrades to the placeholder.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == f"/runs/{RUN_ID}":
+            return httpx.Response(200, json=RUN_DETAIL_BODY)
+        if request.url.path == f"/runs/{RUN_ID}/splits":
+            return httpx.Response(200, json=[SPLIT_BODY, SPLIT_BODY_INDEX_1])
+        if request.url.path == f"/runs/{RUN_ID}/splits/0/points":
+            raise httpx.ConnectError("connection refused", request=request)
+        if request.url.path == f"/runs/{RUN_ID}/splits/1/points":
+            return httpx.Response(200, json=RAV_015_POINTS_BODY)
+        raise AssertionError(f"unexpected path {request.url.path}")
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get(f"/runs/{RUN_ID}")
+
+    # The whole page still renders successfully -- a flaky points call on
+    # split 0 never propagates into `_render_error_for_status` for the page.
+    assert response.status_code == 200
+    assert RUN_ID in response.text
+    # Every split's table row still renders (the failure is scoped to one
+    # split's chart only, not the per-split table) -- same
+    # `verdict-label-`-count convention `test_run_detail_large_split_count_
+    # shows_truncation_notice` (DASH-119) already established: one per
+    # rendered split, from the horizon-summary panel.
+    assert response.text.count("verdict-label-") == 2
+
+    # Split 0 (the one whose points call failed) degrades to the placeholder.
+    split_0_section = response.text.split('id="split-0-points-chart"')[1].split(
+        'id="split-1-points-chart"'
+    )[0]
+    assert "No per-point data available for this split." in split_0_section
+
+    # Split 1 (whose points call succeeded) still renders its real chart.
+    split_1_section = response.text.split('id="split-1-points-chart"')[1]
+    assert "<svg" in split_1_section
+    assert "No per-point data available" not in split_1_section
+
+
+def test_run_detail_502_on_one_split_points_call_degrades_only_that_split(
+    monkeypatch,
+) -> None:
+    """Same per-split degrade-on-failure guarantee, for a `502` forwarded
+    from gateway-api on one split's points call (not only a raw transport
+    exception) -- `_call_downstream` translates both shapes, and this route
+    must treat them the same way.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == f"/runs/{RUN_ID}":
+            return httpx.Response(200, json=RUN_DETAIL_BODY)
+        if request.url.path == f"/runs/{RUN_ID}/splits":
+            return httpx.Response(200, json=[SPLIT_BODY])
+        if request.url.path == f"/runs/{RUN_ID}/splits/0/points":
+            return httpx.Response(502, json={"detail": "downstream service unavailable"})
+        raise AssertionError(f"unexpected path {request.url.path}")
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get(f"/runs/{RUN_ID}")
+
+    assert response.status_code == 200
+    assert "results currently unavailable" not in response.text
+    inline_section = response.text.split('id="split-0-points-chart"')[1]
+    assert "No per-point data available for this split." in inline_section
+
+
+def test_run_detail_makes_exactly_one_points_call_per_rendered_split(monkeypatch) -> None:
+    """Test AC: for a fixture run with N rendered splits, exactly N points
+    calls are made -- not more, not fewer.
+    """
+    n_splits = 3
+    splits_fixture = [{**SPLIT_BODY, "split_index": i} for i in range(n_splits)]
+    points_calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == f"/runs/{RUN_ID}":
+            return httpx.Response(200, json=RUN_DETAIL_BODY)
+        if request.url.path == f"/runs/{RUN_ID}/splits":
+            return httpx.Response(200, json=splits_fixture)
+        if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith(
+            "/points"
+        ):
+            points_calls.append(request.url.path)
+            return httpx.Response(200, json={"items": [], "limit": 20, "offset": 0, "total": 0})
+        raise AssertionError(f"unexpected path {request.url.path}")
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get(f"/runs/{RUN_ID}")
+
+    assert response.status_code == 200
+    assert len(points_calls) == n_splits
+    assert points_calls == [f"/runs/{RUN_ID}/splits/{i}/points" for i in range(n_splits)]
+
+
+def test_run_detail_large_split_count_points_calls_bounded_by_max_rendered_splits(
+    monkeypatch,
+) -> None:
+    """Extends `test_run_detail_large_split_count_returns_200_not_500`
+    (DASH-119) to prove RAV-015's own N+1-awareness claim: a run whose
+    persisted split count (2000) exceeds `MAX_RENDERED_SPLITS` (500) still
+    makes only 500 points calls -- one per *rendered* split, never one per
+    the full unbounded `splits` list.
+    """
+    large_splits = [_make_split(i) for i in range(2000)]
+    points_calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == f"/runs/{RUN_ID}":
+            return httpx.Response(200, json=RUN_DETAIL_BODY)
+        if request.url.path == f"/runs/{RUN_ID}/splits":
+            return httpx.Response(200, json=large_splits)
+        if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith(
+            "/points"
+        ):
+            points_calls.append(request.url.path)
+            return httpx.Response(200, json={"items": [], "limit": 20, "offset": 0, "total": 0})
+        raise AssertionError(f"unexpected path {request.url.path}")
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get(f"/runs/{RUN_ID}")
+
+    assert response.status_code == 200
+    assert len(points_calls) == 500
+    # The most recent 500 (indices 1500..1999, the same tail DASH-119's own
+    # truncation test proves) -- never the head of the unbounded list.
+    assert points_calls[0] == f"/runs/{RUN_ID}/splits/1500/points"
+    assert points_calls[-1] == f"/runs/{RUN_ID}/splits/1999/points"
+
+
+def test_run_detail_inline_chart_section_has_no_banned_positioning_words() -> None:
+    """CLAUDE.md positioning scan for this ticket's own new copy in
+    `run_detail.html` (the "Per-split actual value vs. predicted value
+    charts" section) -- reuses the same word list/`{% include %}`-stripping
+    convention `test_run_detail_template_has_no_banned_positioning_words`
+    already established for the rest of this template.
+    """
+    import re
+
+    template_path = (
+        __import__("pathlib").Path(__file__).parent.parent
+        / "src"
+        / "app"
+        / "templates"
+        / "run_detail.html"
+    )
+    text = re.sub(r"\{%\s*include\s+.*?%\}", "", template_path.read_text(encoding="utf-8")).lower()
+    text = re.sub(r"\s+", " ", text)
+    text = text.replace(re.sub(r"\s+", " ", RAW_LEVELS_WARNING_SENTENCE.lower()), "")
+
+    for banned in ("prediction", "forecast", "signal", "recommendation", "target", "alpha", "edge"):
+        assert banned not in text, f"banned positioning word {banned!r} found in run_detail.html"

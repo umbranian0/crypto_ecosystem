@@ -376,6 +376,7 @@ from pydantic import ValidationError
 from app.charting import (
     DEFAULT_METRIC,
     METRIC_REGISTRY,
+    PredictedVsActualChartData,
     build_dm_verdict_chart,
     build_error_chart,
     build_headline_verdict_summary,
@@ -1214,20 +1215,55 @@ def run_detail(
             else []
         )
 
-    # DASH-119: cap what actually renders to `MAX_RENDERED_SPLITS`, showing
-    # the most recent ones (list-order tail -- `GET /runs/{id}/splits`' own
-    # existing order, no client re-sort) rather than trying to render all of
-    # them cheaply. The vast majority of runs (under RSS-004's 500-split
-    # cap) are unaffected: `rendered_splits is splits` and `splits_truncated`
-    # is `False`, so every downstream builder/template branch below gets
-    # exactly the same input, and therefore the same output, as before this
-    # ticket. Only a pre-RSS-004 run whose persisted split count exceeds the
-    # cap is truncated for rendering -- the full data remains fetchable via
-    # the API (`GET /runs/{run_id}/splits`, unbounded, untouched by this
-    # ticket) regardless of what this page renders.
-    total_splits_count = len(splits)
-    splits_truncated = total_splits_count > MAX_RENDERED_SPLITS
-    rendered_splits = splits[-MAX_RENDERED_SPLITS:] if splits_truncated else splits
+        # DASH-119: cap what actually renders to `MAX_RENDERED_SPLITS`, showing
+        # the most recent ones (list-order tail -- `GET /runs/{id}/splits`' own
+        # existing order, no client re-sort) rather than trying to render all of
+        # them cheaply. The vast majority of runs (under RSS-004's 500-split
+        # cap) are unaffected: `rendered_splits is splits` and `splits_truncated`
+        # is `False`, so every downstream builder/template branch below gets
+        # exactly the same input, and therefore the same output, as before this
+        # ticket. Only a pre-RSS-004 run whose persisted split count exceeds the
+        # cap is truncated for rendering -- the full data remains fetchable via
+        # the API (`GET /runs/{run_id}/splits`, unbounded, untouched by this
+        # ticket) regardless of what this page renders.
+        total_splits_count = len(splits)
+        splits_truncated = total_splits_count > MAX_RENDERED_SPLITS
+        rendered_splits = splits[-MAX_RENDERED_SPLITS:] if splits_truncated else splits
+
+        # RAV-015: one inline predicted-vs-actual chart per rendered split,
+        # reusing the exact same GW-031 points endpoint and
+        # `build_predicted_vs_actual_chart` DASH-129 already established for
+        # the standalone `points-chart` route -- no second point-series
+        # geometry implementation. Bounded by `rendered_splits`, never the
+        # unbounded `splits` list: exactly one points call per rendered
+        # split, i.e. at most `MAX_RENDERED_SPLITS` calls for the largest
+        # allowed run -- the same existing cap, not a new unbounded pattern
+        # (ticket Analysis section, "N+1 awareness").
+        #
+        # Per-split degrade-on-failure (binding, ticket Design section): a
+        # transport failure or a 502/504 forwarded from gateway-api on any
+        # *one* split's points call degrades only that split's own chart to
+        # the existing `has_data=False` placeholder -- it must never be
+        # propagated to `_render_error_for_status` for the whole page. One
+        # flaky split's points call must not fail every other split's table
+        # row/chart on this page (mirrors RAV-012's per-page decision for
+        # `runs_list`'s summary call, applied here per split instead).
+        split_points_charts: dict[int, PredictedVsActualChartData] = {}
+        for split in rendered_splits:
+            points_response, points_transport_status = _call_downstream(
+                client.get,
+                f"/runs/{run_id}/splits/{split.split_index}/points",
+                headers=headers,
+            )
+            if points_transport_status is not None or points_response.status_code in (502, 504):
+                split_points_charts[split.split_index] = build_predicted_vs_actual_chart([])
+                continue
+            points = (
+                [SplitPointResponse(**item) for item in points_response.json()["items"]]
+                if points_response.status_code == 200
+                else []
+            )
+            split_points_charts[split.split_index] = build_predicted_vs_actual_chart(points)
 
     # FHS-003: per-split (category, css_slug) pairs for the new validation
     # summary panel -- reuses `app.charting.verdict_category_and_css_slug`
@@ -1255,6 +1291,7 @@ def run_detail(
         {
             "run": run,
             "splits": rendered_splits,
+            "split_points_charts": split_points_charts,
             "methodology_facts": METHODOLOGY_FACTS,
             "methodology_intro": METHODOLOGY_INTRO,
             "error_chart": build_error_chart(rendered_splits, metric=metric),

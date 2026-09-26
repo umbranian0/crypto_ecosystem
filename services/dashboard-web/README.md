@@ -675,6 +675,11 @@ in the server's own `created_at DESC` order:
   positioning constraint), matching `run_detail.html`'s existing convention.
 - No client-side pagination, sorting, local record-keeping, or scraping of any other page is
   introduced -- this route calls `gateway-api`'s own list endpoint and renders exactly what it returns.
+- **Link to cross-run trend view (RAV-011, Sprint 60)**: when `runs` is non-empty, `runs_list.html`
+  now also shows `<a href="/runs/trend">See how this model configuration's validation results have
+  varied across its completed runs</a>`, reusing `runs_trend.html`'s own existing framing (RAV-009)
+  verbatim rather than independently-worded copy. Template-only addition -- no new route, no change to
+  this router. Not shown in the zero-runs branch.
 
 ## Ingested datasets (DASH-111)
 
@@ -2431,6 +2436,43 @@ drill-down from `run_detail.html`'s existing per-split table, not a replacement 
 - **Full suite**: 354 unit passed (up from ~347), 7 e2e passed (Selenium, actually run this ticket --
   Chrome + Selenium Manager were available in this environment), zero regressions to the existing
   login -> submit -> view loop.
+
+### Inline rendering on `run_detail` (RAV-015, Sprint 60)
+
+`run_detail.html`'s per-split table no longer sends a tenant to this separate `points-chart` page to see
+a split's predicted-vs-actual chart -- each rendered split's chart now also renders **inline**, directly
+below the table, reusing this exact same `build_predicted_vs_actual_chart(points)` function and
+`_predicted_vs_actual_chart.html` partial (`{% include %}`-ed once per split, no fork/second copy).
+
+- **Standalone route decision (Tech Lead's call, RAV-015 AC): kept.** `GET /runs/{run_id}/splits/
+  {split_index}/points-chart` remains live as a shareable/printable single-split view -- it costs nothing
+  extra to keep (same shared partial/function), and removing it would break any already-bookmarked or
+  shared URL for no offsetting benefit.
+- **Per-split table row** now links to an in-page anchor (`<a href="#split-{{ split.split_index }}-
+  points-chart">View chart below</a>`) instead of navigating away; the chart itself renders in a new
+  "Per-split actual value vs. predicted value charts" section below the table, one `<div id="split-{{
+  split.split_index }}-points-chart">` per rendered split.
+- **Call count, bounded (N+1-awareness)**: `run_detail` (`routers/runs.py`) makes exactly one `GET
+  /runs/{run_id}/splits/{split_index}/points` call per split in `rendered_splits` -- the same list
+  DASH-119's existing `MAX_RENDERED_SPLITS = 500` cap already bounds, never the unbounded `splits` list.
+  A run with more than 500 persisted splits still makes at most 500 points calls (the most recent 500,
+  same tail DASH-119 already renders) -- proved by
+  `test_run_detail_large_split_count_points_calls_bounded_by_max_rendered_splits`.
+- **Per-split degrade-on-failure**: a transport failure or a `502`/`504` forwarded from gateway-api on
+  any *one* split's points call degrades only that split's own chart to the existing
+  `has_data=False` "No per-point data available for this split." placeholder -- it is never propagated
+  to `_render_error_for_status` for the whole page. Every other split's table row and chart render
+  normally even when one split's points call fails.
+- **Known, carried-forward limitation (not introduced or worsened by this ticket)**: the points
+  endpoint's `limit` query param still defaults to 20 (gateway-api/validation-service's existing
+  `Query(default=20)`); a split whose test window has more than 20 points shows only the first 20 in
+  both the standalone page and this inline chart, same as before this ticket. No DASH-122-style paging
+  loop was added here either, since RAV-015's own acceptance criteria don't call for one.
+- **Tests**: `tests/test_runs_detail.py` gained the inline-chart-with-real-points test, the
+  no-persisted-points placeholder test, two per-split degrade-on-failure tests (raw transport error and
+  a forwarded `502`), the exactly-one-call-per-rendered-split test, the bounded-by-`MAX_RENDERED_SPLITS`
+  test, and an extension of the existing banned-positioning-word scan to the new template section --
+  ~360 new lines, all passing alongside the full existing suite (430 passed, 8 deselected).
 
 ## AI-assisted features (AI-003)
 

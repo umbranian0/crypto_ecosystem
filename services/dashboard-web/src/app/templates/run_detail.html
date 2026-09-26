@@ -112,12 +112,25 @@ splits below -- full per-split detail for this run remains available via the API
             <td>{{ split.dm_statistic|round4 }}</td>
             <td>{{ split.dm_pvalue|round4 }}</td>
             <td>{{ split.dm_verdict }}</td>
-            <td><a href="/runs/{{ run.id }}/splits/{{ split.split_index }}/points-chart">Actual vs. predicted value</a></td>
+            <td><a href="#split-{{ split.split_index }}-points-chart">View chart below</a></td>
         </tr>
         {% endfor %}
     </tbody>
 </table>
 </div>
+
+<h3>Per-split actual value vs. predicted value charts</h3>
+<p>Backtested validation result for each split's own already-completed test window -- not a statement
+about any value outside that split's own recorded data. A standalone, shareable/printable version of
+each chart below also remains available at
+<code>/runs/{{ run.id }}/splits/&lt;split index&gt;/points-chart</code>.</p>
+{% for split in splits %}
+<div id="split-{{ split.split_index }}-points-chart">
+{% set points_chart = split_points_charts[split.split_index] %}
+{% set split_index = split.split_index %}
+{% include "_predicted_vs_actual_chart.html" %}
+</div>
+{% endfor %}
 {% else %}
 <p>No per-split validation results yet for this run.</p>
 {% endif %}

@@ -261,3 +261,13 @@ stress-test until after code is written. That sprint could also pair `ADMIN-005`
 — that scope call belongs to the Product Owner/requester, not preempted here. Sprint 60's own PM pass should
 re-verify these citations against then-current code before handing off to the Tech Lead, same as this one
 was.
+
+**Update (2026-09-25, orchestrating PM, mid-Sprint-59-cycle course correction):** the requester redirected
+Sprint 60 to a new, unrelated data-visualization ask (runs-list charting + inline predicted-vs-actual charts
+on `run_detail`, tracked as a new epic in `docs/product/backlog-run-analysis-visualization.md`) before
+`ADMIN-005` was picked up. **`ADMIN-005` is explicitly deferred, not dropped**, by that redirection — its
+own lockout-guard risk and the `/grilling` recommendation above still stand and remain the right next step
+for Epic C whenever the requester returns to it. It is not scheduled for Sprint 60 and has no committed
+sprint target as of this update; the next PM pass that picks Epic C back up should re-verify this section's
+citations against then-current code before proceeding, same discipline this file already asked of Sprint 60
+before the redirect.

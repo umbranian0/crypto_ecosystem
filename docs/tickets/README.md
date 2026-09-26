@@ -2478,6 +2478,32 @@ comparison logic (`better > other`) is simple and unambiguous — not added, sin
 criteria didn't call for it and the code path is already exercised by the "majority worse" and
 "majority better" tests.
 
+# Sprint 60 — Run analysis visualization, Epic D closure (dashboard-web + gateway-api + validation-service + libs/common, RAV-*)
+
+Source: `docs/sprints/sprint-60.md`, `docs/product/backlog-run-analysis-visualization.md` Epic D
+(`RAV-011` through `RAV-015`, added 2026-09-25 — closes exactly two founder-named gaps: runs-list
+visualization prominence and an inline per-split predicted-vs-actual chart on `run_detail`). This is
+Epic D's entire scope; Epic D is the last epic in this backlog (Epics A/B/C already shipped Sprint
+26/28, per those sections above).
+
+| Ticket | Story | Module | Depends on | Status |
+| --- | --- | --- | --- | --- |
+| [RAV-011](RAV-011.md) | Visible link from `runs_list.html` to the existing `/runs/trend` cross-run view | dashboard-web | none | done |
+| [RAV-012](RAV-012.md) | Bounded per-run split-summary batched endpoint (`GET /runs/splits/summary`) for the runs-list page | validation-service, gateway-api, libs/common, dashboard-web | none (blocks RAV-013, RAV-014) | todo |
+| [RAV-013](RAV-013.md) | Per-run verdict indicator (benchmark-comparison outcome) on the runs list | dashboard-web | RAV-012 | todo |
+| [RAV-014](RAV-014.md) | Per-run compact MAE sparkline on the runs list | dashboard-web | RAV-012 | todo |
+| [RAV-015](RAV-015.md) | Inline predicted-vs-actual chart per split on `run_detail` (replaces the per-split page link) | dashboard-web | none | done |
+
+Sequencing per sprint-60.md's own file-overlap analysis: RAV-011 → RAV-012 → RAV-013 → RAV-014 as
+serial edits (all four touch `runs_list.html`/`routers/runs.py`'s `runs_list` region — sequenced,
+not parallel-dispatched, to avoid same-file collisions); RAV-015 is an independent track (different
+function/template — `run_detail`, not `runs_list`) and was dispatched in parallel.
+
+Status will be updated to `in-review` while the Tech Lead verifies each ticket's acceptance criteria
+against the actual diff/tests, and `done` only after that verification passes and documentation lands.
+A mandatory QA gate (per this platform's standing rule) follows once all five are Tech-Lead-verified
+done — see this section's own update once that pass completes.
+
 # DASH-119 — urgent production bug fix: `GET /runs/{run_id}` 500s on an oversized run (dashboard-web)
 
 | Ticket | Story | Depends on | Status |
