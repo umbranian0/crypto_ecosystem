@@ -733,6 +733,18 @@ in the server's own `created_at DESC` order:
   either. Colors reuse the exact same `.bar-model`/`.bar-naive0` class names and
   `--color-accent`/`--color-accent-2` variables `_error_chart.html` already established -- no new hex
   literal, never green/red.
+  **QA regression fix (re-opened ticket)**: `build_error_sparkline` originally had no upper bound on
+  split count -- a real 550-split run in the Docker stack rendered 1,100 `<rect>` elements in one
+  96x28px table cell (371 KB of page weight for a 4-run runs-list page), both a real performance
+  problem on this platform's highest-traffic page and visually meaningless at that density (550
+  bar-pairs cannot be told apart in 96px of width). Fixed by capping to the **most recent 20 splits**
+  (`_SPARKLINE_MAX_SPLITS = 20`, `charting.py`) -- truncated via list-order tail (`splits[-20:]`, the
+  same truncation pattern `run_detail`'s own `MAX_RENDERED_SPLITS = 500` uses) *before* the `< 2`
+  placeholder check and before any geometry is computed, so a 550-split run now renders its most recent
+  20 splits rather than either all 550 or a fabricated `has_data=False`. Deliberately not the same 500
+  as `run_detail`'s cap -- 500 bars is still visually meaningless at 96px wide, the exact bug this fix
+  addresses; 20 matches this platform's own existing "how many recent things do we show by default"
+  convention (`gateway-api`'s `GET /runs` `Query(default=20)`).
 
 ## Ingested datasets (DASH-111)
 

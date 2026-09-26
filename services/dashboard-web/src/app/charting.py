@@ -98,6 +98,16 @@ copy). Fixed, small dimensions (`_SPARKLINE_WIDTH`/`_SPARKLINE_HEIGHT`,
 caller (`runs_list.html`) must render an explicit placeholder, never a
 broken/misleadingly flat SVG.
 
+QA finding (RAV-014 regression, re-opened ticket): the function originally
+had no upper bound on split count -- a real 550-split run rendered 1,100
+`<rect>` elements in one 96x28px table cell. `build_error_sparkline` now
+truncates to the most recent `_SPARKLINE_MAX_SPLITS` (20) splits (list-order
+tail, `splits[-N:]`, the same truncation pattern `run_detail`'s own
+`MAX_RENDERED_SPLITS` (500) uses) before computing anything -- a
+deliberately much smaller cap than `run_detail`'s, sized to this component's
+own 96px-wide visual scale rather than borrowed from a different
+component's different reasoning.
+
 DASH-129 (RAV-008): `build_predicted_vs_actual_chart` takes a single split's
 already-fetched `list[SplitPointResponse]` (GW-031/VS-033's per-split
 drill-down endpoint) and returns point/line geometry for that split's own
@@ -424,6 +434,20 @@ _SPARKLINE_BAR_GAP = 1
 _SPARKLINE_GROUP_GAP = 2
 _SPARKLINE_MIN_BAR_WIDTH = 0.5
 
+# QA finding (RAV-014 regression, re-opened ticket): unlike `run_detail`'s
+# `MAX_RENDERED_SPLITS` (500, app/routers/runs.py), this function had no cap
+# at all -- a real 550-split run rendered 1,100 `<rect>` elements in one
+# 96x28px table cell (371 KB of page weight for a 4-run runs-list page),
+# both a real performance problem on this platform's highest-traffic page
+# and visually meaningless at that density (550 bar-pairs cannot be told
+# apart in 96px of width). `run_detail`'s own 500 is still far too many bars
+# for a sparkline this small -- this cap is deliberately much smaller, sized
+# to this component's own visual scale, not borrowed from a different
+# component's different reasoning. 20 matches this platform's own existing
+# "how many recent things do we show by default" convention
+# (`gateway-api`'s `GET /runs` `Query(default=20)`).
+_SPARKLINE_MAX_SPLITS = 20
+
 
 @dataclass(frozen=True)
 class SparklineChartData:
@@ -449,7 +473,18 @@ def build_error_sparkline(splits: list[SplitResultResponse]) -> SparklineChartDa
     MAE-series computation. A run with fewer than 2 splits returns
     `has_data=False` (an explicit placeholder threshold, not fewer than 1) --
     a single split has no shape worth drawing as a sparkline.
+
+    QA regression fix: truncated to the most recent `_SPARKLINE_MAX_SPLITS`
+    splits (list-order tail, `splits[-N:]` -- the same truncation pattern
+    `run_detail`'s own `MAX_RENDERED_SPLITS` uses, applied here with this
+    component's own much smaller cap, see `_SPARKLINE_MAX_SPLITS`'s own
+    docstring for why) *before* the `< 2` placeholder check and before any
+    geometry is computed, so a run with hundreds of splits renders its most
+    recent `_SPARKLINE_MAX_SPLITS` rather than either every split (the bug)
+    or `has_data=False` (the threshold is evaluated against the truncated
+    count, not the original one).
     """
+    splits = splits[-_SPARKLINE_MAX_SPLITS:]
     if len(splits) < 2:
         return SparklineChartData(width=_SPARKLINE_WIDTH, height=_SPARKLINE_HEIGHT, has_data=False)
 

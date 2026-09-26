@@ -26,6 +26,7 @@ from app.charting import (
     MODEL_COLUMN_PLACEHOLDER_LABEL,
     NOT_BEATING_NAIVE_IS_EXPECTED_SENTENCE,
     UNDEFINED_VERDICT_CATEGORY,
+    _SPARKLINE_MAX_SPLITS,
     build_dm_verdict_chart,
     build_error_chart,
     build_error_sparkline,
@@ -220,6 +221,24 @@ def test_build_error_sparkline_zero_error_splits_do_not_divide_by_zero() -> None
 
     assert sparkline.splits[0].model.height == 0.0
     assert sparkline.splits[0].naive0.height == 0.0
+
+
+def test_build_error_sparkline_caps_to_most_recent_splits_for_a_large_run() -> None:
+    """QA regression (RAV-014 re-opened): a real 550-split run rendered 1,100
+    `<rect>` elements in one 96x28px table cell -- unbounded before this fix.
+    Asserts the returned sparkline has exactly `_SPARKLINE_MAX_SPLITS` bars,
+    not 550, and that those bars are the most recent ones (list-order tail,
+    matching `run_detail`'s own `MAX_RENDERED_SPLITS` truncation direction).
+    """
+    splits = [_split(i, model_mae=float(i), naive0_mae=float(i) + 1.0) for i in range(550)]
+
+    sparkline = build_error_sparkline(splits)
+
+    assert sparkline.has_data is True
+    assert len(sparkline.splits) == _SPARKLINE_MAX_SPLITS
+    assert [bar.split_index for bar in sparkline.splits] == list(
+        range(550 - _SPARKLINE_MAX_SPLITS, 550)
+    )
 
 
 def _run_summary(run_id: str, status: str = "completed") -> RunSummaryResponse:
