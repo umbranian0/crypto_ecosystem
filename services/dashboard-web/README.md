@@ -680,6 +680,17 @@ in the server's own `created_at DESC` order:
   varied across its completed runs</a>`, reusing `runs_trend.html`'s own existing framing (RAV-009)
   verbatim rather than independently-worded copy. Template-only addition -- no new route, no change to
   this router. Not shown in the zero-runs branch.
+- **Batched per-run split summary call (RAV-012, Sprint 60)**: `runs_list` now also calls `gateway-api`'s
+  new batched `GET /runs/splits/summary` (RAV-012) exactly **once** per page load, whenever the primary
+  `GET /runs` call returns a non-empty page -- passing every rendered run's id as a repeated `run_id`
+  query param (`_fetch_run_splits_summary`), not one call per run. Parsed into
+  `dict[str, list[SplitResultResponse]]` keyed by `run_id` (a run absent from the response, e.g. one with
+  zero splits, defaults to `[]`) and passed into the template context as `run_splits_summary` -- **not
+  rendered by this ticket**, `RAV-013`'s verdict indicator and `RAV-014`'s sparkline are the first
+  consumers. **Failure handling, deliberately not the blocking `_call_downstream`/`_render_error_for_status`
+  pattern**: a transport failure or non-200 response on this one call degrades to an empty `{}` summary
+  dict rather than failing the whole page -- same "degrade, don't block" precedent
+  `_fetch_ingestion_datasets` already established for `run_new_form`/`datasets_list`.
 
 ## Ingested datasets (DASH-111)
 

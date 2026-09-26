@@ -37,6 +37,7 @@ Implementation-plan.md section 8: "for libs, the public function signatures in t
 - `ClientBaselineResult` (class)
 - `SplitResultResponse` (class)
 - `SplitPointResponse` (class)
+- `RunSplitSummary` (class)
 
 ### `testing.py`
 - `sqlite_db_path(tmp_path)`

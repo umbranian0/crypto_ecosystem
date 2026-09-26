@@ -55,6 +55,15 @@ RUNS_LIST_BODY = {
 
 EMPTY_RUNS_LIST_BODY = {"items": [], "limit": 50, "offset": 0, "total": 0}
 
+# RAV-012: `runs_list` now makes a second call, `GET /runs/splits/summary`,
+# whenever the first `GET /runs` call returns a non-empty page -- every
+# handler below that responds with a non-empty `items` list for `GET /runs`
+# must also answer this second path (an empty `{"items": []}` degrade-shaped
+# response is enough for tests not specifically about this feature; see
+# `test_runs_splits_summary.py` for the dedicated one-call/degrade tests).
+def _empty_splits_summary_response() -> httpx.Response:
+    return httpx.Response(200, json={"items": []})
+
 
 def _login(client: TestClient) -> None:
     session_store = get_session_store()
@@ -83,8 +92,10 @@ def _patch_transport(monkeypatch, handler) -> None:
 def test_runs_list_success_with_multiple_runs(monkeypatch) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.headers["authorization"] == f"Bearer {RAW_KEY}"
-        assert request.url.path == "/runs"
-        return httpx.Response(200, json=RUNS_LIST_BODY)
+        if request.url.path == "/runs":
+            return httpx.Response(200, json=RUNS_LIST_BODY)
+        assert request.url.path == "/runs/splits/summary"
+        return _empty_splits_summary_response()
 
     _patch_transport(monkeypatch, handler)
 
@@ -123,7 +134,9 @@ def test_runs_list_renders_label_when_present_and_id_stays_visible(monkeypatch) 
     }
 
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json=body)
+        if request.url.path == "/runs":
+            return httpx.Response(200, json=body)
+        return _empty_splits_summary_response()
 
     _patch_transport(monkeypatch, handler)
 
@@ -139,7 +152,9 @@ def test_runs_list_renders_label_when_present_and_id_stays_visible(monkeypatch) 
 
 def test_runs_list_renders_bare_id_when_label_absent(monkeypatch) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json=RUNS_LIST_BODY)
+        if request.url.path == "/runs":
+            return httpx.Response(200, json=RUNS_LIST_BODY)
+        return _empty_splits_summary_response()
 
     _patch_transport(monkeypatch, handler)
 
@@ -255,7 +270,9 @@ def test_runs_list_pagination_next_link_present_when_more_pages_exist(monkeypatc
     }
 
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json=body)
+        if request.url.path == "/runs":
+            return httpx.Response(200, json=body)
+        return _empty_splits_summary_response()
 
     _patch_transport(monkeypatch, handler)
 
@@ -278,7 +295,9 @@ def test_runs_list_pagination_previous_link_present_when_not_first_page(monkeypa
     }
 
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json=body)
+        if request.url.path == "/runs":
+            return httpx.Response(200, json=body)
+        return _empty_splits_summary_response()
 
     _patch_transport(monkeypatch, handler)
 
@@ -302,7 +321,9 @@ def test_runs_list_pagination_next_absent_on_last_page(monkeypatch) -> None:
     }
 
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json=body)
+        if request.url.path == "/runs":
+            return httpx.Response(200, json=body)
+        return _empty_splits_summary_response()
 
     _patch_transport(monkeypatch, handler)
 
@@ -318,7 +339,9 @@ def test_runs_list_pagination_next_absent_on_last_page(monkeypatch) -> None:
 
 def test_runs_list_pagination_absent_for_single_page_total(monkeypatch) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json=RUNS_LIST_BODY)
+        if request.url.path == "/runs":
+            return httpx.Response(200, json=RUNS_LIST_BODY)
+        return _empty_splits_summary_response()
 
     _patch_transport(monkeypatch, handler)
 
@@ -337,7 +360,9 @@ def test_runs_list_links_to_trend_view_when_runs_present(monkeypatch) -> None:
     cross-run trend view (`/runs/trend`, RAV-009)."""
 
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json=RUNS_LIST_BODY)
+        if request.url.path == "/runs":
+            return httpx.Response(200, json=RUNS_LIST_BODY)
+        return _empty_splits_summary_response()
 
     _patch_transport(monkeypatch, handler)
 

@@ -242,6 +242,62 @@ def test_tenant_isolation_get_run_and_get_splits_never_leak_across_tenants(run_r
     assert [s.tenant_id for s in split_repo.get_splits("tenant-b", run_b.id)] == ["tenant-b"]
 
 
+def test_get_splits_for_runs_groups_orders_and_excludes_foreign_tenant(run_repo, split_repo) -> None:
+    """RAV-012: a fixture of 3 runs -- 2 owned by `tenant-1` (with splits) and
+    1 belonging to `tenant-2` -- returns exactly the 2 owned runs' splits,
+    correctly grouped and ordered by `split_index`; the foreign-tenant run is
+    simply absent from the result dict, not an error."""
+    run_1 = run_repo.create_run(
+        tenant_id="tenant-1",
+        dataset_id="dataset-1",
+        horizon=1,
+        purge_gap_hours=4.0,
+        split_config=SPLIT_CONFIG,
+    )
+    run_2 = run_repo.create_run(
+        tenant_id="tenant-1",
+        dataset_id="dataset-2",
+        horizon=1,
+        purge_gap_hours=4.0,
+        split_config=SPLIT_CONFIG,
+    )
+    run_foreign = run_repo.create_run(
+        tenant_id="tenant-2",
+        dataset_id="dataset-foreign",
+        horizon=1,
+        purge_gap_hours=4.0,
+        split_config=SPLIT_CONFIG,
+    )
+
+    split_repo.add_splits(
+        "tenant-1",
+        run_1.id,
+        [_make_split(run_1.id, "tenant-1", 2), _make_split(run_1.id, "tenant-1", 0)],
+    )
+    split_repo.add_splits(
+        "tenant-1",
+        run_2.id,
+        [_make_split(run_2.id, "tenant-1", 1)],
+    )
+    split_repo.add_splits(
+        "tenant-2",
+        run_foreign.id,
+        [_make_split(run_foreign.id, "tenant-2", 0)],
+    )
+
+    result = split_repo.get_splits_for_runs(
+        "tenant-1", [run_1.id, run_2.id, run_foreign.id]
+    )
+
+    assert set(result.keys()) == {run_1.id, run_2.id}
+    assert [s.split_index for s in result[run_1.id]] == [0, 2]
+    assert [s.split_index for s in result[run_2.id]] == [1]
+
+
+def test_get_splits_for_runs_empty_run_ids_returns_empty_dict(split_repo) -> None:
+    assert split_repo.get_splits_for_runs("tenant-1", []) == {}
+
+
 def test_tenant_isolation_update_run_status_does_not_affect_other_tenant(run_repo) -> None:
     """A wrong-tenant `update_run_status` call must be a silent no-op on the
     other tenant's row, not an accidental cross-tenant write.

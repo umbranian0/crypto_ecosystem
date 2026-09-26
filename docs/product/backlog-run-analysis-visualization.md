@@ -433,31 +433,34 @@ This is the open design question named explicitly in this epic's own brief — t
 that one bounding approach be chosen and proven bounded; they do not prescribe which one.
 
 Acceptance criteria:
-- [ ] `runs_list` (`routers/runs.py`, currently only calling `GET /runs` at line 727) gains access, for every run
+- [x] `runs_list` (`routers/runs.py`, currently only calling `GET /runs` at line 727) gains access, for every run
       on the currently rendered page only, to the same per-split `model_mae`/`naive0_mae` and `dm_verdict` data
       already returned by `GET /runs/{run_id}/splits` (gateway-api `routers/runs.py:get_splits`, line 203;
       validation-service `routers/splits.py:get_splits`, line 116) — reusing that existing `SplitResultResponse`
       contract shape, never a parallel/duplicate field set.
-- [ ] The sprint's sequencing/Tech Lead decision picks **exactly one** bounding approach and states it explicitly
+- [x] The sprint's sequencing/Tech Lead decision picks **exactly one** bounding approach and states it explicitly
       in the ticket: (a) a new batched/summary endpoint on gateway-api + validation-service accepting a page of
       run IDs and returning per-run split-summary data in one round trip; (b) a bounded per-page N+1, with a hard,
       enforced page-size cap on `runs_list`'s own `limit` parameter, so the number of downstream calls per page
       load is capped at that same limit; or (c) a precomputed summary field persisted on the run row and kept in
       sync as splits complete. Whichever is chosen, this story does not authorize skipping the choice — one runs-
       list page load must issue a bounded, page-size-proportional number of downstream calls, never one uncapped
-      call per run regardless of how many runs a tenant has accumulated.
-- [ ] If (b) is chosen, `runs_list`'s `limit` parameter (already accepted today, line 731, currently unbounded)
-      gets an enforced hard maximum — the bound must be real, not "usually small in practice."
-- [ ] No change to `GET /runs/{run_id}/splits`'s own existing contract or behavior — this is additive only (a new
+      call per run regardless of how many runs a tenant has accumulated. **Chosen: (a).**
+- [x] If (b) is chosen, `runs_list`'s `limit` parameter (already accepted today, line 731, currently unbounded)
+      gets an enforced hard maximum — the bound must be real, not "usually small in practice." N/A — (a) was
+      chosen, not (b); sprint-60.md explicitly does not mandate a `limit` ceiling as part of this ticket.
+- [x] No change to `GET /runs/{run_id}/splits`'s own existing contract or behavior — this is additive only (a new
       endpoint, or a new call pattern against the existing one), never a repurposing of the per-run detail
       endpoint.
-- [ ] Test: a fixture page of N runs results in a provably bounded number of downstream HTTP calls from
+- [x] Test: a fixture page of N runs results in a provably bounded number of downstream HTTP calls from
       dashboard-web (not O(N) uncapped, and not asserted only in a docstring).
 
 Rationale for priority: prerequisite/enabler for RAV-013 and RAV-014 — neither can render real per-run data
 without it, and this epic's own brief requires the N+1 question to be a named, resolved concern before those
 stories ship rather than discovered during implementation. Must, because both of its dependents are Must.
 Depends on: none (blocks RAV-013, RAV-014)
+
+**Status: DONE (Sprint 60, `docs/tickets/RAV-012.md`).**
 
 ### RAV-013 — Per-run verdict indicator on the runs list [Must]
 **As** dashboard-web, **I want** each row on `runs_list.html` to show a compact indicator of that run's benchmark-

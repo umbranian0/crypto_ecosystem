@@ -218,6 +218,17 @@ class SplitResultRepository(typing.Protocol):
         """
         ...
 
+    def get_splits_for_runs(
+        self, tenant_id: str, run_ids: list[str]
+    ) -> dict[str, list[SplitResultRecord]]:
+        """Batched form of get_splits (RAV-012). A run_id with no splits, or
+        not belonging to this tenant, is simply absent from the result dict
+        -- never an error, never a KeyError for the caller to guard against.
+        Each present run's list is ordered by split_index ascending, same as
+        get_splits.
+        """
+        ...
+
 
 @typing.runtime_checkable
 class SplitPointRepository(typing.Protocol):

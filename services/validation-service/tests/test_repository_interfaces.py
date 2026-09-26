@@ -119,6 +119,14 @@ class _FakeSplitResultRepository:
     def get_splits(self, tenant_id, run_id) -> list[SplitResultRecord]:
         return sorted(self._splits.get((tenant_id, run_id), []), key=lambda s: s.split_index)
 
+    def get_splits_for_runs(self, tenant_id, run_ids) -> dict[str, list[SplitResultRecord]]:
+        result = {}
+        for run_id in run_ids:
+            splits = self.get_splits(tenant_id, run_id)
+            if splits:
+                result[run_id] = splits
+        return result
+
 
 def _make_split(split_index: int, **overrides) -> SplitResultRecord:
     fields = dict(

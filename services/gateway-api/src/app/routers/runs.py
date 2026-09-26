@@ -75,6 +75,7 @@ from naive_first_common.contracts import (
     RunDetailResponse,
     RunRequest,
     RunResponse,
+    RunSplitSummary,
     RunSummaryResponse,
     SplitPointResponse,
     SplitResultResponse,
@@ -122,6 +123,20 @@ class SplitPointsResponse(BaseModel):
     limit: int
     offset: int
     total: int
+
+
+class RunSplitsSummaryResponse(BaseModel):
+    """RAV-012: response envelope for `GET /runs/splits/summary`, mirroring
+    `validation-service`'s own `RunSplitsSummaryResponse` envelope
+    field-for-field (`services/validation-service/src/app/routers/
+    splits.py`) since this is a pass-through proxy, not a reimplementation.
+    `items` uses `RunSplitSummary`, imported from
+    `naive_first_common.contracts` (ARCH-003) -- never redefined here. This
+    envelope shape itself is local to this router, same precedent as
+    `RunListResponse`/`SplitPointsResponse` above.
+    """
+
+    items: list[RunSplitSummary]
 
 
 def _raise_for_error(response: httpx.Response) -> None:
@@ -209,6 +224,27 @@ def get_splits(
     response = _call_downstream(client.get, f"/runs/{run_id}/splits", headers=headers)
     _raise_for_error(response)
     return [SplitResultResponse(**item) for item in response.json()]
+
+
+@router.get("/runs/splits/summary", response_model=RunSplitsSummaryResponse)
+def get_splits_summary(
+    client: ValidationServiceClientDep,
+    tenant: TenantContext = Depends(get_authenticated_tenant),
+    run_id: list[str] = Query(default=[]),
+) -> RunSplitsSummaryResponse:
+    """RAV-012: batched pass-through of `validation-service`'s own
+    `GET /runs/splits/summary` -- same 3-path-segment route (deliberately
+    avoids colliding with `/runs/{run_id}`/`/runs/{run_id}/splits`, see that
+    ticket's Analysis section), same shape as `get_splits` above. `run_id`
+    is forwarded as a repeated query param unmodified -- no business logic
+    reimplemented here.
+    """
+    headers = build_downstream_headers(tenant)
+    response = _call_downstream(
+        client.get, "/runs/splits/summary", params={"run_id": run_id}, headers=headers
+    )
+    _raise_for_error(response)
+    return RunSplitsSummaryResponse(**response.json())
 
 
 @router.get(

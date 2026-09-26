@@ -303,6 +303,24 @@ class SQLiteSplitResultRepository:
             )
             return [_split_result_to_record(row) for row in rows]
 
+    def get_splits_for_runs(
+        self, tenant_id: str, run_ids: list[str]
+    ) -> dict[str, list[SplitResultRecord]]:
+        with Session(self._engine) as session:
+            rows = (
+                session.execute(
+                    select(SplitResult)
+                    .where(SplitResult.run_id.in_(run_ids), SplitResult.tenant_id == tenant_id)
+                    .order_by(SplitResult.run_id, SplitResult.split_index)
+                )
+                .scalars()
+                .all()
+            )
+            result: dict[str, list[SplitResultRecord]] = {}
+            for row in rows:
+                result.setdefault(row.run_id, []).append(_split_result_to_record(row))
+            return result
+
 
 class SQLiteSplitPointRepository:
     """SQLite implementation of `SplitPointRepository` (VS-031)."""

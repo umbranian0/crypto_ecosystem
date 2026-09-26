@@ -367,3 +367,12 @@ class SplitPointResponse(BaseModel):
     predicted: float
     actual: float
     baseline_key: str
+
+
+class RunSplitSummary(BaseModel):
+    """RAV-012: one run's entry within the batched `GET /runs/splits/summary`
+    response. Reuses `SplitResultResponse` verbatim for the per-split shape
+    -- never a fourth hand-duplicated field list (ARCH-003)."""
+
+    run_id: str
+    splits: list[SplitResultResponse]

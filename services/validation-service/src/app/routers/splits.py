@@ -54,6 +54,7 @@ from pydantic import BaseModel
 from naive_first_common import TenantContext, get_tenant_context
 from naive_first_common.contracts import (
     ClientBaselineResult,
+    RunSplitSummary,
     SplitPointResponse,
     SplitResultResponse,
 )
@@ -64,8 +65,19 @@ from app.dependencies.repositories import (
     SplitResultRepositoryDep,
     ValidationRunRepositoryDep,
 )
+from app.repositories.interfaces import SplitResultRecord
 
 router = APIRouter()
+
+
+class RunSplitsSummaryResponse(BaseModel):
+    """RAV-012 response envelope for `GET /runs/splits/summary`: `items` is
+    `RunSplitSummary` (imported from `naive_first_common.contracts`, never
+    redefined here) -- same "local envelope, shared item shape" precedent
+    `SplitPointsResponse` below already established.
+    """
+
+    items: list[RunSplitSummary]
 
 
 class SplitPointsResponse(BaseModel):
@@ -112,6 +124,40 @@ def _client_baseline_response(client_baseline_results: dict | None) -> ClientBas
     )
 
 
+def _split_result_to_response(split: SplitResultRecord) -> SplitResultResponse:
+    """Extracted from `get_splits` (RAV-012) so the 20-field mapping has
+    exactly one copy -- reused by both `get_splits` and
+    `get_splits_summary` below."""
+    return SplitResultResponse(
+        split_index=split.split_index,
+        train_start=split.train_start,
+        train_end=split.train_end,
+        purge_start=split.purge_start,
+        purge_end=split.purge_end,
+        test_start=split.test_start,
+        test_end=split.test_end,
+        model_mae=split.model_mae,
+        model_rmse=split.model_rmse,
+        model_smape=split.model_smape,
+        model_mase=split.model_mase,
+        model_da=split.model_da,
+        model_f1=split.model_f1,
+        model_oos_r2=split.model_oos_r2,
+        naive0_mae=split.naive0_mae,
+        naive0_rmse=split.naive0_rmse,
+        naive0_smape=split.naive0_smape,
+        naive0_mase=split.naive0_mase,
+        naive0_da=split.naive0_da,
+        naive0_f1=split.naive0_f1,
+        naive0_oos_r2=split.naive0_oos_r2,
+        dm_statistic=split.dm_statistic,
+        dm_pvalue=split.dm_pvalue,
+        dm_verdict=split.dm_verdict,
+        client_baseline=_client_baseline_response(split.client_baseline_results),
+        has_client_model=split.client_baseline_results is not None,
+    )
+
+
 @router.get("/runs/{run_id}/splits", response_model=list[SplitResultResponse])
 def get_splits(
     run_id: str,
@@ -127,37 +173,40 @@ def get_splits(
 
     splits = split_repository.get_splits(tenant.tenant_id, run_id)
 
-    return [
-        SplitResultResponse(
-            split_index=split.split_index,
-            train_start=split.train_start,
-            train_end=split.train_end,
-            purge_start=split.purge_start,
-            purge_end=split.purge_end,
-            test_start=split.test_start,
-            test_end=split.test_end,
-            model_mae=split.model_mae,
-            model_rmse=split.model_rmse,
-            model_smape=split.model_smape,
-            model_mase=split.model_mase,
-            model_da=split.model_da,
-            model_f1=split.model_f1,
-            model_oos_r2=split.model_oos_r2,
-            naive0_mae=split.naive0_mae,
-            naive0_rmse=split.naive0_rmse,
-            naive0_smape=split.naive0_smape,
-            naive0_mase=split.naive0_mase,
-            naive0_da=split.naive0_da,
-            naive0_f1=split.naive0_f1,
-            naive0_oos_r2=split.naive0_oos_r2,
-            dm_statistic=split.dm_statistic,
-            dm_pvalue=split.dm_pvalue,
-            dm_verdict=split.dm_verdict,
-            client_baseline=_client_baseline_response(split.client_baseline_results),
-            has_client_model=split.client_baseline_results is not None,
-        )
-        for split in splits
-    ]
+    return [_split_result_to_response(split) for split in splits]
+
+
+@router.get("/runs/splits/summary", response_model=RunSplitsSummaryResponse)
+def get_splits_summary(
+    split_repository: SplitResultRepositoryDep,
+    tenant: TenantContext = Depends(get_tenant_context),
+    run_id: list[str] = Query(default=[]),
+) -> RunSplitsSummaryResponse:
+    """RAV-012: batched form of `get_splits` above, for a page of run ids at
+    once (the runs-list page's need -- see module docstring precedent for
+    why this file owns every `split_results`-adjacent read). No run-ownership
+    404 here -- unlike `get_splits`, an unknown/cross-tenant run id in a batch
+    request is simply absent from the response, not a request-level error,
+    since the caller supplied a page of ids it already believes are its own.
+    3-path-segment route (`/runs/splits/summary`), chosen specifically to
+    avoid colliding with `/runs/{run_id}` (different segment count) and with
+    `/runs/{run_id}/splits` (also 3 segments, but this route's literal third
+    segment is `"summary"` vs. that route's literal `"splits"` -- a real run
+    id is always a uuid hex, never either literal string, so neither
+    collides regardless of registration order).
+    """
+    if not run_id:
+        return RunSplitsSummaryResponse(items=[])
+    splits_by_run = split_repository.get_splits_for_runs(tenant.tenant_id, run_id)
+    return RunSplitsSummaryResponse(
+        items=[
+            RunSplitSummary(
+                run_id=rid,
+                splits=[_split_result_to_response(s) for s in splits],
+            )
+            for rid, splits in splits_by_run.items()
+        ]
+    )
 
 
 @router.get("/runs/{run_id}/splits/{split_index}/points", response_model=SplitPointsResponse)

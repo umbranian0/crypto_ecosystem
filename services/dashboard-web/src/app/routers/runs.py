@@ -709,6 +709,37 @@ def _fetch_ingestion_datasets(
     return []
 
 
+def _fetch_run_splits_summary(
+    client: httpx.Client, headers: dict[str, str], runs: list[RunSummaryResponse]
+) -> dict[str, list[SplitResultResponse]]:
+    """RAV-012: exactly one additional call to gateway-api's batched
+    `GET /runs/splits/summary`, carrying every rendered run's id as a
+    repeated `run_id` query param -- not one call per run (the runs list is
+    very likely this platform's highest-traffic page).
+
+    Deliberately NOT routed through `_call_downstream`'s blocking-failure
+    path -- same "degrade, don't block" precedent `_fetch_ingestion_datasets`
+    above already established: a transport failure or non-200 response here
+    must not fail the whole runs-list page (the primary `GET /runs` call
+    already succeeded), only degrade to an empty summary (RAV-013's verdict
+    column and RAV-014's sparkline then fall back to their own placeholders
+    for every run). A future editor must not merge this into the blocking
+    `_call_downstream`/`_render_error_for_status` pattern by habit.
+    """
+    response, transport_status = _call_downstream(
+        client.get,
+        "/runs/splits/summary",
+        headers=headers,
+        params=[("run_id", run.id) for run in runs],
+    )
+    if transport_status is None and response.status_code == 200:
+        return {
+            item["run_id"]: [SplitResultResponse(**split) for split in item["splits"]]
+            for item in response.json()["items"]
+        }
+    return {}
+
+
 def _render_error_for_status(request: Request, status_code: int):
     """Renders the shared `error.html` "results currently unavailable"
     failure page for a given status code -- either a translated
@@ -739,6 +770,12 @@ def runs_list(
     them (no locally invented defaults); registered near the top of the
     router for readability, though its own path (no path param) does not
     collide with `/runs/new` or `/runs/{run_id}` either way.
+
+    RAV-012: when `runs` is non-empty, makes exactly one additional call to
+    gateway-api's batched `GET /runs/splits/summary` (`_fetch_run_splits_summary`),
+    passing every rendered run's id, and passes the resulting
+    `dict[str, list[SplitResultResponse]]` into the template context as
+    `run_splits_summary` -- consumed by RAV-013/RAV-014, not rendered here.
     """
     params: dict[str, int] = {}
     if limit is not None:
@@ -758,6 +795,11 @@ def runs_list(
         body = response.json()
         runs = [RunSummaryResponse(**item) for item in body["items"]]
 
+        # RAV-012: exactly one additional call (not one per run) -- see
+        # `_fetch_run_splits_summary`'s own docstring for the "degrade,
+        # don't block" contract this call deliberately follows.
+        run_splits_summary = _fetch_run_splits_summary(client, headers, runs) if runs else {}
+
     return templates.TemplateResponse(
         request,
         "runs_list.html",
@@ -766,6 +808,7 @@ def runs_list(
             "page_limit": body["limit"],
             "page_offset": body["offset"],
             "page_total": body["total"],
+            "run_splits_summary": run_splits_summary,
         },
     )
 
