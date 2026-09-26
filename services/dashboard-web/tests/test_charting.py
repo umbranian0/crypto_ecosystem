@@ -32,6 +32,7 @@ from app.charting import (
     build_predicted_vs_actual_chart,
     build_trend_chart,
     compute_consistency_indicator,
+    compute_run_verdict_indicator,
     model_column_label,
     round_display_value,
 )
@@ -561,6 +562,81 @@ def test_compute_consistency_indicator_all_runs_undefined_has_no_data() -> None:
     assert indicator.has_data is False
     assert indicator.beat_count == 0
     assert indicator.total_count == 0
+
+
+# RAV-013: unit tests for `compute_run_verdict_indicator` -- pure function,
+# reuses `_dm_split`'s fixture shape (same as `compute_consistency_indicator`'s
+# own tests above).
+
+
+def test_compute_run_verdict_indicator_zero_splits_has_no_data() -> None:
+    indicator = compute_run_verdict_indicator([])
+
+    assert indicator.has_data is False
+    assert indicator.category is None
+    assert indicator.css_slug is None
+    assert indicator.label is None
+
+
+def test_compute_run_verdict_indicator_majority_better() -> None:
+    splits = [
+        _dm_split(0, -2.0, 0.01, "better"),
+        _dm_split(1, -2.0, 0.01, "better"),
+        _dm_split(2, 1.0, 0.5, "no significant difference"),
+    ]
+
+    indicator = compute_run_verdict_indicator(splits)
+
+    assert indicator.has_data is True
+    assert indicator.category == "better"
+    assert indicator.css_slug == "better"
+    assert indicator.label == "Beat Naive0 on 2/3 splits"
+
+
+def test_compute_run_verdict_indicator_majority_worse() -> None:
+    splits = [
+        _dm_split(0, 2.0, 0.01, "worse"),
+        _dm_split(1, 2.0, 0.01, "worse"),
+        _dm_split(2, -2.0, 0.01, "better"),
+    ]
+
+    indicator = compute_run_verdict_indicator(splits)
+
+    assert indicator.has_data is True
+    assert indicator.category == "worse"
+    assert indicator.css_slug == "worse"
+    assert indicator.label == "Beat Naive0 on 1/3 splits"
+
+
+def test_compute_run_verdict_indicator_mixed_no_majority() -> None:
+    """Neither "better" nor "worse" strictly outnumbers the other two
+    categories combined -> falls back to "no significant difference"."""
+    splits = [
+        _dm_split(0, -2.0, 0.01, "better"),
+        _dm_split(1, 2.0, 0.01, "worse"),
+        _dm_split(2, 1.0, 0.5, "no significant difference"),
+    ]
+
+    indicator = compute_run_verdict_indicator(splits)
+
+    assert indicator.has_data is True
+    assert indicator.category == "no significant difference"
+    assert indicator.css_slug == "no-sig-diff"
+    assert indicator.label == "Beat Naive0 on 1/3 splits"
+
+
+def test_compute_run_verdict_indicator_all_undefined() -> None:
+    splits = [
+        _dm_split(0, None, None, "no significant difference"),
+        _dm_split(1, None, None, "no significant difference"),
+    ]
+
+    indicator = compute_run_verdict_indicator(splits)
+
+    assert indicator.has_data is True
+    assert indicator.category == UNDEFINED_VERDICT_CATEGORY
+    assert indicator.css_slug == "undefined"
+    assert indicator.label == "Beat Naive0 on 0/2 splits"
 
 
 # DASH-125 (UAT-001 frontend half): `model_column_label` -- the one shared

@@ -78,6 +78,14 @@ split) rather than a second None-check. When no split carries a
 geometry, `client`/`client_bars` empty/`None`) as before this ticket -- no
 layout change for the common case.
 
+RAV-013: `compute_run_verdict_indicator` aggregates one run's entire split
+list (`RAV-012`'s new `run_splits_summary[run.id]`) into a single one-of-four
+category for the runs list's new per-row "Benchmark comparison" column --
+reuses `_verdict_category`/`_CATEGORY_CSS_SLUGS`/`UNDEFINED_VERDICT_CATEGORY`
+verbatim (no second, independently-derived verdict rule). A zero-split run
+returns `has_data=False` so the caller renders a plain "no results yet" state
+rather than a fabricated category.
+
 DASH-129 (RAV-008): `build_predicted_vs_actual_chart` takes a single split's
 already-fetched `list[SplitPointResponse]` (GW-031/VS-033's per-split
 drill-down endpoint) and returns point/line geometry for that split's own
@@ -838,6 +846,70 @@ def compute_consistency_indicator(
         beat_count=beat_count,
         total_count=total_count,
         has_data=total_count > 0,
+    )
+
+
+# RAV-013: per-run verdict indicator for the runs list -- one aggregate
+# category for an entire run's splits (a fourth thing, distinct from
+# `_run_beats_naive0`'s boolean beat/not-beat majority rule and
+# `build_headline_verdict_summary`'s raw-count sentence): a majority-worse
+# run is now its own detectable outcome, not folded into "not a beat."
+
+
+@dataclass(frozen=True)
+class RunVerdictIndicator:
+    """`has_data=False` for a zero-split run -- the caller must render a
+    plain "no results yet" state, never a fabricated category (this
+    ticket's binding AC)."""
+
+    has_data: bool
+    category: str | None = None
+    css_slug: str | None = None
+    label: str | None = None
+
+
+def compute_run_verdict_indicator(splits: list[SplitResultResponse]) -> RunVerdictIndicator:
+    """RAV-013: one aggregate category for an entire run's splits, reusing
+    `_verdict_category` per split (no recomputation of the underlying DM
+    verdict) and `_CATEGORY_CSS_SLUGS` for the color slug. Generalizes
+    `_run_beats_naive0`'s existing "better > combined other" majority rule
+    to also detect a majority-worse run, instead of only a boolean
+    beat/not-beat:
+
+    - zero splits -> has_data=False (caller renders "no results yet").
+    - every split UNDEFINED_VERDICT_CATEGORY (no evaluable split) ->
+      category=UNDEFINED_VERDICT_CATEGORY.
+    - better_count > (worse_count + no_sig_count) -> category="better".
+    - worse_count > (better_count + no_sig_count) -> category="worse".
+    - otherwise (no strict majority either way) ->
+      category="no significant difference".
+
+    `label` is a compact benchmark-comparison sentence only -- "Beat Naive0
+    on N/M splits" -- never a buy/sell/signal word (CLAUDE.md, binding on
+    this story specifically).
+    """
+    if not splits:
+        return RunVerdictIndicator(has_data=False)
+
+    better = sum(1 for s in splits if _verdict_category(s) == "better")
+    worse = sum(1 for s in splits if _verdict_category(s) == "worse")
+    no_sig = sum(1 for s in splits if _verdict_category(s) == "no significant difference")
+    total = len(splits)
+
+    if better + worse + no_sig == 0:
+        category = UNDEFINED_VERDICT_CATEGORY
+    elif better > worse + no_sig:
+        category = "better"
+    elif worse > better + no_sig:
+        category = "worse"
+    else:
+        category = "no significant difference"
+
+    return RunVerdictIndicator(
+        has_data=True,
+        category=category,
+        css_slug=_CATEGORY_CSS_SLUGS[category],
+        label=f"Beat Naive0 on {better}/{total} splits",
     )
 
 

@@ -468,31 +468,35 @@ comparison outcome against Naive0, **so that** a tenant scanning many runs can s
 "worse"/"no significant difference"/undefined DM-test outcome without opening each run individually.
 
 Acceptance criteria:
-- [ ] Computes one aggregate category per run by reusing `charting.py`'s existing per-split categorization
+- [x] Computes one aggregate category per run by reusing `charting.py`'s existing per-split categorization
       (`_verdict_category`/`verdict_category_and_css_slug`, and/or the same aggregation
       `build_headline_verdict_summary` already performs for a single run's "beat Naive0 on N/M splits" sentence)
       applied to RAV-012's split data — no second, independently-derived verdict rule written in the route or
       template.
-- [ ] Uses the same four status-neutral categories/colors already defined for DM verdicts elsewhere
+- [x] Uses the same four status-neutral categories/colors already defined for DM verdicts elsewhere
       (`--color-status-completed-text` "better", `--color-status-failed-text` "worse",
       `--color-status-running-text` "no significant difference", `--color-text-muted` "undefined") — never a
       green/red pairing, matching `style.css`'s documented constraint and every existing verdict chart in this
       backlog.
-- [ ] Indicator copy reads only as a benchmark-comparison outcome for this run (e.g. "Beat Naive0 on N/M splits"
+- [x] Indicator copy reads only as a benchmark-comparison outcome for this run (e.g. "Beat Naive0 on N/M splits"
       or the equivalent compact form) — never phrased as "this model is good/bad to trade," never a buy/sell/
       signal word, matching CLAUDE.md's positioning rule and the same wording precedent
       `build_headline_verdict_summary` already sets on `run_detail.html`.
-- [ ] A run with zero splits (e.g. still running, or failed before any split completed) shows a plain "no results
+- [x] A run with zero splits (e.g. still running, or failed before any split completed) shows a plain "no results
       yet" state in that column — never a fabricated or default verdict category.
-- [ ] Server-rendered inline SVG or plain styled text/badge (Tech Lead's call between the two — either way, per
-      ADR-0006, no client-side JS, no new dependency).
-- [ ] Test: rendered `runs_list.html` shows the correct verdict category/label for a fixture set of runs with
+- [x] Server-rendered inline SVG or plain styled text/badge (Tech Lead's call between the two — either way, per
+      ADR-0006, no client-side JS, no new dependency). **Chosen: plain styled text/badge** (`<span
+      class="verdict-badge verdict-badge-{{ css_slug }}">`) — simpler than SVG for a short text label,
+      still ADR-0006-compliant (no client-side JS, no new dependency).
+- [x] Test: rendered `runs_list.html` shows the correct verdict category/label for a fixture set of runs with
       known split-verdict distributions, including a zero-split run.
 
 Rationale for priority: the core "visualization" gap the founder named for the runs list — reuses existing
 DM-verdict logic entirely (no new statistic, no new significance test); Must because the founder explicitly
 declined a links-only change and named this indicator as required scope.
 Depends on: RAV-012
+
+**Status: DONE (Sprint 60, `docs/tickets/RAV-013.md`).**
 
 ### RAV-014 — Per-run compact error sparkline on the runs list [Must]
 **As** dashboard-web, **I want** each row on `runs_list.html` to show a small sparkline of model-vs-Naive0 MAE

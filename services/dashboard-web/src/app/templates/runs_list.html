@@ -18,10 +18,12 @@ its completed runs</a>.</p>
             <th>Horizon</th>
             <th>Created at</th>
             <th>Completed at</th>
+            <th>Benchmark comparison</th>
         </tr>
     </thead>
     <tbody>
         {% for run in runs %}
+        {% set verdict = run_verdict_indicators[run.id] %}
         <tr>
             <td><a href="/runs/{{ run.id }}">{{ run.id }}</a>{% if run.label %} -- {{ run.label }}{% endif %}</td>
             <td><span class="status status-{{ run.status }}">{{ run.status }}</span></td>
@@ -29,6 +31,13 @@ its completed runs</a>.</p>
             <td>{{ run.horizon }}</td>
             <td>{{ run.created_at }}</td>
             <td>{{ run.completed_at if run.completed_at else "--" }}</td>
+            <td>
+                {% if verdict.has_data %}
+                <span class="verdict-badge verdict-badge-{{ verdict.css_slug }}">{{ verdict.label }}</span>
+                {% else %}
+                No results yet
+                {% endif %}
+            </td>
         </tr>
         {% endfor %}
     </tbody>

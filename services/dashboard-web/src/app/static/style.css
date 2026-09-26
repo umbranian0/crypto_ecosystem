@@ -773,6 +773,27 @@ main > table th {
   color: var(--color-text-muted);
 }
 
+/* Per-run verdict indicator on the runs list (RAV-013): reuses the exact same
+   four status-neutral variables RAV-003's verdict-bar/FHS-003's verdict-label
+   classes above already use -- no new hex value, no green="better"/
+   red="worse" pairing. */
+
+.verdict-badge-better {
+  color: var(--color-status-completed-text);
+}
+
+.verdict-badge-worse {
+  color: var(--color-status-failed-text);
+}
+
+.verdict-badge-no-sig-diff {
+  color: var(--color-status-running-text);
+}
+
+.verdict-badge-undefined {
+  color: var(--color-text-muted);
+}
+
 /* Status badge */
 
 .status {

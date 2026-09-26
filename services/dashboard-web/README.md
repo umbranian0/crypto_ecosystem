@@ -691,6 +691,25 @@ in the server's own `created_at DESC` order:
   pattern**: a transport failure or non-200 response on this one call degrades to an empty `{}` summary
   dict rather than failing the whole page -- same "degrade, don't block" precedent
   `_fetch_ingestion_datasets` already established for `run_new_form`/`datasets_list`.
+- **Per-run verdict indicator (RAV-013, Sprint 60)**: `runs_list.html` gained a "Benchmark comparison"
+  column, one compact `<span class="verdict-badge verdict-badge-{{ css_slug }}">Beat Naive0 on N/M
+  splits</span>` per run, built from `app.charting.compute_run_verdict_indicator` (new function) against
+  that same run's `run_splits_summary[run.id]` (RAV-012's fetch, no second `/runs/{id}/splits` call).
+  `compute_run_verdict_indicator` reuses RAV-003's `_verdict_category`/`_CATEGORY_CSS_SLUGS`/
+  `UNDEFINED_VERDICT_CATEGORY` verbatim (no second, independently-derived verdict rule) and aggregates one
+  run's entire split set into exactly one of four categories: `better` (strictly more "better" splits than
+  "worse"+"no significant difference" combined), `worse` (the mirror-image majority), `no significant
+  difference` (no strict majority either way), or `undefined for this split` (every split's own DM
+  statistic is genuinely undefined -- `UNDEFINED_VERDICT_CATEGORY`). `runs_list`
+  (`src/app/routers/runs.py`) builds `run_verdict_indicators: dict[str, RunVerdictIndicator]` keyed by run
+  id, alongside `run_splits_summary` -- a second, independent, simple lookup, not merged into either dict
+  (`RAV-014`'s sparkline adds its own dict the same way, keeping each story's diff additive). A run with
+  zero splits (`has_data=False`) renders plain "No results yet" text, never a fabricated category. Four
+  status-neutral colors only (`style.css`'s `.verdict-badge-better/-worse/-no-sig-diff/-undefined`, reusing
+  the exact same `--color-status-completed-text`/`--color-status-failed-text`/`--color-status-running-text`/
+  `--color-text-muted` variables RAV-003's verdict-bar/FHS-003's verdict-label classes already use) --
+  never green/red, never a buy/sell/signal word (CLAUDE.md's positioning constraint, this story's own
+  binding restatement of it).
 
 ## Ingested datasets (DASH-111)
 

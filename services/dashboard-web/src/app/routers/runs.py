@@ -377,12 +377,14 @@ from app.charting import (
     DEFAULT_METRIC,
     METRIC_REGISTRY,
     PredictedVsActualChartData,
+    RunVerdictIndicator,
     build_dm_verdict_chart,
     build_error_chart,
     build_headline_verdict_summary,
     build_predicted_vs_actual_chart,
     build_trend_chart,
     compute_consistency_indicator,
+    compute_run_verdict_indicator,
     model_column_label,
     model_column_short_label,
     model_placeholder_note,
@@ -776,6 +778,14 @@ def runs_list(
     passing every rendered run's id, and passes the resulting
     `dict[str, list[SplitResultResponse]]` into the template context as
     `run_splits_summary` -- consumed by RAV-013/RAV-014, not rendered here.
+
+    RAV-013: builds `run_verdict_indicators`, a per-run `RunVerdictIndicator`
+    (`compute_run_verdict_indicator`) keyed by run id, from that same
+    `run_splits_summary` dict (a run absent from it, e.g. zero splits,
+    defaults to `[]`) -- a second, independent, simple lookup dict passed
+    alongside `run_splits_summary`/`runs`, not merged into either (RAV-014
+    adds its own sparkline dict the same way, per this ticket's Design
+    section: keep each story's diff additive and reviewable on its own).
     """
     params: dict[str, int] = {}
     if limit is not None:
@@ -800,6 +810,13 @@ def runs_list(
         # don't block" contract this call deliberately follows.
         run_splits_summary = _fetch_run_splits_summary(client, headers, runs) if runs else {}
 
+    # RAV-013: one aggregate verdict category per run, reusing
+    # `compute_run_verdict_indicator` (no second, independently-derived
+    # verdict rule in this route or the template).
+    run_verdict_indicators: dict[str, RunVerdictIndicator] = {
+        run.id: compute_run_verdict_indicator(run_splits_summary.get(run.id, [])) for run in runs
+    }
+
     return templates.TemplateResponse(
         request,
         "runs_list.html",
@@ -809,6 +826,7 @@ def runs_list(
             "page_offset": body["offset"],
             "page_total": body["total"],
             "run_splits_summary": run_splits_summary,
+            "run_verdict_indicators": run_verdict_indicators,
         },
     )
 
