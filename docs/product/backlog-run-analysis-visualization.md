@@ -504,21 +504,21 @@ across that run's splits, **so that** a tenant can see the shape/stability of a 
 with the same metric RAV-002's full-size chart already shows on `run_detail.html`.
 
 Acceptance criteria:
-- [ ] Reuses `charting.py`'s existing error-series data construction for `model_mae`/`naive0_mae` (the same
+- [x] Reuses `charting.py`'s existing error-series data construction for `model_mae`/`naive0_mae` (the same
       underlying series `build_error_chart` already assembles for RAV-002 — a new compact-rendering function may
       be added to `charting.py`, but it must build on the same `Bar`/`SplitBars` data shapes, never a second
       hand-rolled MAE-series computation).
-- [ ] Renders as a small server-rendered inline SVG (per ADR-0006 — no new dependency, no client-side JS charting
+- [x] Renders as a small server-rendered inline SVG (per ADR-0006 — no new dependency, no client-side JS charting
       library, no Python plotting library), sized for a table cell (fixed small width/height, distinct from
       RAV-002's full-size chart dimensions).
-- [ ] Uses the same two-series status-neutral palette RAV-002 already uses (`--color-accent`/`--color-accent-2`)
+- [x] Uses the same two-series status-neutral palette RAV-002 already uses (`--color-accent`/`--color-accent-2`)
       — no green/red pairing.
-- [ ] This is a compact re-rendering of already-charted data (RAV-002's own MAE pair) at run-list scale, not a new
+- [x] This is a compact re-rendering of already-charted data (RAV-002's own MAE pair) at run-list scale, not a new
       chart type — no other metric pair, no new computed statistic, no interactivity (no selector/toggle at this
       scale).
-- [ ] A run with zero or one split (insufficient to draw a meaningful line) renders an explicit empty/placeholder
+- [x] A run with zero or one split (insufficient to draw a meaningful line) renders an explicit empty/placeholder
       state in that column — never a broken or misleadingly flat SVG.
-- [ ] Test: rendered `runs_list.html` contains a sparkline with correct point count/values for a fixture run's
+- [x] Test: rendered `runs_list.html` contains a sparkline with correct point count/values for a fixture run's
       splits; a zero/one-split run renders the placeholder state instead.
 
 Rationale for priority: the second half of the founder's explicitly required runs-list scope, paired with
@@ -526,6 +526,8 @@ RAV-013's verdict indicator; Must because the founder named the sparkline as req
 reuses data RAV-012 already makes available and logic RAV-002 already computes, so it is a small increment on top
 of existing capability, not new capability.
 Depends on: RAV-012
+
+**Status: DONE (Sprint 60, `docs/tickets/RAV-014.md`).**
 
 ### RAV-015 — Inline predicted-vs-actual chart per split on `run_detail` [Must]
 **As** dashboard-web, **I want** `run_detail.html` to render each rendered split's predicted-vs-actual chart

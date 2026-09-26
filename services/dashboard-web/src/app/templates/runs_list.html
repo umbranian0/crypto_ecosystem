@@ -19,11 +19,13 @@ its completed runs</a>.</p>
             <th>Created at</th>
             <th>Completed at</th>
             <th>Benchmark comparison</th>
+            <th>Error by split (MAE)</th>
         </tr>
     </thead>
     <tbody>
         {% for run in runs %}
         {% set verdict = run_verdict_indicators[run.id] %}
+        {% set sparkline = run_sparklines[run.id] %}
         <tr>
             <td><a href="/runs/{{ run.id }}">{{ run.id }}</a>{% if run.label %} -- {{ run.label }}{% endif %}</td>
             <td><span class="status status-{{ run.status }}">{{ run.status }}</span></td>
@@ -36,6 +38,41 @@ its completed runs</a>.</p>
                 <span class="verdict-badge verdict-badge-{{ verdict.css_slug }}">{{ verdict.label }}</span>
                 {% else %}
                 No results yet
+                {% endif %}
+            </td>
+            <td>
+                {# RAV-014: compact re-rendering of build_error_chart's own MAE series
+                   (app.charting.build_error_sparkline) -- MAE-only, no metric selector,
+                   at table-cell scale. Reuses the exact .bar-model/.bar-naive0 class
+                   names/colors _error_chart.html already established (never a new hex
+                   value, never green/red). A run with fewer than 2 splits renders a
+                   plain placeholder, never a broken/misleadingly flat SVG. #}
+                {% if sparkline.has_data %}
+                <svg
+                    class="sparkline-svg"
+                    viewBox="0 0 {{ sparkline.width }} {{ sparkline.height }}"
+                    role="img"
+                    aria-label="Model versus Naive0 MAE by split"
+                >
+                    {% for split in sparkline.splits %}
+                    <rect
+                        class="bar-model"
+                        x="{{ split.model.x }}"
+                        y="{{ split.model.y }}"
+                        width="{{ split.model.width }}"
+                        height="{{ split.model.height }}"
+                    ><title>Split {{ split.split_index }} -- model MAE: {{ split.model.value|round4 }}</title></rect>
+                    <rect
+                        class="bar-naive0"
+                        x="{{ split.naive0.x }}"
+                        y="{{ split.naive0.y }}"
+                        width="{{ split.naive0.width }}"
+                        height="{{ split.naive0.height }}"
+                    ><title>Split {{ split.split_index }} -- Naive0 MAE: {{ split.naive0.value|round4 }}</title></rect>
+                    {% endfor %}
+                </svg>
+                {% else %}
+                <span class="sparkline-placeholder">Not enough splits yet</span>
                 {% endif %}
             </td>
         </tr>

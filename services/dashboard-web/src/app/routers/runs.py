@@ -378,8 +378,10 @@ from app.charting import (
     METRIC_REGISTRY,
     PredictedVsActualChartData,
     RunVerdictIndicator,
+    SparklineChartData,
     build_dm_verdict_chart,
     build_error_chart,
+    build_error_sparkline,
     build_headline_verdict_summary,
     build_predicted_vs_actual_chart,
     build_trend_chart,
@@ -786,6 +788,13 @@ def runs_list(
     alongside `run_splits_summary`/`runs`, not merged into either (RAV-014
     adds its own sparkline dict the same way, per this ticket's Design
     section: keep each story's diff additive and reviewable on its own).
+
+    RAV-014: builds `run_sparklines`, a per-run `SparklineChartData`
+    (`build_error_sparkline`) keyed by run id, from that same
+    `run_splits_summary` dict (same `.get(run.id, [])` default-to-empty
+    lookup RAV-013's dict already uses) -- a third, independent, simple
+    lookup dict passed alongside `run_splits_summary`/`run_verdict_indicators`/
+    `runs`, not merged into any of them.
     """
     params: dict[str, int] = {}
     if limit is not None:
@@ -817,6 +826,13 @@ def runs_list(
         run.id: compute_run_verdict_indicator(run_splits_summary.get(run.id, [])) for run in runs
     }
 
+    # RAV-014: a third, independent per-run dict, built the same way
+    # `run_verdict_indicators` above is -- not merged into it or into
+    # `run_splits_summary`.
+    run_sparklines: dict[str, SparklineChartData] = {
+        run.id: build_error_sparkline(run_splits_summary.get(run.id, [])) for run in runs
+    }
+
     return templates.TemplateResponse(
         request,
         "runs_list.html",
@@ -827,6 +843,7 @@ def runs_list(
             "page_total": body["total"],
             "run_splits_summary": run_splits_summary,
             "run_verdict_indicators": run_verdict_indicators,
+            "run_sparklines": run_sparklines,
         },
     )
 

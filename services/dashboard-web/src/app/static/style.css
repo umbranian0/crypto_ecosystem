@@ -654,6 +654,32 @@ main > table th {
   font-style: italic;
 }
 
+/* Runs-list per-row sparkline (RAV-014): reuses the exact same .bar-model/
+   .bar-naive0 class names and --color-accent/--color-accent-2 variables
+   RAV-002's full-size .error-chart-svg already established above -- no new
+   color, no green/red. Scoped under its own .sparkline-svg class (rather
+   than .error-chart-svg) since it is fixed table-cell size, not the
+   full-width responsive chart. */
+.sparkline-svg {
+  display: block;
+  width: 96px;
+  height: 28px;
+}
+
+.sparkline-svg .bar-model {
+  fill: var(--color-accent);
+}
+
+.sparkline-svg .bar-naive0 {
+  fill: var(--color-accent-2);
+}
+
+.sparkline-placeholder {
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+}
+
 /* Predicted-vs-actual per-split chart (DASH-129/RAV-008): server-rendered
    inline SVG, per docs/adr/0006-dashboard-web-charting-server-rendered-svg.md.
    Colors reuse the exact same three accent variables RAV-002/RAV-005 already

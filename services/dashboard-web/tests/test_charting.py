@@ -28,6 +28,7 @@ from app.charting import (
     UNDEFINED_VERDICT_CATEGORY,
     build_dm_verdict_chart,
     build_error_chart,
+    build_error_sparkline,
     build_headline_verdict_summary,
     build_predicted_vs_actual_chart,
     build_trend_chart,
@@ -150,6 +151,75 @@ def test_build_error_chart_bars_do_not_overlap_within_a_split() -> None:
     bar = chart.splits[0]
 
     assert bar.model.x + bar.model.width <= bar.naive0.x
+
+
+# RAV-014: `build_error_sparkline` -- compact re-rendering of
+# `build_error_chart`'s own MAE series, reusing `_model_naive0_pairs`/`Bar`/
+# `SplitBars` (no second hand-rolled computation).
+
+
+def test_build_error_sparkline_zero_splits_has_no_data() -> None:
+    sparkline = build_error_sparkline([])
+
+    assert sparkline.has_data is False
+    assert not sparkline.splits
+
+
+def test_build_error_sparkline_one_split_has_no_data() -> None:
+    splits = [_split(0, model_mae=1.0, naive0_mae=2.0)]
+
+    sparkline = build_error_sparkline(splits)
+
+    assert sparkline.has_data is False
+    assert not sparkline.splits
+
+
+def test_build_error_sparkline_correct_bar_count_and_values() -> None:
+    splits = [
+        _split(0, model_mae=1.0, naive0_mae=2.0),
+        _split(1, model_mae=4.0, naive0_mae=2.0),
+        _split(2, model_mae=0.5, naive0_mae=1.5),
+    ]
+
+    sparkline = build_error_sparkline(splits)
+
+    assert sparkline.has_data is True
+    assert len(sparkline.splits) == 3
+    assert [bar.split_index for bar in sparkline.splits] == [0, 1, 2]
+    assert sparkline.splits[0].model.value == 1.0
+    assert sparkline.splits[0].naive0.value == 2.0
+    assert sparkline.splits[1].model.value == 4.0
+    assert sparkline.splits[1].naive0.value == 2.0
+    assert sparkline.splits[2].model.value == 0.5
+    assert sparkline.splits[2].naive0.value == 1.5
+
+
+def test_build_error_sparkline_dimensions_are_smaller_than_full_chart() -> None:
+    splits = [_split(0, model_mae=1.0, naive0_mae=2.0), _split(1, model_mae=4.0, naive0_mae=2.0)]
+
+    sparkline = build_error_sparkline(splits)
+    chart = build_error_chart(splits)
+
+    assert sparkline.width < chart.width
+    assert sparkline.height < chart.height
+
+
+def test_build_error_sparkline_bars_do_not_overlap_within_a_split() -> None:
+    splits = [_split(0, model_mae=1.0, naive0_mae=2.0), _split(1, model_mae=4.0, naive0_mae=2.0)]
+
+    sparkline = build_error_sparkline(splits)
+    bar = sparkline.splits[0]
+
+    assert bar.model.x + bar.model.width <= bar.naive0.x
+
+
+def test_build_error_sparkline_zero_error_splits_do_not_divide_by_zero() -> None:
+    splits = [_split(0, model_mae=0.0, naive0_mae=0.0), _split(1, model_mae=0.0, naive0_mae=0.0)]
+
+    sparkline = build_error_sparkline(splits)
+
+    assert sparkline.splits[0].model.height == 0.0
+    assert sparkline.splits[0].naive0.height == 0.0
 
 
 def _run_summary(run_id: str, status: str = "completed") -> RunSummaryResponse:

@@ -710,6 +710,29 @@ in the server's own `created_at DESC` order:
   `--color-text-muted` variables RAV-003's verdict-bar/FHS-003's verdict-label classes already use) --
   never green/red, never a buy/sell/signal word (CLAUDE.md's positioning constraint, this story's own
   binding restatement of it).
+- **Per-run compact error sparkline (RAV-014, Sprint 60)**: `runs_list.html` gained an "Error by split
+  (MAE)" column, one compact inline `<svg class="sparkline-svg">` per run, built from
+  `app.charting.build_error_sparkline` against that same run's `run_splits_summary[run.id]` (RAV-012's
+  fetch, no second `/runs/{id}/splits` call) -- a compact re-rendering of `run_detail.html`'s existing
+  `_error_chart.html` model-vs-Naive0 MAE-by-split chart at table-row scale, **not** a new chart type or a
+  new computed statistic. **DRY refactor** (mandatory precursor to this ticket): `build_error_chart`
+  (RAV-002)'s per-split `getattr(split, model_attr)`/`getattr(split, naive0_attr)` value-gathering, which
+  used to be inlined twice (once for its `max_value` scan, once in its per-split loop), was extracted into
+  a shared `_model_naive0_pairs(splits, metric)` helper both `build_error_chart` and the new
+  `build_error_sparkline` now call -- a pure refactor, proven behavior-preserving by `build_error_chart`'s
+  own pre-existing test suite passing unmodified. `build_error_sparkline` is **MAE-only, with no metric
+  selector** at this scale (binding scope limit -- no interactivity/second metric at sparkline size,
+  unlike `_error_chart.html`'s seven-metric `<select>`), and reuses the exact same `Bar`/`SplitBars`
+  geometry dataclasses `build_error_chart` uses (no second bar-geometry shape). Fixed, small dimensions
+  (`_SPARKLINE_WIDTH`/`_SPARKLINE_HEIGHT` = 96x28) keep it visibly distinct from RAV-002's full-size
+  `_CHART_WIDTH`/`_CHART_HEIGHT` (640x220). A run with **fewer than 2 splits** (`has_data=False` -- an
+  explicit placeholder threshold, not fewer than 1: a single split has no shape worth drawing) renders a
+  plain `<span class="sparkline-placeholder">Not enough splits yet</span>`, never a broken/misleadingly
+  flat SVG. `runs_list` builds `run_sparklines: dict[str, SparklineChartData]` keyed by run id, alongside
+  `run_splits_summary`/`run_verdict_indicators` -- a third, independent, simple lookup, not merged into
+  either. Colors reuse the exact same `.bar-model`/`.bar-naive0` class names and
+  `--color-accent`/`--color-accent-2` variables `_error_chart.html` already established -- no new hex
+  literal, never green/red.
 
 ## Ingested datasets (DASH-111)
 

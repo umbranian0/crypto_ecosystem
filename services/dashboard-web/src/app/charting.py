@@ -86,6 +86,18 @@ verbatim (no second, independently-derived verdict rule). A zero-split run
 returns `has_data=False` so the caller renders a plain "no results yet" state
 rather than a fabricated category.
 
+RAV-014: `build_error_sparkline` is a compact re-rendering of
+`build_error_chart`'s own MAE-only series at runs-list-row scale -- not a new
+chart type or a new computed statistic. It reuses the same `Bar`/`SplitBars`
+geometry dataclasses and a new shared helper, `_model_naive0_pairs` (the
+per-split model/naive0 value-gathering step `build_error_chart` used to
+inline twice, extracted here so the sparkline does not hand-roll a third
+copy). Fixed, small dimensions (`_SPARKLINE_WIDTH`/`_SPARKLINE_HEIGHT`,
+96x28) keep it visually distinct from `_CHART_WIDTH`/`_CHART_HEIGHT`
+(640x220). A run with fewer than 2 splits returns `has_data=False` -- the
+caller (`runs_list.html`) must render an explicit placeholder, never a
+broken/misleadingly flat SVG.
+
 DASH-129 (RAV-008): `build_predicted_vs_actual_chart` takes a single split's
 already-fetched `list[SplitPointResponse]` (GW-031/VS-033's per-split
 drill-down endpoint) and returns point/line geometry for that split's own
@@ -258,6 +270,22 @@ METRIC_REGISTRY: dict[str, tuple[str, str, str]] = {
 DEFAULT_METRIC = "mae"
 
 
+def _model_naive0_pairs(
+    splits: list[SplitResultResponse], metric: str = DEFAULT_METRIC
+) -> list[tuple[float, float]]:
+    """Shared value-gathering step for `build_error_chart` and
+    `build_error_sparkline` (RAV-014) -- returns `(model_value, naive0_value)`
+    per split for the given metric key, resolved via `METRIC_REGISTRY` the
+    same way both callers already do. Extracted here (implementation-plan.md
+    section 9's "extract on second duplication" rule) so there is exactly
+    one place a split's model/naive0 values for a metric are read off --
+    `build_error_chart` used to inline this `getattr` pair twice (once for
+    its `max_value` scan, once in its per-split loop) before this ticket.
+    """
+    _, model_attr, naive0_attr = METRIC_REGISTRY.get(metric, METRIC_REGISTRY[DEFAULT_METRIC])
+    return [(getattr(s, model_attr), getattr(s, naive0_attr)) for s in splits]
+
+
 def build_error_chart(
     splits: list[SplitResultResponse], metric: str = DEFAULT_METRIC
 ) -> ErrorChartData:
@@ -277,7 +305,7 @@ def build_error_chart(
     route's own "display preference, not a form submission" fallback
     (RAV-004 Design section).
     """
-    metric_label, model_attr, naive0_attr = METRIC_REGISTRY.get(
+    metric_label, _model_attr, _naive0_attr = METRIC_REGISTRY.get(
         metric, METRIC_REGISTRY[DEFAULT_METRIC]
     )
     resolved_metric = metric if metric in METRIC_REGISTRY else DEFAULT_METRIC
@@ -307,7 +335,9 @@ def build_error_chart(
         None,
     )
 
-    values = [max(getattr(s, model_attr), getattr(s, naive0_attr)) for s in splits]
+    pairs = _model_naive0_pairs(splits, metric)
+
+    values = [max(model_value, naive0_value) for model_value, naive0_value in pairs]
     if has_client_baseline:
         values.extend(
             getattr(s.client_baseline, resolved_metric)
@@ -326,11 +356,9 @@ def build_error_chart(
     )
 
     split_bars: list[SplitBars] = []
-    for i, split in enumerate(splits):
+    for i, (split, (model_value, naive0_value)) in enumerate(zip(splits, pairs)):
         group_x = _PADDING_LEFT + i * group_width
 
-        model_value = getattr(split, model_attr)
-        naive0_value = getattr(split, naive0_attr)
         model_height = (model_value / max_value) * plot_height
         naive0_height = (naive0_value / max_value) * plot_height
 
@@ -381,6 +409,88 @@ def build_error_chart(
         metric_label=metric_label,
         has_client_baseline=has_client_baseline,
         client_baseline_disclaimer=client_baseline_disclaimer,
+    )
+
+
+# RAV-014: compact per-run sparkline for the runs list -- a small
+# re-rendering of `build_error_chart`'s own MAE-only series (never a new
+# chart type or a new computed statistic, per this ticket's Analysis
+# section). Dimensions are fixed and deliberately small, visibly distinct
+# from `_CHART_WIDTH`/`_CHART_HEIGHT` (RAV-002's full-size chart).
+
+_SPARKLINE_WIDTH = 96
+_SPARKLINE_HEIGHT = 28
+_SPARKLINE_BAR_GAP = 1
+_SPARKLINE_GROUP_GAP = 2
+_SPARKLINE_MIN_BAR_WIDTH = 0.5
+
+
+@dataclass(frozen=True)
+class SparklineChartData:
+    """RAV-014: compact re-rendering of `build_error_chart`'s own MAE pair,
+    reusing the exact same `Bar`/`SplitBars` geometry dataclasses (no second
+    bar-geometry shape) at table-cell scale. `has_data=False` for a run with
+    fewer than 2 splits (insufficient to draw a meaningful shape) -- the
+    caller must render an explicit placeholder, never a broken/misleadingly
+    flat SVG.
+    """
+
+    width: int
+    height: int
+    has_data: bool
+    splits: list[SplitBars] = ()
+
+
+def build_error_sparkline(splits: list[SplitResultResponse]) -> SparklineChartData:
+    """RAV-014: MAE-only (matching `build_error_chart`'s own RAV-002 default),
+    no metric selector at this scale (binding AC -- no interactivity/second
+    metric at sparkline scale). Reuses `_model_naive0_pairs` (above) for the
+    same value-gathering `build_error_chart` uses -- no second hand-rolled
+    MAE-series computation. A run with fewer than 2 splits returns
+    `has_data=False` (an explicit placeholder threshold, not fewer than 1) --
+    a single split has no shape worth drawing as a sparkline.
+    """
+    if len(splits) < 2:
+        return SparklineChartData(width=_SPARKLINE_WIDTH, height=_SPARKLINE_HEIGHT, has_data=False)
+
+    pairs = _model_naive0_pairs(splits, metric="mae")
+    max_value = max((v for pair in pairs for v in pair), default=0.0)
+    if max_value <= 0:
+        max_value = 1.0
+
+    plot_width = _SPARKLINE_WIDTH
+    plot_height = _SPARKLINE_HEIGHT
+    group_width = plot_width / len(pairs)
+    bar_width = max((group_width - _SPARKLINE_BAR_GAP) / 2, _SPARKLINE_MIN_BAR_WIDTH)
+
+    split_bars: list[SplitBars] = []
+    for i, (split, (model_value, naive0_value)) in enumerate(zip(splits, pairs)):
+        group_x = i * group_width
+        model_height = (model_value / max_value) * plot_height
+        naive0_height = (naive0_value / max_value) * plot_height
+        split_bars.append(
+            SplitBars(
+                split_index=split.split_index,
+                model=Bar(
+                    x=group_x,
+                    y=plot_height - model_height,
+                    width=bar_width,
+                    height=model_height,
+                    value=model_value,
+                ),
+                naive0=Bar(
+                    x=group_x + bar_width + _SPARKLINE_BAR_GAP,
+                    y=plot_height - naive0_height,
+                    width=bar_width,
+                    height=naive0_height,
+                    value=naive0_value,
+                ),
+                label_x=group_x + group_width / 2,
+            )
+        )
+
+    return SparklineChartData(
+        width=_SPARKLINE_WIDTH, height=_SPARKLINE_HEIGHT, has_data=True, splits=split_bars
     )
 
 
