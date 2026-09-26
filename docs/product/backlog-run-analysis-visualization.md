@@ -527,7 +527,8 @@ reuses data RAV-012 already makes available and logic RAV-002 already computes, 
 of existing capability, not new capability.
 Depends on: RAV-012
 
-**Status: DONE (Sprint 60, `docs/tickets/RAV-014.md`).**
+**Status: IN PROGRESS (Sprint 60, `docs/tickets/RAV-014.md`) — QA found a production-blocking sparkline
+split-count regression; fix in progress, ticket not yet DONE.**
 
 ### RAV-015 — Inline predicted-vs-actual chart per split on `run_detail` [Must]
 **As** dashboard-web, **I want** `run_detail.html` to render each rendered split's predicted-vs-actual chart
