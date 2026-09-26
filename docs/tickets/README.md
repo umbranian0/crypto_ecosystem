@@ -2491,7 +2491,7 @@ Epic D's entire scope; Epic D is the last epic in this backlog (Epics A/B/C alre
 | [RAV-011](RAV-011.md) | Visible link from `runs_list.html` to the existing `/runs/trend` cross-run view | dashboard-web | none | done |
 | [RAV-012](RAV-012.md) | Bounded per-run split-summary batched endpoint (`GET /runs/splits/summary`) for the runs-list page | validation-service, gateway-api, libs/common, dashboard-web | none (blocks RAV-013, RAV-014) | done |
 | [RAV-013](RAV-013.md) | Per-run verdict indicator (benchmark-comparison outcome) on the runs list | dashboard-web | RAV-012 | done |
-| [RAV-014](RAV-014.md) | Per-run compact MAE sparkline on the runs list | dashboard-web | RAV-012 | blocked (QA-found bug, see ticket Outcome addendum) |
+| [RAV-014](RAV-014.md) | Per-run compact MAE sparkline on the runs list | dashboard-web | RAV-012 | done (QA-found regression fixed + re-verified, see ticket) |
 | [RAV-015](RAV-015.md) | Inline predicted-vs-actual chart per split on `run_detail` (replaces the per-split page link) | dashboard-web | none | done |
 
 Sequencing per sprint-60.md's own file-overlap analysis: RAV-011 → RAV-012 → RAV-013 → RAV-014 as

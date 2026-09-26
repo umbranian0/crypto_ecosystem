@@ -293,6 +293,28 @@ service imports another service's code" rule).
     against the real stack (not just the unit-test fixture) — e.g. by observing request counts/logs while
     loading a runs-list page with a realistic number of runs.
 
+## Tech Lead close-out (all five tickets done, QA gate cleared)
+
+All five tickets (`RAV-011` through `RAV-015`) were implemented, personally reviewed against their own
+Review acceptance criteria by the Tech Lead, and re-verified against each touched service's own full test
+suite (`validation-service` 237 passed, `gateway-api` 245 passed + 1 pre-existing unrelated failure,
+`dashboard-web` final count 454 passed/8 deselected). Both machine-checked `check_doc_sync.py` scripts
+(`libs/common`, `services/validation-service`) pass.
+
+**QA gate**: raised twice. First pass covered this file's entire QA-scope checklist above against the
+real `naive-first-*` Docker stack (rebuilt from this sprint's code) and found one production-blocking
+regression — `RAV-014`'s `build_error_sparkline` had no upper bound on split count, rendering 1,100
+`<rect>` elements (371 KB) for a real 550-split run instead of a compact glance indicator. Re-delegated
+to a dev agent for a fix (capped to the most recent 20 splits, `docs/tickets/RAV-014.md`'s "Fix (QA
+regression)" section), independently re-verified by the Tech Lead, then re-verified a second time by QA
+against the rebuilt stack: **GO**. QA also disclosed one non-blocking, still-open finding carried forward
+to the Tech Lead's own report to the requester rather than silently accepted or fixed: `RAV-015`'s inline
+per-split chart takes roughly 20 seconds to load for a realistic 550-split run (500 rendered points calls,
+each a real two-hop round trip) — correct and within the ticket's own AC (bounded by the existing
+`MAX_RENDERED_SPLITS` cap), but a latency/UX concern this sprint's own AC never set a budget for, left for
+the requester/Product Owner to decide (accept as a known limitation, or schedule a follow-up sprint to
+parallelize the per-split fetches or lower the cap).
+
 ## Next (explicitly not this sprint, roadmap note for continuing this backlog)
 
 With `RAV-011`–`RAV-015` shipped, Epic D (and this backlog's entire scoped set of stories, Epic A through D) is
