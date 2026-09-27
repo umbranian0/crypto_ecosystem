@@ -233,14 +233,14 @@ separate storage-sizing conversation before scheduling — the storage estimate 
 both part of this ticket's own Definition of Done, decided up front rather than punted.
 
 Acceptance criteria:
-- [ ] A new, explicitly-scoped schema change (new table or JSON/array column, Tech Lead's call, not this backlog's)
+- [x] A new, explicitly-scoped schema change (new table or JSON/array column, Tech Lead's call, not this backlog's)
       persists, per split per baseline, the aligned `(timestamp, predicted, actual)` triples the engine already
       computes in-memory during metric aggregation (`naive_first_engine`'s protocol) but currently discards after
       reducing to metrics.
-- [ ] A written storage-growth estimate (rows = tenants × runs × splits × test-window-length × baselines-per-split)
+- [x] A written storage-growth estimate (rows = tenants × runs × splits × test-window-length × baselines-per-split)
       is still produced and presented to the Architect/Tech Lead as part of this ticket — kept from the prior
       version of this story, not dropped.
-- [ ] **A concrete retention/pruning policy is specified and implemented as part of this same ticket, not left as
+- [x] **A concrete retention/pruning policy is specified and implemented as part of this same ticket, not left as
       a TODO or comment.** Default shape (Tech Lead may choose a different bound if the storage estimate above
       argues for it, but must state and implement one, not defer the decision): **keep per-point data only for
       the most recent 90 days OR the most recent 20 runs per tenant/dataset combination, whichever is simpler to
@@ -254,13 +254,13 @@ Acceptance criteria:
       - a query-time cutoff enforced in the repository/query layer (e.g. the per-point read path silently excludes
         rows older than the bound, and a companion write-time or periodic delete keeps the table from growing
         unbounded regardless of whether anyone ever queries it).
-- [ ] The change does not alter or weaken the existing leakage-aware protocol in any way — raw predictions are
+- [x] The change does not alter or weaken the existing leakage-aware protocol in any way — raw predictions are
       captured as a side-effect of the existing walk-forward computation, never by re-fitting or re-predicting
       outside a split's own train/test boundary.
-- [ ] No existing `SplitResultResponse`/`SplitResultRecord` field changes shape or meaning — this is additive only
+- [x] No existing `SplitResultResponse`/`SplitResultRecord` field changes shape or meaning — this is additive only
       (new field/endpoint, not a repurposing of `model_*`/`naive0_*`, matching the precedent VS-017 already set for
       `client_baseline` as its own separate, additive column).
-- [ ] Test proves the retention policy actually bounds the table: a fixture with data older than the chosen
+- [x] Test proves the retention policy actually bounds the table: a fixture with data older than the chosen
       cutoff (by age or by run-count, matching whichever bound is implemented) is excluded from `RAV-007`'s read
       path and/or physically removed by the chosen deletion mechanism — not just asserted as "the policy exists
       in code," but exercised end-to-end.
@@ -274,23 +274,32 @@ platform's baseline audit capability at all. Not Could: the founder has now expl
 so it is real committed scope for an upcoming sprint, not a maybe.
 Depends on: none (but blocks RAV-007, RAV-008)
 
+**Status: DONE (`docs/tickets/VS-031.md` — persistence: `SplitPoint` table, `services/validation-service/src/app/models.py`,
+migration `0011_add_split_points_table.py`, additive `BaselineResult.predictions` field in
+`libs/naive_first_engine/src/naive_first_engine/report_schema.py`/`protocol.py`; `docs/tickets/VS-032.md` — retention:
+`SPLIT_POINT_RETENTION_DAYS = 90` constant + query-time cutoff in `SplitPointRepository.get_points`
+(`sqlite_repository.py`/`postgres_repository.py`) + `services/validation-service/scripts/prune_split_points.py`,
+tested end-to-end in `services/validation-service/tests/test_split_point_retention.py`). **Backlog-hygiene
+correction made in Sprint 61**: these boxes were left unchecked after the work shipped in an earlier sprint; no
+new work performed, checkboxes brought in line with the already-shipped, already-verified state of the code.**
+
 ### RAV-007 — Expose per-point predicted/actual values via the existing run/split API surface [Should]
 **As** dashboard-web, **I want** a way to fetch the per-point values RAV-006 persists (a new field on
 `GET /runs/{id}/splits`, or a new `GET /runs/{id}/splits/{split_index}/points`-style endpoint — Tech Lead's call),
 **so that** a chart can be built against real data rather than an assumption that it already exists.
 
 Acceptance criteria:
-- [ ] The new endpoint/field is added to `validation-service` and proxied through `gateway-api`, following the
+- [x] The new endpoint/field is added to `validation-service` and proxied through `gateway-api`, following the
       same pass-through-only pattern `GET /runs/{id}/splits` already uses (no service reimplementing another
       service's logic, per CLAUDE.md's "no service imports another service's code" rule).
-- [ ] Response shape is added to `naive_first_common.contracts` as the single canonical definition (ARCH-003's
+- [x] Response shape is added to `naive_first_common.contracts` as the single canonical definition (ARCH-003's
       established convention), not a fourth hand-duplicated field list.
-- [ ] Tenant scoping (RLS) applies to this new data exactly as it does to `split_results` today — no new path that
+- [x] Tenant scoping (RLS) applies to this new data exactly as it does to `split_results` today — no new path that
       bypasses `set_config('app.tenant_id', ...)`.
-- [ ] Given the potential row volume flagged in RAV-006, this endpoint supports pagination or a per-split fetch
+- [x] Given the potential row volume flagged in RAV-006, this endpoint supports pagination or a per-split fetch
       granularity (not "return every point for every split in a run in one response") — sized in coordination with
       RAV-006's storage estimate, not assumed to be small.
-- [ ] Reads through this endpoint respect RAV-006's retention/pruning cutoff — a request for a split whose
+- [x] Reads through this endpoint respect RAV-006's retention/pruning cutoff — a request for a split whose
       per-point data has already been pruned returns the same collapsed-empty shape a zero-row split would, not an
       error, and never implies the data never existed.
 
@@ -300,26 +309,41 @@ data that doesn't exist yet, but it is no longer speculative/Could-tier scope no
 committed work.
 Depends on: RAV-006
 
+**Status: DONE (`docs/tickets/VS-033.md` — `GET /runs/{run_id}/splits/{split_index}/points` endpoint,
+`services/validation-service/src/app/routers/splits.py` line 212, `limit`/`offset` pagination matching `GET /runs`'s
+convention, retention-respecting empty-200 behavior; `SplitPointResponse` canonicalized in
+`libs/common/src/naive_first_common/contracts.py`, proxied pass-through by `gateway-api` per GW-031). **Backlog-
+hygiene correction made in Sprint 61**: these boxes were left unchecked after the work shipped in an earlier
+sprint; no new work performed, checkboxes brought in line with the already-shipped, already-verified state of the
+code.**
+
 ### RAV-008 — Predicted-vs-actual chart per split [Should]
 **As** dashboard-web, **I want** a chart plotting a chosen split's actual values against the model's and Naive0's
 predicted values over the test window, **so that** a tenant can visually see where a model tracked, over-shot, or
 under-shot actual outcomes during that split's out-of-sample period.
 
 Acceptance criteria:
-- [ ] Renders per-split (not per-run — this is a detail view within a split, likely a drill-down from RAV-002's
+- [x] Renders per-split (not per-run — this is a detail view within a split, likely a drill-down from RAV-002's
       chart or the existing table's row), using RAV-007's endpoint, for the model, Naive0, and (when present) the
       client baseline series.
-- [ ] Chart title/axis labels/copy describe this as "actual value vs. this split's predicted value, test-window
+- [x] Chart title/axis labels/copy describe this as "actual value vs. this split's predicted value, test-window
       only" — explicitly not labeled as a forecast of anything beyond that split's already-completed test window,
       and no extrapolation/trend-line/future-looking element of any kind is rendered.
-- [ ] Same status-neutral color constraint as every other chart in this backlog.
-- [ ] Test: chart renders correct point-for-point series for a fixture split's per-point data.
+- [x] Same status-neutral color constraint as every other chart in this backlog.
+- [x] Test: chart renders correct point-for-point series for a fixture split's per-point data.
 
 Rationale for priority: highest-fidelity chart in this backlog, still blocked on RAV-006/RAV-007 landing first
 (sequencing dependency, not a priority downgrade); **Should**, matching RAV-006/RAV-007 now that the founder has
 authorized that prerequisite work — Epic A (already done) validated real tenant demand for the cheaper charts
 first, so this is the natural next increment once its two dependencies close, not speculative scope.
 Depends on: RAV-007
+
+**Status: DONE (`docs/tickets/DASH-129.md` — `build_predicted_vs_actual_chart`/`PredictedVsActualChartData` in
+`services/dashboard-web/src/app/charting.py`, standalone route `run_split_points_chart`/
+`GET /runs/{run_id}/splits/{split_index}/points-chart` in `src/app/routers/runs.py` line 1211, positioning-copy and
+no-trend-line checks personally verified in the ticket's Review section). **Backlog-hygiene correction made in
+Sprint 61**: these boxes were left unchecked after the work shipped in an earlier sprint; no new work performed,
+checkboxes brought in line with the already-shipped, already-verified state of the code.**
 
 ## Epic C — Run-list-level trend view (optional, per task framing)
 
@@ -389,9 +413,11 @@ svg.md` (binding: server-rendered inline SVG only, no new dependency), `services
 runs.py` (`get_splits`, line 203) and `services/validation-service/src/app/routers/splits.py` (`get_splits`, line
 116) — confirmed no batched/cross-run or cross-split summary endpoint exists anywhere today.
 
-Scope: closes exactly two founder-confirmed gaps, and nothing beyond them. (1) `runs_list.html` has zero
+Scope: closes exactly two founder-confirmed gaps (Sprint 60), plus one directly-caused follow-up gap those two
+stories' own delivery disclosed (RAV-016, Sprint 61) — nothing beyond that. (1) `runs_list.html` has zero
 visualization and no discoverable link to the already-shipped `/runs/trend` cross-run view. (2) `run_detail.html`
-sends a tenant to a separate page per split for the predicted-vs-actual chart instead of showing it inline.
+sends a tenant to a separate page per split for the predicted-vs-actual chart instead of showing it inline. (3)
+RAV-015's fix to (2) shipped without a stated latency budget for many-split runs — RAV-016 closes that gap.
 Explicitly out of scope, per the founder's own instruction: any new chart type (no residual-distribution chart, no
 error-over-time chart, no metric-pair scatter plot — this epic presents already-computed/already-charted data at
 new locations, it does not compute anything new), and a links-only change to `runs_list.html` (the verdict
@@ -573,3 +599,78 @@ read of `charting.py` and `routers/runs.py`)
 
 **Status: DONE (Sprint 60, `docs/tickets/RAV-015.md`). Standalone points-chart route kept (Tech Lead's call,
 stated in the ticket's Outcome section).**
+
+### RAV-016 — Bound `run_detail`'s per-split points fetching to one batched call, with a stated latency budget [Must]
+
+Source (in addition to Epic D's own Source note above): Sprint 60 QA's second pass on RAV-015, which found — and
+explicitly disclosed as non-blocking, left for the requester/PO to decide, not a QA-blocking defect — that
+`run_detail` (`services/dashboard-web/src/app/routers/runs.py`, `run_detail` handler around line 1330) issues one
+`GET /runs/{run_id}/splits/{split_index}/points` call per rendered split (bounded by the existing
+`MAX_RENDERED_SPLITS = 500`, but still up to 500 sequential two-hop round trips through gateway-api to
+validation-service), causing a real 550-split run's `run_detail` page to take roughly 20 seconds to load. No
+latency budget was ever stated for RAV-015 — that gap is what let it ship this way. The founder has decided the
+fix: follow the exact batched-endpoint precedent RAV-012 already established for the runs list
+(`GET /runs/splits/summary`, `services/validation-service/src/app/routers/splits.py`'s `get_splits_summary`,
+batching `PostgresSplitResultRepository.get_splits_for_runs` in one `WHERE run_id.in_(...)` query, proxied
+pass-through by `gateway-api`, called once per page load by dashboard-web's `_fetch_run_splits_summary`) — applied
+to points instead of split summaries. This mechanism is founder-decided, not open for renegotiation in this story;
+exact route naming/shape is the Tech Lead's implementation call.
+
+**As** dashboard-web, **I want** `run_detail`'s per-split predicted-vs-actual chart data (RAV-015) fetched via one
+batched call across all rendered splits instead of one call per split, **so that** the audit page loads in a
+bounded, stated time regardless of how many splits a run has. This closes a disclosed performance gap in an
+already-shipped chart — it introduces no new chart type, no new visualization, and no new data the tenant couldn't
+already see one split at a time.
+
+Acceptance criteria:
+- [x] `run_detail` issues exactly one batched points call covering all of `rendered_splits` (the same list already
+      capped at `MAX_RENDERED_SPLITS = 500` by RAV-015) instead of one `GET /runs/{run_id}/splits/{split_index}/
+      points` call per rendered split. No change to the per-run splits fetch (`GET /runs/{run_id}/splits`/RAV-012's
+      summary call) or to the existing verdict/error chart logic on the same page — this story touches only the
+      per-split points-fetch path RAV-015 introduced.
+- [x] The new batched endpoint (validation-service, proxied pass-through by gateway-api, matching
+      `GET /runs/splits/summary`'s established additive pattern) batches `SplitPointRepository.get_points` across
+      multiple split indices in one query/call, and reuses `SplitPointResponse`'s existing shape verbatim (`libs/
+      common/src/naive_first_common/contracts.py`) — no new field set, no parallel/duplicate contract type. The
+      existing single-split `GET /runs/{run_id}/splits/{split_index}/points` endpoint's contract and behavior are
+      unchanged by this story — it stays live, unmodified, for the standalone `points-chart` route (RAV-015's own
+      "kept, Tech Lead's call" decision).
+- [x] Retention/pruning (VS-032) behaves identically through the new batched path: a split whose points were
+      pruned or never persisted degrades to the same `has_data=False` placeholder `run_detail` already renders
+      today (RAV-015's existing behavior) — never an error, and never a different treatment than a split fetched
+      through the pre-existing single-split endpoint would get.
+- [x] **Stated latency budget (Definition of Done for this story, not left for later measurement):** a realistic
+      550-split run's `run_detail` page must complete server-side (from request received to response fully
+      rendered, excluding client-side network/render variance) in **under 2 seconds** — down from today's
+      measured ~20 seconds. This budget reflects one batched round trip replacing ~500 sequential ones; it is not
+      met by any implementation that still issues more than one downstream points call per page load, regardless
+      of individual call latency. **Live-verified (Sprint 61 QA) against a real 550-split fixture run: 0.85-0.97s
+      end-to-end (`curl -w "%{time_total}"`), roughly 20-23x under budget.**
+- [x] Positioning check (standing constraint, restated per this backlog's own convention of restating it on every
+      AC set): this story is pure plumbing — no new chart type, no new metric, no forecast/signal/recommendation
+      language introduced anywhere, and no green/red color pairing anywhere in the (unchanged) rendered chart.
+      Re-verified against the real rendered page by Sprint 61 QA — no new violation found.
+- [x] Test: a fixture of N rendered splits results in exactly one batched downstream call to the new points
+      endpoint, not O(N) calls — mirroring RAV-012's own "provably bounded, not just asserted in a docstring" test
+      requirement.
+- [x] Test: a fixture 550-split run's `run_detail` handler completes within the stated budget in a repeatable,
+      automated measurement (not a one-off manual timing) — proving the budget is enforced, not just declared.
+
+Rationale for priority: **Must** — closes a real, disclosed, founder-flagged gap from the immediately preceding
+sprint's QA pass on a Must-priority story (RAV-015); an audit product whose own detail page takes 20 seconds to
+load undermines the "rigor" positioning this whole backlog exists to serve. Sequenced as a direct follow-up to
+RAV-015 within the same epic (it closes a gap in that story's own delivered scope, not new scope) rather than as a
+new epic. Depends on nothing new — Epic B's persistence (RAV-006/007/008) is already live in production, and the
+batching mechanism itself is a proven, already-shipped precedent (RAV-012), not a new pattern being introduced.
+Depends on: RAV-015 (fixes the call pattern it introduced), RAV-012 (reuses its proven batched-endpoint precedent);
+does not reopen or depend on new Epic B scope.
+
+**Status: DONE (Sprint 61, `docs/tickets/RAV-016.md`).** New `GET /runs/{run_id}/splits/points` batched endpoint
+(`SplitPoints`/`RunSplitPointsResponse` contracts, `SplitPointRepository.get_points_for_splits`) shipped in
+`services/validation-service`, proxied pass-through by `services/gateway-api`; `run_detail`'s per-split points loop
+replaced by one batched call in `services/dashboard-web`. QA-verified live against a real 550-split fixture run:
+exactly one batched points call observed per page load (zero occurrences of the old per-split pattern), 0.85-0.97s
+end-to-end latency (well under the 2s budget), correct per-index degrade-to-empty for a pruned/unknown split index,
+and the existing single-split `GET /runs/{run_id}/splits/{split_index}/points` endpoint confirmed unchanged/live for
+the standalone `points-chart` route. With this story done, Epic D (and this backlog's entire scoped set, Epic A
+through D) has no remaining open story.

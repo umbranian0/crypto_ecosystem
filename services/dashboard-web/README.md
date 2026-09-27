@@ -1809,6 +1809,14 @@ this ticket's own Analysis section, no new backend endpoint was introduced: the 
   same fan-out a tenant would see by opening each run individually. No real-volume performance problem
   surfaced during this ticket's implementation; if one does at realistic tenant/run volumes, that is a
   follow-on ticket's concern, not silently worked around here.
+- **Per-run splits fetch bounded (`DBOPT-011`, Sprint 61)**: the per-run `GET /runs/{id}/splits` call
+  in the loop above now goes through the same shared `_fetch_bounded_run_splits` helper `run_detail`
+  uses ("Run detail page: rendered-split cap for oversized runs (DASH-119)" above) -- a count call
+  plus a bounded page, each run's splits capped at `MAX_RENDERED_SPLITS` (500) most-recent-by-
+  `split_index` rows, instead of one unbounded fetch per run. `runs_trend` has no "N of M splits
+  shown" notice (unlike `run_detail`) -- the real total this helper also returns is simply discarded
+  here, applied for consistency with `run_detail`'s own established cap, not because this route
+  previously had one of its own.
 
 ## Consistency indicator (RAV-010)
 
@@ -1872,12 +1880,30 @@ run's real size.
   returns `200`, not `500`, at a count well past the cap; (b) the truncation notice renders with the
   real shown/total counts; (c) the rendered subset is the tail (index 1500-1999 present, index
   0-1499 absent from the per-horizon table) -- proving "most recent," not an arbitrary or silent
-  subset; (d) the upstream `GET /runs/{id}/splits` call itself still fetches/receives the full,
-  untruncated response (this route bounds only its own render, not the API call); plus two
-  under-cap tests confirming no truncation notice renders and the exact fixture split count appears,
-  unchanged from pre-fix behavior.
+  subset; plus two under-cap tests confirming no truncation notice renders and the exact fixture
+  split count appears, unchanged from pre-fix behavior.
 - See `docs/tickets/DASH-119.md` for the full incident writeup, root-cause diagnosis, and QA
   verdict.
+
+**Fetch mechanism updated (`DBOPT-011`, Sprint 61)**: `run_detail`'s splits fetch above (and
+`runs_trend`'s own per-run splits fetch, "Runs list pagination (UAT-009)" section below covers the
+rest of that route) no longer fetches the full, unbounded `GET /runs/{run_id}/splits` response and
+truncates client-side -- point (d) of the DASH-119 test list above (the upstream call fetching the
+full, untruncated response) is now superseded. Both call sites go through a new shared private
+helper, `_fetch_bounded_run_splits` (`routers/runs.py`), which issues two bounded downstream calls
+instead: a cheap `GET /runs/{run_id}/splits/count` for the real total, then
+`GET /runs/{run_id}/splits?limit=<cap>&offset=<max(0, total - cap)>` for exactly the tail page
+needed -- `offset = max(0, total - cap)` combined with the endpoint's existing ascending
+`split_index` order reproduces `splits[-cap:]`'s exact "most recent N" selection, never "first N".
+`MAX_RENDERED_SPLITS`, the tail-selection semantics, the "N of M splits shown" notice, and the
+byte-identical-under-cap guarantee above all stay exactly as described -- only how
+`rendered_splits`/`total_splits_count` are obtained changed, never what they contain. A run at or
+under the cap now issues the same two calls (count returns `<= cap`, so `offset` is `0` and the
+bounded page returns every row) rather than skipping the count call -- this is a deliberate
+simplification (one code path for both cases, no special-casing), not a regression, and does not
+change render output. This ticket does not touch the separate per-split points-fetch loop
+(`routers/runs.py`, `RAV-015`'s own call site) -- that remains one `GET /runs/{run_id}/splits/{split_index}/points`
+call per rendered split, unbounded-list-fetch or not.
 
 ## Run-submission error redisplay: stored-dataset dropdown fix (DASH-120)
 
@@ -2517,27 +2543,61 @@ below the table, reusing this exact same `build_predicted_vs_actual_chart(points
   points-chart">View chart below</a>`) instead of navigating away; the chart itself renders in a new
   "Per-split actual value vs. predicted value charts" section below the table, one `<div id="split-{{
   split.split_index }}-points-chart">` per rendered split.
-- **Call count, bounded (N+1-awareness)**: `run_detail` (`routers/runs.py`) makes exactly one `GET
-  /runs/{run_id}/splits/{split_index}/points` call per split in `rendered_splits` -- the same list
-  DASH-119's existing `MAX_RENDERED_SPLITS = 500` cap already bounds, never the unbounded `splits` list.
-  A run with more than 500 persisted splits still makes at most 500 points calls (the most recent 500,
-  same tail DASH-119 already renders) -- proved by
-  `test_run_detail_large_split_count_points_calls_bounded_by_max_rendered_splits`.
-- **Per-split degrade-on-failure**: a transport failure or a `502`/`504` forwarded from gateway-api on
-  any *one* split's points call degrades only that split's own chart to the existing
-  `has_data=False` "No per-point data available for this split." placeholder -- it is never propagated
-  to `_render_error_for_status` for the whole page. Every other split's table row and chart render
-  normally even when one split's points call fails.
+- **Call count, bounded (N+1-awareness), superseded by `RAV-016` (Sprint 61) -- see below.** Originally
+  this section made one `GET /runs/{run_id}/splits/{split_index}/points` call per split in
+  `rendered_splits`; that per-split loop no longer exists in this codebase.
 - **Known, carried-forward limitation (not introduced or worsened by this ticket)**: the points
-  endpoint's `limit` query param still defaults to 20 (gateway-api/validation-service's existing
-  `Query(default=20)`); a split whose test window has more than 20 points shows only the first 20 in
-  both the standalone page and this inline chart, same as before this ticket. No DASH-122-style paging
-  loop was added here either, since RAV-015's own acceptance criteria don't call for one.
+  endpoint's per-split point count still defaults to 20 (`SplitPointRepository`'s existing unbounded-
+  per-split shape, no `limit`/`offset` of its own for the batched form either); a split whose test window
+  has more than 20 points shows only the first 20 in both the standalone page and this inline chart, same
+  as before this ticket. No DASH-122-style paging loop was added here either, since RAV-015's own
+  acceptance criteria don't call for one.
 - **Tests**: `tests/test_runs_detail.py` gained the inline-chart-with-real-points test, the
-  no-persisted-points placeholder test, two per-split degrade-on-failure tests (raw transport error and
-  a forwarded `502`), the exactly-one-call-per-rendered-split test, the bounded-by-`MAX_RENDERED_SPLITS`
-  test, and an extension of the existing banned-positioning-word scan to the new template section --
-  ~360 new lines, all passing alongside the full existing suite (430 passed, 8 deselected).
+  no-persisted-points placeholder test, and an extension of the existing banned-positioning-word scan to
+  the new template section (the per-split-call-count/degrade tests below were superseded by `RAV-016`'s
+  own batched-call tests, see below, rather than kept alongside now-nonexistent per-split-loop behavior).
+
+### Batched points fetch on `run_detail` (RAV-016, Sprint 61)
+
+Replaces this section's own original per-split points-fetch loop (RAV-015 above) with **one** batched
+call to `GET /runs/{run_id}/splits/points` (validation-service RAV-016, proxied by gateway-api) covering
+every rendered split, closing the N+1 pattern Sprint 60 QA measured at ~20s server-side for a real
+550-split run.
+
+- **Call count, now O(1) per page load**: `run_detail` (`routers/runs.py`) makes exactly **one**
+  `GET /runs/{run_id}/splits/points` call, with `rendered_splits`' `split_index` values forwarded as
+  repeated query params, regardless of `rendered_splits`' length (bounded by `MAX_RENDERED_SPLITS = 500`
+  as before) -- proved by `test_run_detail_makes_exactly_one_batched_points_call_for_n_rendered_splits`
+  (N=3 splits) and `test_run_detail_large_split_count_makes_exactly_one_batched_points_call` (a
+  2000-split run, 500 rendered, still exactly one call).
+- **Whole-call degrade-on-failure (binding, replaces RAV-015's per-split degrade)**: a transport failure
+  or a `502`/`504` forwarded from gateway-api on this one call degrades **every** rendered split's chart
+  to the existing `has_data=False` "No per-point data available for this split." placeholder -- there is
+  no per-split fallback left once the one call has failed. It is never propagated to
+  `_render_error_for_status` for the whole page; the rest of `run_detail` (table, verdict/error charts)
+  still renders. Proved by `test_run_detail_transport_failure_on_batched_points_call_degrades_every_split`
+  and `test_run_detail_502_on_batched_points_call_degrades_every_split`.
+- **Per-index data-availability degrade (distinct from the whole-call failure above)**: within a
+  successful batched response, an individual split's entry with `points: []` (pruned, never persisted, or
+  absent from the response) still degrades only that split's own chart to the same placeholder -- a
+  sibling split with real points in the same response still renders its real chart. Proved by
+  `test_run_detail_one_split_no_data_entry_does_not_break_other_splits_chart` (regression against
+  RAV-015's original per-split placeholder behavior).
+- **Fixture-level latency test (the sprint's own required test)**:
+  `tests/test_run_detail_points_latency.py::test_run_detail_550_splits_completes_under_two_seconds`
+  measures `run_detail` for a fixture 550-split run (non-empty, distinct point payloads for every split)
+  through a `TestClient`/`httpx.MockTransport` fixture with near-zero mocked network latency, asserting
+  `elapsed < 2.0` via `time.perf_counter()`. Measured elapsed on this development machine: **0.569s** --
+  this is a fixture-level measurement proving the code path itself has no O(N)/pathological per-split
+  cost; it is not a substitute for the mandatory QA gate's real measurement against the actual Docker
+  stack (Sprint 60 QA's own ~20s figure for the pre-RAV-016 per-split loop), which is recorded separately
+  once QA re-measures the real stack.
+- **Tests**: `tests/test_runs_detail.py`'s inline-chart/no-persisted-points tests were updated to hit the
+  new batched route; the per-split-call-count and per-split degrade-on-failure tests were replaced with
+  their batched-call equivalents (see above); a new `tests/test_run_detail_points_latency.py` adds the
+  required latency test. `services/validation-service` gained
+  `tests/test_splits_points_endpoint.py` (the new `GET /runs/{run_id}/splits/points` route) and
+  `services/gateway-api` gained `tests/test_runs_splits_points_routing.py` (the pass-through proxy).
 
 ## AI-assisted features (AI-003)
 

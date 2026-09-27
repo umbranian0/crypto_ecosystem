@@ -212,9 +212,21 @@ class SplitResultRepository(typing.Protocol):
 
     def add_splits(self, tenant_id: str, run_id: str, splits: list[SplitResultRecord]) -> None: ...
 
-    def get_splits(self, tenant_id: str, run_id: str) -> list[SplitResultRecord]:
+    def get_splits(
+        self, tenant_id: str, run_id: str, limit: int | None = None, offset: int = 0
+    ) -> list[SplitResultRecord]:
         """Returns splits ordered by `split_index` (VS-008 AC3) -- ordering is
         this method's responsibility, not the caller's (see module docstring).
+        DBOPT-011: when `limit` is None (default), behavior is byte-identical
+        to before this ticket -- the full, unbounded, ordered list. When
+        `limit` is given, returns at most `limit` rows starting at `offset`,
+        same ordering.
+        """
+        ...
+
+    def count_splits(self, tenant_id: str, run_id: str) -> int:
+        """Total number of splits for this run (unpaginated) -- DBOPT-011,
+        mirrors ValidationRunRepository.count_runs' role for GET /runs.
         """
         ...
 
@@ -247,4 +259,16 @@ class SplitPointRepository(typing.Protocol):
         (VS-032: `SPLIT_POINT_RETENTION_DAYS`, currently 90 days) --
         enforced inside the SQLite/Postgres implementations, not the caller.
         """
+        ...
+
+    def get_points_for_splits(
+        self, tenant_id: str, run_id: str, split_indices: list[int]
+    ) -> dict[int, list[SplitPointRecord]]:
+        """Batched form of get_points (RAV-016). A split_index with no points
+        (pruned, never persisted, or absent from this call's request) is
+        simply absent from the result dict -- never an error, never a
+        KeyError for the caller to guard against. Each present split's list
+        is ordered by timestamp ascending, same as get_points. Retention
+        (VS-032) applies identically -- only points within
+        SPLIT_POINT_RETENTION_DAYS are returned."""
         ...

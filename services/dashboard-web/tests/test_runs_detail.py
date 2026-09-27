@@ -104,6 +104,8 @@ def test_run_detail_success_with_splits(monkeypatch) -> None:
         assert request.headers["authorization"] == f"Bearer {RAW_KEY}"
         if request.url.path == f"/runs/{RUN_ID}":
             return httpx.Response(200, json=RUN_DETAIL_BODY)
+        if request.url.path == f"/runs/{RUN_ID}/splits/count":
+            return httpx.Response(200, json={"total": len([SPLIT_BODY])})
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[SPLIT_BODY])
         if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
@@ -134,6 +136,8 @@ def test_run_detail_renders_label_when_present_and_id_stays_visible(monkeypatch)
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == f"/runs/{RUN_ID}":
             return httpx.Response(200, json={**RUN_DETAIL_BODY, "label": "weekly audit"})
+        if request.url.path == f"/runs/{RUN_ID}/splits/count":
+            return httpx.Response(200, json={"total": len([SPLIT_BODY])})
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[SPLIT_BODY])
         if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
@@ -156,6 +160,8 @@ def test_run_detail_renders_bare_id_when_label_absent(monkeypatch) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == f"/runs/{RUN_ID}":
             return httpx.Response(200, json=RUN_DETAIL_BODY)
+        if request.url.path == f"/runs/{RUN_ID}/splits/count":
+            return httpx.Response(200, json={"total": len([SPLIT_BODY])})
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[SPLIT_BODY])
         if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
@@ -183,6 +189,8 @@ def test_run_detail_renders_warning_when_present(monkeypatch) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == f"/runs/{RUN_ID}":
             return httpx.Response(200, json={**RUN_DETAIL_BODY, "warnings": [warning_text]})
+        if request.url.path == f"/runs/{RUN_ID}/splits/count":
+            return httpx.Response(200, json={"total": len([SPLIT_BODY])})
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[SPLIT_BODY])
         if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
@@ -205,6 +213,8 @@ def test_run_detail_renders_nothing_extra_when_warnings_empty(monkeypatch) -> No
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == f"/runs/{RUN_ID}":
             return httpx.Response(200, json={**RUN_DETAIL_BODY, "warnings": []})
+        if request.url.path == f"/runs/{RUN_ID}/splits/count":
+            return httpx.Response(200, json={"total": len([SPLIT_BODY])})
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[SPLIT_BODY])
         if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
@@ -229,6 +239,8 @@ def test_run_detail_metric_query_param_switches_chart(monkeypatch) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == f"/runs/{RUN_ID}":
             return httpx.Response(200, json=RUN_DETAIL_BODY)
+        if request.url.path == f"/runs/{RUN_ID}/splits/count":
+            return httpx.Response(200, json={"total": len([SPLIT_BODY])})
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[SPLIT_BODY])
         if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
@@ -252,6 +264,8 @@ def test_run_detail_invalid_metric_falls_back_to_mae(monkeypatch) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == f"/runs/{RUN_ID}":
             return httpx.Response(200, json=RUN_DETAIL_BODY)
+        if request.url.path == f"/runs/{RUN_ID}/splits/count":
+            return httpx.Response(200, json={"total": len([SPLIT_BODY])})
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[SPLIT_BODY])
         if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
@@ -274,6 +288,8 @@ def test_run_detail_metric_selector_offers_all_seven_metrics(monkeypatch) -> Non
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == f"/runs/{RUN_ID}":
             return httpx.Response(200, json=RUN_DETAIL_BODY)
+        if request.url.path == f"/runs/{RUN_ID}/splits/count":
+            return httpx.Response(200, json={"total": len([SPLIT_BODY])})
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[SPLIT_BODY])
         if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
@@ -299,6 +315,8 @@ def test_run_detail_running_with_no_splits(monkeypatch) -> None:
         if request.url.path == f"/runs/{RUN_ID}":
             body = {**RUN_DETAIL_BODY, "status": "running", "completed_at": None}
             return httpx.Response(200, json=body)
+        if request.url.path == f"/runs/{RUN_ID}/splits/count":
+            return httpx.Response(200, json={"total": len([])})
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[])
         if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
@@ -498,6 +516,8 @@ def test_run_detail_renders_dm_verdict_chart_with_undefined_category(monkeypatch
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == f"/runs/{RUN_ID}":
             return httpx.Response(200, json=RUN_DETAIL_BODY)
+        if request.url.path == f"/runs/{RUN_ID}/splits/count":
+            return httpx.Response(200, json={"total": len([SPLIT_BODY, UNDEFINED_DM_SPLIT_BODY])})
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[SPLIT_BODY, UNDEFINED_DM_SPLIT_BODY])
         if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
@@ -527,6 +547,8 @@ def test_run_detail_running_with_no_splits_renders_neither_chart(monkeypatch) ->
         if request.url.path == f"/runs/{RUN_ID}":
             body = {**RUN_DETAIL_BODY, "status": "running", "completed_at": None}
             return httpx.Response(200, json=body)
+        if request.url.path == f"/runs/{RUN_ID}/splits/count":
+            return httpx.Response(200, json={"total": len([])})
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[])
         if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
@@ -576,6 +598,8 @@ def test_run_detail_renders_forecast_horizon_summary_panel_with_real_metrics(
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == f"/runs/{RUN_ID}":
             return httpx.Response(200, json=RUN_DETAIL_BODY)
+        if request.url.path == f"/runs/{RUN_ID}/splits/count":
+            return httpx.Response(200, json={"total": len([SPLIT_BODY])})
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[SPLIT_BODY])
         if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
@@ -607,6 +631,8 @@ def test_run_detail_forecast_horizon_summary_panel_renders_undefined_category(
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == f"/runs/{RUN_ID}":
             return httpx.Response(200, json=RUN_DETAIL_BODY)
+        if request.url.path == f"/runs/{RUN_ID}/splits/count":
+            return httpx.Response(200, json={"total": len([SPLIT_BODY, UNDEFINED_DM_SPLIT_BODY])})
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[SPLIT_BODY, UNDEFINED_DM_SPLIT_BODY])
         if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
@@ -641,6 +667,8 @@ def test_run_detail_running_with_no_splits_does_not_render_horizon_summary_panel
         if request.url.path == f"/runs/{RUN_ID}":
             body = {**RUN_DETAIL_BODY, "status": "running", "completed_at": None}
             return httpx.Response(200, json=body)
+        if request.url.path == f"/runs/{RUN_ID}/splits/count":
+            return httpx.Response(200, json={"total": len([])})
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[])
         if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
@@ -727,6 +755,8 @@ def test_run_detail_renders_shareable_summary_textarea(monkeypatch) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == f"/runs/{RUN_ID}":
             return httpx.Response(200, json=RUN_DETAIL_BODY)
+        if request.url.path == f"/runs/{RUN_ID}/splits/count":
+            return httpx.Response(200, json={"total": len([SPLIT_BODY])})
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[SPLIT_BODY])
         if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
@@ -844,6 +874,8 @@ def test_run_detail_renders_client_baseline_disclaimer_when_present(monkeypatch)
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == f"/runs/{RUN_ID}":
             return httpx.Response(200, json=RUN_DETAIL_BODY)
+        if request.url.path == f"/runs/{RUN_ID}/splits/count":
+            return httpx.Response(200, json={"total": len([SPLIT_BODY_WITH_CLIENT_BASELINE])})
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[SPLIT_BODY_WITH_CLIENT_BASELINE])
         if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
@@ -869,6 +901,8 @@ def test_run_detail_omits_client_baseline_disclaimer_when_absent(monkeypatch) ->
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == f"/runs/{RUN_ID}":
             return httpx.Response(200, json=RUN_DETAIL_BODY)
+        if request.url.path == f"/runs/{RUN_ID}/splits/count":
+            return httpx.Response(200, json={"total": len([SPLIT_BODY])})
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[SPLIT_BODY])
         if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
@@ -935,14 +969,36 @@ def _make_split(index: int) -> dict:
     return {**SPLIT_BODY, "split_index": index}
 
 
+def _sliced_splits_response(all_splits: list[dict], request: httpx.Request) -> httpx.Response:
+    """DBOPT-011 test helper: mimics validation-service's own real
+    `GET /runs/{run_id}/splits?limit=&offset=` bounded-page behavior for a
+    fixture list -- these large-fixture tests need the mock to actually honor
+    the query params `_fetch_bounded_run_splits` sends (`offset = max(0,
+    total - cap)`); a mock that ignored them would return more rows than a
+    real bounded call ever would, silently invalidating this file's own
+    "only `MAX_RENDERED_SPLITS` render" assertions below. Omitting `limit`
+    (not exercised by production code post-DBOPT-011, but kept for parity
+    with the real endpoint's own unbounded-by-default contract) returns the
+    full list, unsliced.
+    """
+    raw_limit = request.url.params.get("limit")
+    offset = int(request.url.params.get("offset", 0))
+    if raw_limit is None:
+        return httpx.Response(200, json=all_splits)
+    limit = int(raw_limit)
+    return httpx.Response(200, json=all_splits[offset : offset + limit])
+
+
 def test_run_detail_large_split_count_returns_200_not_500(monkeypatch) -> None:
     large_splits = [_make_split(i) for i in range(2000)]
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == f"/runs/{RUN_ID}":
             return httpx.Response(200, json=RUN_DETAIL_BODY)
+        if request.url.path == f"/runs/{RUN_ID}/splits/count":
+            return httpx.Response(200, json={"total": len(large_splits)})
         if request.url.path == f"/runs/{RUN_ID}/splits":
-            return httpx.Response(200, json=large_splits)
+            return _sliced_splits_response(large_splits, request)
         if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
             return httpx.Response(200, json={"items": [], "limit": 20, "offset": 0, "total": 0})
         raise AssertionError(f"unexpected path {request.url.path}")
@@ -967,8 +1023,10 @@ def test_run_detail_large_split_count_shows_truncation_notice(monkeypatch) -> No
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == f"/runs/{RUN_ID}":
             return httpx.Response(200, json=RUN_DETAIL_BODY)
+        if request.url.path == f"/runs/{RUN_ID}/splits/count":
+            return httpx.Response(200, json={"total": len(large_splits)})
         if request.url.path == f"/runs/{RUN_ID}/splits":
-            return httpx.Response(200, json=large_splits)
+            return _sliced_splits_response(large_splits, request)
         if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
             return httpx.Response(200, json={"items": [], "limit": 20, "offset": 0, "total": 0})
         raise AssertionError(f"unexpected path {request.url.path}")
@@ -1000,23 +1058,37 @@ def test_run_detail_large_split_count_shows_truncation_notice(monkeypatch) -> No
     assert response.text.count("verdict-label-") == 500
 
 
-def test_run_detail_large_split_count_full_data_still_reachable_via_api(monkeypatch) -> None:
-    """DASH-119's fix must not make the full split data unreachable -- this
-    dashboard-web route always calls `GET /runs/{id}/splits` (an unbounded,
-    pre-existing API) to build its own truncated render; this test proves
-    the handler is not itself the one bounding what gets fetched, only what
-    gets rendered, by asserting the upstream call still returns/consumes the
-    full 2000-row response rather than a pre-truncated request.
+def test_run_detail_large_split_count_calls_count_once_and_bounded_splits_once(
+    monkeypatch,
+) -> None:
+    """DBOPT-011: the sprint's own required test. A fixture run with more
+    splits (2000) than `MAX_RENDERED_SPLITS` (500) must make exactly one call
+    to the new `GET /runs/{run_id}/splits/count` endpoint and exactly one
+    call to the now-bounded `GET /runs/{run_id}/splits?limit=&offset=` --
+    never the old single unbounded-list call this test replaces (see git
+    history for `test_run_detail_large_split_count_full_data_still_reachable_
+    via_api`, DASH-119's pre-DBOPT-011 version of this same fixture's
+    reachability guarantee, now superseded by the count endpoint carrying the
+    real total instead of an over-fetched-then-discarded response body).
+    `rendered_splits`/`splits_truncated`/`total_splits_count` must still match
+    exactly what `splits[-500:]` over an equivalent full 2000-row fixture
+    would have produced -- same assertions
+    `test_run_detail_large_split_count_shows_truncation_notice` above already
+    makes, repeated here specifically alongside the request-counting proof.
     """
     large_splits = [_make_split(i) for i in range(2000)]
-    fetched_counts: list[int] = []
+    count_calls: list[httpx.Request] = []
+    splits_calls: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == f"/runs/{RUN_ID}":
             return httpx.Response(200, json=RUN_DETAIL_BODY)
+        if request.url.path == f"/runs/{RUN_ID}/splits/count":
+            count_calls.append(request)
+            return httpx.Response(200, json={"total": len(large_splits)})
         if request.url.path == f"/runs/{RUN_ID}/splits":
-            fetched_counts.append(len(large_splits))
-            return httpx.Response(200, json=large_splits)
+            splits_calls.append(request)
+            return _sliced_splits_response(large_splits, request)
         if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
             return httpx.Response(200, json={"items": [], "limit": 20, "offset": 0, "total": 0})
         raise AssertionError(f"unexpected path {request.url.path}")
@@ -1029,7 +1101,22 @@ def test_run_detail_large_split_count_full_data_still_reachable_via_api(monkeypa
     response = client.get(f"/runs/{RUN_ID}")
 
     assert response.status_code == 200
-    assert fetched_counts == [2000]
+    assert len(count_calls) == 1
+    assert len(splits_calls) == 1
+    # Tail-selection math (binding, ticket Review AC): offset = max(0, total
+    # - cap) = max(0, 2000 - 500) = 1500, ascending order -> rows 1500-1999,
+    # the same 500 most-recent rows splits[-500:] would have produced.
+    assert splits_calls[0].url.params["limit"] == "500"
+    assert splits_calls[0].url.params["offset"] == "1500"
+
+    assert "Showing the most recent 500" in response.text
+    assert "of 2000" in response.text
+    horizon_panel = response.text.split("horizon-summary-table")[1]
+    assert "<td>1999</td>" in horizon_panel
+    assert "<td>1500</td>" in horizon_panel
+    assert "<td>0</td>" not in horizon_panel
+    assert "<td>1499</td>" not in horizon_panel
+    assert response.text.count("verdict-label-") == 500
 
 
 def test_run_detail_under_cap_run_has_no_truncation_notice(monkeypatch) -> None:
@@ -1039,6 +1126,8 @@ def test_run_detail_under_cap_run_has_no_truncation_notice(monkeypatch) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == f"/runs/{RUN_ID}":
             return httpx.Response(200, json=RUN_DETAIL_BODY)
+        if request.url.path == f"/runs/{RUN_ID}/splits/count":
+            return httpx.Response(200, json={"total": len([SPLIT_BODY])})
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[SPLIT_BODY])
         if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
@@ -1068,6 +1157,8 @@ def test_run_detail_under_cap_run_byte_identical_to_pre_fix_baseline(monkeypatch
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == f"/runs/{RUN_ID}":
             return httpx.Response(200, json=RUN_DETAIL_BODY)
+        if request.url.path == f"/runs/{RUN_ID}/splits/count":
+            return httpx.Response(200, json={"total": len([SPLIT_BODY, UNDEFINED_DM_SPLIT_BODY])})
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[SPLIT_BODY, UNDEFINED_DM_SPLIT_BODY])
         if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
@@ -1098,6 +1189,8 @@ def test_run_detail_renders_placeholder_label_when_no_client_model(monkeypatch) 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == f"/runs/{RUN_ID}":
             return httpx.Response(200, json={**RUN_DETAIL_BODY, "has_client_model": False})
+        if request.url.path == f"/runs/{RUN_ID}/splits/count":
+            return httpx.Response(200, json={"total": len([SPLIT_BODY])})
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[SPLIT_BODY])
         if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
@@ -1123,6 +1216,8 @@ def test_run_detail_renders_plain_model_label_when_client_model_present(monkeypa
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == f"/runs/{RUN_ID}":
             return httpx.Response(200, json={**RUN_DETAIL_BODY, "has_client_model": True})
+        if request.url.path == f"/runs/{RUN_ID}/splits/count":
+            return httpx.Response(200, json={"total": len([SPLIT_BODY])})
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[SPLIT_BODY])
         if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
@@ -1150,6 +1245,8 @@ def test_run_detail_summary_panel_uses_short_label_with_the_note_beside_it(monke
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == f"/runs/{RUN_ID}":
             return httpx.Response(200, json={**RUN_DETAIL_BODY, "has_client_model": False})
+        if request.url.path == f"/runs/{RUN_ID}/splits/count":
+            return httpx.Response(200, json={"total": len([SPLIT_BODY])})
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[SPLIT_BODY])
         if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
@@ -1175,6 +1272,8 @@ def test_run_detail_summary_panel_plain_label_and_no_note_with_client_model(monk
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == f"/runs/{RUN_ID}":
             return httpx.Response(200, json={**RUN_DETAIL_BODY, "has_client_model": True})
+        if request.url.path == f"/runs/{RUN_ID}/splits/count":
+            return httpx.Response(200, json={"total": len([SPLIT_BODY])})
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[SPLIT_BODY])
         if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
@@ -1301,6 +1400,8 @@ def test_run_detail_renders_feature_composition_for_multimodal_run(monkeypatch) 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == f"/runs/{RUN_ID}":
             return httpx.Response(200, json=MULTIMODAL_RUN_DETAIL_BODY)
+        if request.url.path == f"/runs/{RUN_ID}/splits/count":
+            return httpx.Response(200, json={"total": len([SPLIT_BODY])})
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[SPLIT_BODY])
         if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
@@ -1330,6 +1431,8 @@ def test_run_detail_omits_feature_composition_for_single_series_run(monkeypatch)
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == f"/runs/{RUN_ID}":
             return httpx.Response(200, json=RUN_DETAIL_BODY)
+        if request.url.path == f"/runs/{RUN_ID}/splits/count":
+            return httpx.Response(200, json={"total": len([SPLIT_BODY])})
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[SPLIT_BODY])
         if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
@@ -1362,6 +1465,8 @@ def test_run_detail_not_beat_naive_verdict_identical_for_multimodal_and_single_s
         def handler(request: httpx.Request) -> httpx.Response:
             if request.url.path == f"/runs/{RUN_ID}":
                 return httpx.Response(200, json=run_body)
+            if request.url.path == f"/runs/{RUN_ID}/splits/count":
+                return httpx.Response(200, json={"total": len([not_beat_naive_split])})
             if request.url.path == f"/runs/{RUN_ID}/splits":
                 return httpx.Response(200, json=[not_beat_naive_split])
             if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
@@ -1402,6 +1507,8 @@ def test_run_detail_single_series_run_byte_identical_outside_feature_lineage_blo
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == f"/runs/{RUN_ID}":
             return httpx.Response(200, json=RUN_DETAIL_BODY)
+        if request.url.path == f"/runs/{RUN_ID}/splits/count":
+            return httpx.Response(200, json={"total": len([SPLIT_BODY])})
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[SPLIT_BODY])
         if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
@@ -1432,6 +1539,8 @@ def test_run_detail_shows_raw_levels_warning_unconditionally_when_splits_present
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == f"/runs/{RUN_ID}":
             return httpx.Response(200, json=RUN_DETAIL_BODY)
+        if request.url.path == f"/runs/{RUN_ID}/splits/count":
+            return httpx.Response(200, json={"total": len([SPLIT_BODY])})
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[SPLIT_BODY])
         if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
@@ -1460,6 +1569,8 @@ def test_run_detail_renders_headline_verdict_summary_with_client_model(monkeypat
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == f"/runs/{RUN_ID}":
             return httpx.Response(200, json={**RUN_DETAIL_BODY, "has_client_model": True})
+        if request.url.path == f"/runs/{RUN_ID}/splits/count":
+            return httpx.Response(200, json={"total": len([SPLIT_BODY])})
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[SPLIT_BODY])
         if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
@@ -1482,6 +1593,8 @@ def test_run_detail_renders_headline_verdict_summary_placeholder_caveat(monkeypa
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == f"/runs/{RUN_ID}":
             return httpx.Response(200, json={**RUN_DETAIL_BODY, "has_client_model": False})
+        if request.url.path == f"/runs/{RUN_ID}/splits/count":
+            return httpx.Response(200, json={"total": len([SPLIT_BODY])})
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[SPLIT_BODY])
         if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
@@ -1506,6 +1619,8 @@ def test_run_detail_omits_headline_verdict_summary_for_zero_splits(monkeypatch) 
         if request.url.path == f"/runs/{RUN_ID}":
             body = {**RUN_DETAIL_BODY, "status": "running", "completed_at": None}
             return httpx.Response(200, json=body)
+        if request.url.path == f"/runs/{RUN_ID}/splits/count":
+            return httpx.Response(200, json={"total": len([])})
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[])
         if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
@@ -1532,6 +1647,8 @@ def test_run_detail_preexisting_elements_unchanged_alongside_headline(monkeypatc
         assert request.headers["authorization"] == f"Bearer {RAW_KEY}"
         if request.url.path == f"/runs/{RUN_ID}":
             return httpx.Response(200, json=RUN_DETAIL_BODY)
+        if request.url.path == f"/runs/{RUN_ID}/splits/count":
+            return httpx.Response(200, json={"total": len([SPLIT_BODY])})
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[SPLIT_BODY])
         if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
@@ -1571,6 +1688,8 @@ def test_run_detail_rounds_displayed_values_to_four_decimal_places(monkeypatch) 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == f"/runs/{RUN_ID}":
             return httpx.Response(200, json=RUN_DETAIL_BODY)
+        if request.url.path == f"/runs/{RUN_ID}/splits/count":
+            return httpx.Response(200, json={"total": len([_PRECISE_SPLIT_BODY])})
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[_PRECISE_SPLIT_BODY])
         if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
@@ -1610,6 +1729,8 @@ def test_run_detail_chart_titles_render_as_heading_elements(monkeypatch) -> None
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == f"/runs/{RUN_ID}":
             return httpx.Response(200, json=RUN_DETAIL_BODY)
+        if request.url.path == f"/runs/{RUN_ID}/splits/count":
+            return httpx.Response(200, json={"total": len([SPLIT_BODY])})
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[SPLIT_BODY])
         if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
@@ -1657,6 +1778,8 @@ def test_run_detail_methodology_panel_renders_for_zero_split_run(monkeypatch) ->
         if request.url.path == f"/runs/{RUN_ID}":
             body = {**RUN_DETAIL_BODY, "status": "running", "completed_at": None}
             return httpx.Response(200, json=body)
+        if request.url.path == f"/runs/{RUN_ID}/splits/count":
+            return httpx.Response(200, json={"total": len([])})
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[])
         if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
@@ -1685,6 +1808,8 @@ def test_run_detail_methodology_panel_renders_for_completed_multi_split_run(monk
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == f"/runs/{RUN_ID}":
             return httpx.Response(200, json=RUN_DETAIL_BODY)
+        if request.url.path == f"/runs/{RUN_ID}/splits/count":
+            return httpx.Response(200, json={"total": len([SPLIT_BODY, UNDEFINED_DM_SPLIT_BODY])})
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[SPLIT_BODY, UNDEFINED_DM_SPLIT_BODY])
         if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
@@ -1735,6 +1860,8 @@ def test_run_detail_links_to_leakage_demo(monkeypatch) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == f"/runs/{RUN_ID}":
             return httpx.Response(200, json=RUN_DETAIL_BODY)
+        if request.url.path == f"/runs/{RUN_ID}/splits/count":
+            return httpx.Response(200, json={"total": len([SPLIT_BODY])})
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[SPLIT_BODY])
         if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith("/points"):
@@ -1800,15 +1927,24 @@ def test_run_detail_renders_inline_chart_for_split_with_persisted_points(monkeyp
     Definition of Done -- `run_detail.html` renders the correct inline chart
     for a fixture split's persisted points, using the real fetched values,
     not a placeholder.
+
+    RAV-016: the points call is now the batched `/runs/{run_id}/splits/points`
+    route (one call for every rendered split), not a per-split call -- the
+    handler below reflects that.
     """
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == f"/runs/{RUN_ID}":
             return httpx.Response(200, json=RUN_DETAIL_BODY)
+        if request.url.path == f"/runs/{RUN_ID}/splits/count":
+            return httpx.Response(200, json={"total": len([SPLIT_BODY])})
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[SPLIT_BODY])
-        if request.url.path == f"/runs/{RUN_ID}/splits/0/points":
-            return httpx.Response(200, json=RAV_015_POINTS_BODY)
+        if request.url.path == f"/runs/{RUN_ID}/splits/points":
+            assert request.url.params.get_list("split_index") == ["0"]
+            return httpx.Response(
+                200, json={"items": [{"split_index": 0, "points": RAV_015_POINTS_BODY["items"]}]}
+            )
         raise AssertionError(f"unexpected path {request.url.path}")
 
     _patch_transport(monkeypatch, handler)
@@ -1836,15 +1972,21 @@ def test_run_detail_split_with_no_persisted_points_renders_placeholder_not_error
     """Test AC: a split with no persisted points (pruned or never captured)
     renders the existing `has_data=False` placeholder inline, not an error
     and not a broken/empty `<svg>`.
+
+    RAV-016: the batched endpoint's own "no data for this index" degrade
+    (`points: []` for that index's entry) must produce the same placeholder
+    as before.
     """
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == f"/runs/{RUN_ID}":
             return httpx.Response(200, json=RUN_DETAIL_BODY)
+        if request.url.path == f"/runs/{RUN_ID}/splits/count":
+            return httpx.Response(200, json={"total": len([SPLIT_BODY])})
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[SPLIT_BODY])
-        if request.url.path == f"/runs/{RUN_ID}/splits/0/points":
-            return httpx.Response(200, json={"items": [], "limit": 20, "offset": 0, "total": 0})
+        if request.url.path == f"/runs/{RUN_ID}/splits/points":
+            return httpx.Response(200, json={"items": [{"split_index": 0, "points": []}]})
         raise AssertionError(f"unexpected path {request.url.path}")
 
     _patch_transport(monkeypatch, handler)
@@ -1859,24 +2001,34 @@ def test_run_detail_split_with_no_persisted_points_renders_placeholder_not_error
     assert "No per-point data available for this split." in inline_section
 
 
-def test_run_detail_one_split_points_transport_failure_does_not_break_page(
+def test_run_detail_one_split_no_data_entry_does_not_break_other_splits_chart(
     monkeypatch,
 ) -> None:
-    """Test AC: a transport failure on one split's points call does not
-    raise/500 the whole `run_detail` response -- the page still renders (the
-    existing table, other splits' rows/charts, etc.), and only the failing
-    split's own chart degrades to the placeholder.
+    """RAV-016 per-split-failure/pruned-data parity test (Test AC): a split
+    whose entry in the batched response has empty `points` renders the same
+    placeholder `run_detail` already renders for a split with no persisted
+    points today (regression against RAV-015's existing behavior) -- while a
+    sibling split with real points in the same batched response still gets
+    its real chart.
     """
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == f"/runs/{RUN_ID}":
             return httpx.Response(200, json=RUN_DETAIL_BODY)
+        if request.url.path == f"/runs/{RUN_ID}/splits/count":
+            return httpx.Response(200, json={"total": len([SPLIT_BODY, SPLIT_BODY_INDEX_1])})
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[SPLIT_BODY, SPLIT_BODY_INDEX_1])
-        if request.url.path == f"/runs/{RUN_ID}/splits/0/points":
-            raise httpx.ConnectError("connection refused", request=request)
-        if request.url.path == f"/runs/{RUN_ID}/splits/1/points":
-            return httpx.Response(200, json=RAV_015_POINTS_BODY)
+        if request.url.path == f"/runs/{RUN_ID}/splits/points":
+            return httpx.Response(
+                200,
+                json={
+                    "items": [
+                        {"split_index": 0, "points": []},
+                        {"split_index": 1, "points": RAV_015_POINTS_BODY["items"]},
+                    ]
+                },
+            )
         raise AssertionError(f"unexpected path {request.url.path}")
 
     _patch_transport(monkeypatch, handler)
@@ -1886,34 +2038,71 @@ def test_run_detail_one_split_points_transport_failure_does_not_break_page(
 
     response = client.get(f"/runs/{RUN_ID}")
 
-    # The whole page still renders successfully -- a flaky points call on
-    # split 0 never propagates into `_render_error_for_status` for the page.
     assert response.status_code == 200
     assert RUN_ID in response.text
-    # Every split's table row still renders (the failure is scoped to one
-    # split's chart only, not the per-split table) -- same
+    # Every split's table row still renders (same
     # `verdict-label-`-count convention `test_run_detail_large_split_count_
     # shows_truncation_notice` (DASH-119) already established: one per
     # rendered split, from the horizon-summary panel.
     assert response.text.count("verdict-label-") == 2
 
-    # Split 0 (the one whose points call failed) degrades to the placeholder.
+    # Split 0 (empty `points` entry) degrades to the placeholder.
     split_0_section = response.text.split('id="split-0-points-chart"')[1].split(
         'id="split-1-points-chart"'
     )[0]
     assert "No per-point data available for this split." in split_0_section
 
-    # Split 1 (whose points call succeeded) still renders its real chart.
+    # Split 1 (real points in the same batched response) still renders its
+    # real chart.
     split_1_section = response.text.split('id="split-1-points-chart"')[1]
     assert "<svg" in split_1_section
     assert "No per-point data available" not in split_1_section
 
 
-def test_run_detail_502_on_one_split_points_call_degrades_only_that_split(
+def test_run_detail_transport_failure_on_batched_points_call_degrades_every_split(
     monkeypatch,
 ) -> None:
-    """Same per-split degrade-on-failure guarantee, for a `502` forwarded
-    from gateway-api on one split's points call (not only a raw transport
+    """RAV-016 transport-failure test (Test AC): a transport failure on the
+    single batched points call degrades every rendered split's chart to the
+    placeholder and still renders the rest of `run_detail` successfully --
+    there is no per-split fallback left once this one call has failed.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == f"/runs/{RUN_ID}":
+            return httpx.Response(200, json=RUN_DETAIL_BODY)
+        if request.url.path == f"/runs/{RUN_ID}/splits/count":
+            return httpx.Response(200, json={"total": len([SPLIT_BODY, SPLIT_BODY_INDEX_1])})
+        if request.url.path == f"/runs/{RUN_ID}/splits":
+            return httpx.Response(200, json=[SPLIT_BODY, SPLIT_BODY_INDEX_1])
+        if request.url.path == f"/runs/{RUN_ID}/splits/points":
+            raise httpx.ConnectError("connection refused", request=request)
+        raise AssertionError(f"unexpected path {request.url.path}")
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get(f"/runs/{RUN_ID}")
+
+    assert response.status_code == 200
+    assert RUN_ID in response.text
+    assert response.text.count("verdict-label-") == 2
+    for split_index in (0, 1):
+        anchor = f'id="split-{split_index}-points-chart"'
+        other_anchor = f'id="split-{1 - split_index}-points-chart"'
+        section = response.text.split(anchor)[1]
+        if other_anchor in section:
+            section = section.split(other_anchor)[0]
+        assert "No per-point data available for this split." in section
+
+
+def test_run_detail_502_on_batched_points_call_degrades_every_split(
+    monkeypatch,
+) -> None:
+    """Same whole-batch degrade-on-failure guarantee, for a `502` forwarded
+    from gateway-api on the batched points call (not only a raw transport
     exception) -- `_call_downstream` translates both shapes, and this route
     must treat them the same way.
     """
@@ -1921,9 +2110,11 @@ def test_run_detail_502_on_one_split_points_call_degrades_only_that_split(
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == f"/runs/{RUN_ID}":
             return httpx.Response(200, json=RUN_DETAIL_BODY)
+        if request.url.path == f"/runs/{RUN_ID}/splits/count":
+            return httpx.Response(200, json={"total": len([SPLIT_BODY])})
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=[SPLIT_BODY])
-        if request.url.path == f"/runs/{RUN_ID}/splits/0/points":
+        if request.url.path == f"/runs/{RUN_ID}/splits/points":
             return httpx.Response(502, json={"detail": "downstream service unavailable"})
         raise AssertionError(f"unexpected path {request.url.path}")
 
@@ -1940,24 +2131,40 @@ def test_run_detail_502_on_one_split_points_call_degrades_only_that_split(
     assert "No per-point data available for this split." in inline_section
 
 
-def test_run_detail_makes_exactly_one_points_call_per_rendered_split(monkeypatch) -> None:
-    """Test AC: for a fixture run with N rendered splits, exactly N points
-    calls are made -- not more, not fewer.
+def test_run_detail_makes_exactly_one_batched_points_call_for_n_rendered_splits(
+    monkeypatch,
+) -> None:
+    """RAV-016's own required test (Test AC), mirroring RAV-012's
+    `test_runs_list_makes_exactly_one_splits_summary_call_for_n_runs`
+    pattern: for a fixture run with N (>= 3) rendered splits, exactly ONE
+    call is made to `/runs/{run_id}/splits/points` -- not O(N) calls --
+    asserted via a real request counter on the mock transport, and the
+    repeated `split_index` params are forwarded in `rendered_splits` order.
     """
     n_splits = 3
     splits_fixture = [{**SPLIT_BODY, "split_index": i} for i in range(n_splits)]
-    points_calls: list[str] = []
+    points_call_count = 0
+    forwarded_split_indices: list[str] | None = None
 
     def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal points_call_count, forwarded_split_indices
         if request.url.path == f"/runs/{RUN_ID}":
             return httpx.Response(200, json=RUN_DETAIL_BODY)
+        if request.url.path == f"/runs/{RUN_ID}/splits/count":
+            return httpx.Response(200, json={"total": len(splits_fixture)})
         if request.url.path == f"/runs/{RUN_ID}/splits":
             return httpx.Response(200, json=splits_fixture)
-        if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith(
-            "/points"
-        ):
-            points_calls.append(request.url.path)
-            return httpx.Response(200, json={"items": [], "limit": 20, "offset": 0, "total": 0})
+        if request.url.path == f"/runs/{RUN_ID}/splits/points":
+            points_call_count += 1
+            forwarded_split_indices = request.url.params.get_list("split_index")
+            return httpx.Response(
+                200,
+                json={
+                    "items": [
+                        {"split_index": i, "points": []} for i in range(n_splits)
+                    ]
+                },
+            )
         raise AssertionError(f"unexpected path {request.url.path}")
 
     _patch_transport(monkeypatch, handler)
@@ -1968,32 +2175,45 @@ def test_run_detail_makes_exactly_one_points_call_per_rendered_split(monkeypatch
     response = client.get(f"/runs/{RUN_ID}")
 
     assert response.status_code == 200
-    assert len(points_calls) == n_splits
-    assert points_calls == [f"/runs/{RUN_ID}/splits/{i}/points" for i in range(n_splits)]
+    assert points_call_count == 1, (
+        f"expected exactly one /runs/{{run_id}}/splits/points call for {n_splits} "
+        f"rendered splits, got {points_call_count}"
+    )
+    assert forwarded_split_indices == [str(i) for i in range(n_splits)]
 
 
-def test_run_detail_large_split_count_points_calls_bounded_by_max_rendered_splits(
+def test_run_detail_large_split_count_makes_exactly_one_batched_points_call(
     monkeypatch,
 ) -> None:
     """Extends `test_run_detail_large_split_count_returns_200_not_500`
-    (DASH-119) to prove RAV-015's own N+1-awareness claim: a run whose
-    persisted split count (2000) exceeds `MAX_RENDERED_SPLITS` (500) still
-    makes only 500 points calls -- one per *rendered* split, never one per
-    the full unbounded `splits` list.
+    (DASH-119) to RAV-016's own no-O(N)-calls claim: a run whose persisted
+    split count (2000) exceeds `MAX_RENDERED_SPLITS` (500) still makes only
+    ONE points call -- covering all 500 rendered splits at once, never one
+    per rendered split and never one per the full unbounded `splits` list.
     """
     large_splits = [_make_split(i) for i in range(2000)]
-    points_calls: list[str] = []
+    points_call_count = 0
+    forwarded_split_indices: list[str] | None = None
 
     def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal points_call_count, forwarded_split_indices
         if request.url.path == f"/runs/{RUN_ID}":
             return httpx.Response(200, json=RUN_DETAIL_BODY)
+        if request.url.path == f"/runs/{RUN_ID}/splits/count":
+            return httpx.Response(200, json={"total": len(large_splits)})
         if request.url.path == f"/runs/{RUN_ID}/splits":
-            return httpx.Response(200, json=large_splits)
-        if request.url.path.startswith(f"/runs/{RUN_ID}/splits/") and request.url.path.endswith(
-            "/points"
-        ):
-            points_calls.append(request.url.path)
-            return httpx.Response(200, json={"items": [], "limit": 20, "offset": 0, "total": 0})
+            return _sliced_splits_response(large_splits, request)
+        if request.url.path == f"/runs/{RUN_ID}/splits/points":
+            points_call_count += 1
+            forwarded_split_indices = request.url.params.get_list("split_index")
+            return httpx.Response(
+                200,
+                json={
+                    "items": [
+                        {"split_index": int(i), "points": []} for i in forwarded_split_indices
+                    ]
+                },
+            )
         raise AssertionError(f"unexpected path {request.url.path}")
 
     _patch_transport(monkeypatch, handler)
@@ -2004,11 +2224,12 @@ def test_run_detail_large_split_count_points_calls_bounded_by_max_rendered_split
     response = client.get(f"/runs/{RUN_ID}")
 
     assert response.status_code == 200
-    assert len(points_calls) == 500
+    assert points_call_count == 1
+    assert len(forwarded_split_indices) == 500
     # The most recent 500 (indices 1500..1999, the same tail DASH-119's own
     # truncation test proves) -- never the head of the unbounded list.
-    assert points_calls[0] == f"/runs/{RUN_ID}/splits/1500/points"
-    assert points_calls[-1] == f"/runs/{RUN_ID}/splits/1999/points"
+    assert forwarded_split_indices[0] == "1500"
+    assert forwarded_split_indices[-1] == "1999"
 
 
 def test_run_detail_inline_chart_section_has_no_banned_positioning_words() -> None:

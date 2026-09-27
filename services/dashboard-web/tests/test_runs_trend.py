@@ -143,6 +143,11 @@ def test_trend_selecting_group_fetches_splits_for_completed_runs_only(monkeypatc
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/runs":
             return httpx.Response(200, json=RUNS_BODY)
+        # DBOPT-011: _fetch_bounded_run_splits' own count call, ahead of its
+        # bounded /splits call below -- each fixture run here has exactly one
+        # split.
+        if request.url.path.endswith("/splits/count"):
+            return httpx.Response(200, json={"total": 1})
         if request.url.path.endswith("/splits"):
             split_calls.append(request.url.path)
             run_id = request.url.path.split("/")[2]
@@ -178,6 +183,8 @@ def test_trend_consistency_indicator_renders_correct_ratio(monkeypatch) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/runs":
             return httpx.Response(200, json=RUNS_BODY)
+        if request.url.path.endswith("/splits/count"):
+            return httpx.Response(200, json={"total": 1})
         if request.url.path.endswith("/splits"):
             run_id = request.url.path.split("/")[2]
             if run_id == RUN_COMPLETED_1["id"]:
@@ -328,6 +335,8 @@ def test_trend_group_selector_sees_runs_beyond_the_old_default_20_limit(monkeypa
         if request.url.path == "/runs":
             calls.append(dict(request.url.params))
             return httpx.Response(200, json=body)
+        if request.url.path.endswith("/splits/count"):
+            return httpx.Response(200, json={"total": 1})
         if request.url.path.endswith("/splits"):
             return httpx.Response(200, json=[_split(0, model_mae=1.0, naive0_mae=2.0)])
         raise AssertionError(f"unexpected call: {request.url.path}")
@@ -368,6 +377,8 @@ def test_trend_pages_through_more_than_one_hundred_runs(monkeypatch) -> None:
             return httpx.Response(
                 200, json={"items": page, "limit": limit, "offset": offset, "total": total}
             )
+        if request.url.path.endswith("/splits/count"):
+            return httpx.Response(200, json={"total": 1})
         if request.url.path.endswith("/splits"):
             return httpx.Response(
                 200,
@@ -390,6 +401,48 @@ def test_trend_pages_through_more_than_one_hundred_runs(monkeypatch) -> None:
     for run in runs[120:125]:
         assert run["id"] in response.text
     assert "Beat Naive0 in 150 of 150 completed runs" in response.text
+
+
+def test_trend_bounds_each_completed_runs_splits_via_shared_helper(monkeypatch) -> None:
+    """DBOPT-011: a completed run with more splits (2000) than
+    `MAX_RENDERED_SPLITS` (500) has its per-run splits bounded to the same
+    500-most-recent cap `run_detail` uses, via the shared
+    `_fetch_bounded_run_splits` helper -- proven here by a count call and a
+    `limit=500&offset=1500` bounded page call for that run, not the old
+    single unbounded call.
+    """
+    large_splits = [_split(i, model_mae=1.0, naive0_mae=2.0) for i in range(2000)]
+    count_calls: list[str] = []
+    splits_calls: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/runs":
+            return httpx.Response(200, json=RUNS_BODY)
+        if request.url.path.endswith("/splits/count"):
+            count_calls.append(request.url.path)
+            return httpx.Response(200, json={"total": len(large_splits)})
+        if request.url.path.endswith("/splits"):
+            splits_calls.append(request)
+            offset = int(request.url.params["offset"])
+            limit = int(request.url.params["limit"])
+            return httpx.Response(200, json=large_splits[offset : offset + limit])
+        raise AssertionError(f"unexpected call: {request.url.path}")
+
+    _patch_transport(monkeypatch, handler)
+
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get("/runs/trend?dataset_id=dataset-1&horizon=24&metric=mae")
+
+    assert response.status_code == 200
+    # Two completed runs in this group (RUN_COMPLETED_1/2) -- one count call
+    # and one bounded splits call each, never an unbounded call.
+    assert len(count_calls) == 2
+    assert len(splits_calls) == 2
+    for call in splits_calls:
+        assert call.url.params["limit"] == "500"
+        assert call.url.params["offset"] == "1500"
 
 
 def test_trend_template_has_no_banned_positioning_words() -> None:

@@ -226,6 +226,16 @@ unaffected: `rendered_splits is splits` and `splits_truncated` is `False`,
 so every downstream builder/template branch receives the exact same input,
 and therefore renders byte-identical output, to before this ticket.
 
+DBOPT-011: `run_detail`'s splits fetch above no longer over-fetches the full
+unbounded list and truncates client-side -- it now calls the shared
+`_fetch_bounded_run_splits` helper, which requests a server-side-bounded page
+(a cheap `GET /runs/{run_id}/splits/count` call, then `GET
+/runs/{run_id}/splits?limit=...&offset=...`) instead. `MAX_RENDERED_SPLITS`,
+the tail-selection semantics, and the "N of M splits shown" notice all stay
+exactly as described above -- only how `rendered_splits`/`total_splits_count`
+are obtained changed, never what they contain. `runs_trend` (below) uses the
+same helper for the same per-run cap.
+
 UAT-010: `runs_horizon_summary` gains a new `unit` query param (`"days"`/
 `"hours"`, default `"days"` -- backward compatible with every existing caller/
 test that never sets it) selecting between `HORIZON_SUMMARY_DAY_OPTIONS`
@@ -744,6 +754,55 @@ def _fetch_run_splits_summary(
     return {}
 
 
+def _fetch_bounded_run_splits(
+    client: httpx.Client, headers: dict[str, str], run_id: str, cap: int
+) -> tuple[list[SplitResultResponse], int, int | None]:
+    """DBOPT-011: fetches at most `cap` of a run's most-recent-by-split-index
+    splits via two bounded downstream calls (a cheap count, then a bounded
+    page) instead of the full unbounded list this file used to fetch and
+    then truncate client-side. Returns (splits, total_count, error_status):
+    error_status is None on success; on a transport failure or 502/504 from
+    either call, returns ([], 0, status) for the caller to render via
+    `_render_error_for_status` -- this helper does NOT swallow failures the
+    way `_fetch_run_splits_summary` (RAV-012) does, since both of this
+    helper's call sites already treat a splits-fetch failure as
+    page-blocking today; this preserves that existing stance rather than
+    introducing a third failure-handling policy in this file.
+
+    Tail-selection semantics (binding, DBOPT-011 AC): `offset = max(0,
+    total - cap)` combined with ascending split_index order reproduces
+    `splits[-cap:]`'s exact "most recent N" selection -- never "first N".
+    When `total <= cap`, `offset` is 0 and every row is returned, matching
+    today's unbounded behavior exactly.
+    """
+    count_response, count_transport_status = _call_downstream(
+        client.get, f"/runs/{run_id}/splits/count", headers=headers
+    )
+    if count_transport_status is not None:
+        return [], 0, count_transport_status
+    if count_response.status_code in (502, 504):
+        return [], 0, count_response.status_code
+    total = count_response.json()["total"] if count_response.status_code == 200 else 0
+
+    offset = max(0, total - cap)
+    splits_response, splits_transport_status = _call_downstream(
+        client.get,
+        f"/runs/{run_id}/splits",
+        headers=headers,
+        params={"limit": cap, "offset": offset},
+    )
+    if splits_transport_status is not None:
+        return [], 0, splits_transport_status
+    if splits_response.status_code in (502, 504):
+        return [], 0, splits_response.status_code
+    splits = (
+        [SplitResultResponse(**item) for item in splits_response.json()]
+        if splits_response.status_code == 200
+        else []
+    )
+    return splits, total, None
+
+
 def _render_error_for_status(request: Request, status_code: int):
     """Renders the shared `error.html` "results currently unavailable"
     failure page for a given status code -- either a translated
@@ -1175,18 +1234,17 @@ def runs_trend(
             ]
             runs_with_splits: list[tuple[RunSummaryResponse, list[SplitResultResponse]]] = []
             for run in completed_runs:
-                splits_response, splits_transport_status = _call_downstream(
-                    client.get, f"/runs/{run.id}/splits", headers=headers
+                # DBOPT-011: bounded to the same MAX_RENDERED_SPLITS-most-
+                # recent-splits-per-run cap `run_detail` uses, via the shared
+                # `_fetch_bounded_run_splits` helper -- no second
+                # count-then-page implementation. `runs_trend` has no "N of
+                # M" notice today (unlike `run_detail`), so the total count
+                # is discarded here.
+                splits, _total, splits_error_status = _fetch_bounded_run_splits(
+                    client, headers, run.id, MAX_RENDERED_SPLITS
                 )
-                if splits_transport_status is not None:
-                    return _render_error_for_status(request, splits_transport_status)
-                if splits_response.status_code in (502, 504):
-                    return _render_error_for_status(request, splits_response.status_code)
-                splits = (
-                    [SplitResultResponse(**item) for item in splits_response.json()]
-                    if splits_response.status_code == 200
-                    else []
-                )
+                if splits_error_status is not None:
+                    return _render_error_for_status(request, splits_error_status)
                 runs_with_splits.append((run, splits))
 
             trend_chart = build_trend_chart(runs_with_splits, metric=metric)
@@ -1280,68 +1338,62 @@ def run_detail(
 
         run = RunDetailResponse(**detail_response.json())
 
-        splits_response, splits_transport_status = _call_downstream(
-            client.get, f"/runs/{run_id}/splits", headers=headers
+        # DASH-119/DBOPT-011: fetch a server-side-bounded page of the most
+        # recent `MAX_RENDERED_SPLITS` splits (count + bounded page, via the
+        # shared `_fetch_bounded_run_splits` helper) instead of fetching the
+        # full unbounded list and truncating client-side. `total_splits_count`
+        # is the real total (for the accurate "N of M splits shown" notice);
+        # `rendered_splits` is already the same tail rows
+        # `splits[-MAX_RENDERED_SPLITS:]` would have produced. The vast
+        # majority of runs (under RSS-004's 500-split cap) are unaffected:
+        # `total_splits_count <= MAX_RENDERED_SPLITS`, `splits_truncated` is
+        # `False`, and `rendered_splits` is the full split set -- exactly the
+        # same input, and therefore the same output, as before this ticket.
+        rendered_splits, total_splits_count, splits_error_status = _fetch_bounded_run_splits(
+            client, headers, run_id, MAX_RENDERED_SPLITS
         )
-        if splits_transport_status is not None:
-            return _render_error_for_status(request, splits_transport_status)
-        if splits_response.status_code in (502, 504):
-            return _render_error_for_status(request, splits_response.status_code)
-        splits = (
-            [SplitResultResponse(**item) for item in splits_response.json()]
-            if splits_response.status_code == 200
-            else []
-        )
-
-        # DASH-119: cap what actually renders to `MAX_RENDERED_SPLITS`, showing
-        # the most recent ones (list-order tail -- `GET /runs/{id}/splits`' own
-        # existing order, no client re-sort) rather than trying to render all of
-        # them cheaply. The vast majority of runs (under RSS-004's 500-split
-        # cap) are unaffected: `rendered_splits is splits` and `splits_truncated`
-        # is `False`, so every downstream builder/template branch below gets
-        # exactly the same input, and therefore the same output, as before this
-        # ticket. Only a pre-RSS-004 run whose persisted split count exceeds the
-        # cap is truncated for rendering -- the full data remains fetchable via
-        # the API (`GET /runs/{run_id}/splits`, unbounded, untouched by this
-        # ticket) regardless of what this page renders.
-        total_splits_count = len(splits)
+        if splits_error_status is not None:
+            return _render_error_for_status(request, splits_error_status)
         splits_truncated = total_splits_count > MAX_RENDERED_SPLITS
-        rendered_splits = splits[-MAX_RENDERED_SPLITS:] if splits_truncated else splits
 
-        # RAV-015: one inline predicted-vs-actual chart per rendered split,
-        # reusing the exact same GW-031 points endpoint and
-        # `build_predicted_vs_actual_chart` DASH-129 already established for
-        # the standalone `points-chart` route -- no second point-series
-        # geometry implementation. Bounded by `rendered_splits`, never the
-        # unbounded `splits` list: exactly one points call per rendered
-        # split, i.e. at most `MAX_RENDERED_SPLITS` calls for the largest
-        # allowed run -- the same existing cap, not a new unbounded pattern
-        # (ticket Analysis section, "N+1 awareness").
+        # RAV-016: one batched predicted-vs-actual points call for every
+        # rendered split, replacing RAV-015's one-call-per-split loop (the
+        # N+1 pattern that made a 550-split run's page take ~20s
+        # server-side, per this ticket's Analysis section) -- reuses the
+        # same `build_predicted_vs_actual_chart` geometry, only how the
+        # points are fetched changes. Exactly one downstream call covering
+        # all of `rendered_splits`, regardless of its length (bounded by
+        # `MAX_RENDERED_SPLITS`).
         #
-        # Per-split degrade-on-failure (binding, ticket Design section): a
-        # transport failure or a 502/504 forwarded from gateway-api on any
-        # *one* split's points call degrades only that split's own chart to
-        # the existing `has_data=False` placeholder -- it must never be
-        # propagated to `_render_error_for_status` for the whole page. One
-        # flaky split's points call must not fail every other split's table
-        # row/chart on this page (mirrors RAV-012's per-page decision for
-        # `runs_list`'s summary call, applied here per split instead).
+        # Whole-call degrade-on-failure (binding, ticket Design section):
+        # unlike RAV-015's per-split degrade, there is no per-split fallback
+        # left once this one call has failed -- a transport failure or a
+        # 502/504 forwarded from gateway-api degrades *every* rendered
+        # split's chart to the existing `has_data=False` placeholder. This
+        # must never be propagated to `_render_error_for_status` for the
+        # whole page -- the rest of run_detail (table, verdict/error charts)
+        # still renders.
         split_points_charts: dict[int, PredictedVsActualChartData] = {}
-        for split in rendered_splits:
+        if rendered_splits:
             points_response, points_transport_status = _call_downstream(
                 client.get,
-                f"/runs/{run_id}/splits/{split.split_index}/points",
+                f"/runs/{run_id}/splits/points",
                 headers=headers,
+                params=[("split_index", split.split_index) for split in rendered_splits],
             )
             if points_transport_status is not None or points_response.status_code in (502, 504):
-                split_points_charts[split.split_index] = build_predicted_vs_actual_chart([])
-                continue
-            points = (
-                [SplitPointResponse(**item) for item in points_response.json()["items"]]
-                if points_response.status_code == 200
-                else []
-            )
-            split_points_charts[split.split_index] = build_predicted_vs_actual_chart(points)
+                for split in rendered_splits:
+                    split_points_charts[split.split_index] = build_predicted_vs_actual_chart([])
+            else:
+                points_by_split = (
+                    {item["split_index"]: item["points"] for item in points_response.json()["items"]}
+                    if points_response.status_code == 200
+                    else {}
+                )
+                for split in rendered_splits:
+                    raw_points = points_by_split.get(split.split_index, [])
+                    points = [SplitPointResponse(**p) for p in raw_points]
+                    split_points_charts[split.split_index] = build_predicted_vs_actual_chart(points)
 
     # FHS-003: per-split (category, css_slug) pairs for the new validation
     # summary panel -- reuses `app.charting.verdict_category_and_css_slug`

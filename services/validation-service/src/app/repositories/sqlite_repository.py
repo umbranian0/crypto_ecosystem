@@ -290,18 +290,27 @@ class SQLiteSplitResultRepository:
             session.add_all(rows)
             session.commit()
 
-    def get_splits(self, tenant_id: str, run_id: str) -> list[SplitResultRecord]:
+    def get_splits(
+        self, tenant_id: str, run_id: str, limit: int | None = None, offset: int = 0
+    ) -> list[SplitResultRecord]:
         with Session(self._engine) as session:
-            rows = (
-                session.execute(
-                    select(SplitResult)
-                    .where(SplitResult.run_id == run_id, SplitResult.tenant_id == tenant_id)
-                    .order_by(SplitResult.split_index)
-                )
-                .scalars()
-                .all()
+            query = (
+                select(SplitResult)
+                .where(SplitResult.run_id == run_id, SplitResult.tenant_id == tenant_id)
+                .order_by(SplitResult.split_index)
             )
+            if limit is not None:
+                query = query.offset(offset).limit(limit)
+            rows = session.execute(query).scalars().all()
             return [_split_result_to_record(row) for row in rows]
+
+    def count_splits(self, tenant_id: str, run_id: str) -> int:
+        with Session(self._engine) as session:
+            return session.execute(
+                select(func.count())
+                .select_from(SplitResult)
+                .where(SplitResult.run_id == run_id, SplitResult.tenant_id == tenant_id)
+            ).scalar_one()
 
     def get_splits_for_runs(
         self, tenant_id: str, run_ids: list[str]
@@ -355,3 +364,26 @@ class SQLiteSplitPointRepository:
                 .all()
             )
             return [_split_point_to_record(row) for row in rows]
+
+    def get_points_for_splits(
+        self, tenant_id: str, run_id: str, split_indices: list[int]
+    ) -> dict[int, list[SplitPointRecord]]:
+        with Session(self._engine) as session:
+            rows = (
+                session.execute(
+                    select(SplitPoint)
+                    .where(
+                        SplitPoint.run_id == run_id,
+                        SplitPoint.tenant_id == tenant_id,
+                        SplitPoint.split_index.in_(split_indices),
+                        SplitPoint.created_at >= _retention_cutoff(),
+                    )
+                    .order_by(SplitPoint.split_index, SplitPoint.timestamp)
+                )
+                .scalars()
+                .all()
+            )
+            result: dict[int, list[SplitPointRecord]] = {}
+            for row in rows:
+                result.setdefault(row.split_index, []).append(_split_point_to_record(row))
+            return result

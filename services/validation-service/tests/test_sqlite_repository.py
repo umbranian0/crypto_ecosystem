@@ -383,6 +383,100 @@ def test_list_runs_and_count_runs_are_empty_for_unknown_tenant(run_repo) -> None
     assert run_repo.count_runs("tenant-unknown") == 0
 
 
+def test_get_splits_omitting_limit_offset_returns_full_unbounded_ordered_list(
+    run_repo, split_repo
+) -> None:
+    """DBOPT-011 regression check: omitting limit/offset must be
+    byte-identical to pre-ticket behavior -- the full, unbounded, ordered
+    list."""
+    run = run_repo.create_run(
+        tenant_id="tenant-1",
+        dataset_id="dataset-1",
+        horizon=1,
+        purge_gap_hours=4.0,
+        split_config=SPLIT_CONFIG,
+    )
+    splits = [_make_split(run.id, "tenant-1", i) for i in reversed(range(10))]
+    split_repo.add_splits("tenant-1", run.id, splits)
+
+    fetched = split_repo.get_splits("tenant-1", run.id)
+
+    assert [s.split_index for s in fetched] == list(range(10))
+
+
+def test_get_splits_with_limit_and_offset_returns_bounded_ordered_page(
+    run_repo, split_repo
+) -> None:
+    """DBOPT-011: a fixture run with 10 splits, requesting limit=3, offset=6
+    returns exactly splits 6-8 in ascending split_index order."""
+    run = run_repo.create_run(
+        tenant_id="tenant-1",
+        dataset_id="dataset-1",
+        horizon=1,
+        purge_gap_hours=4.0,
+        split_config=SPLIT_CONFIG,
+    )
+    splits = [_make_split(run.id, "tenant-1", i) for i in range(10)]
+    split_repo.add_splits("tenant-1", run.id, splits)
+
+    fetched = split_repo.get_splits("tenant-1", run.id, limit=3, offset=6)
+
+    assert [s.split_index for s in fetched] == [6, 7, 8]
+
+
+def test_count_splits_returns_correct_total(run_repo, split_repo) -> None:
+    run = run_repo.create_run(
+        tenant_id="tenant-1",
+        dataset_id="dataset-1",
+        horizon=1,
+        purge_gap_hours=4.0,
+        split_config=SPLIT_CONFIG,
+    )
+    splits = [_make_split(run.id, "tenant-1", i) for i in range(7)]
+    split_repo.add_splits("tenant-1", run.id, splits)
+
+    assert split_repo.count_splits("tenant-1", run.id) == 7
+
+
+def test_count_splits_returns_zero_for_run_with_no_splits(run_repo, split_repo) -> None:
+    run = run_repo.create_run(
+        tenant_id="tenant-1",
+        dataset_id="dataset-1",
+        horizon=1,
+        purge_gap_hours=4.0,
+        split_config=SPLIT_CONFIG,
+    )
+
+    assert split_repo.count_splits("tenant-1", run.id) == 0
+
+
+def test_count_splits_is_tenant_scoped(run_repo, split_repo) -> None:
+    """DBOPT-011: a second tenant's splits on the same run_id value must not
+    be counted -- mirrors get_splits' own tenant-scoping stance exactly."""
+    run_a = run_repo.create_run(
+        tenant_id="tenant-a",
+        dataset_id="dataset-a",
+        horizon=1,
+        purge_gap_hours=4.0,
+        split_config=SPLIT_CONFIG,
+    )
+    run_b = run_repo.create_run(
+        tenant_id="tenant-b",
+        dataset_id="dataset-b",
+        horizon=1,
+        purge_gap_hours=4.0,
+        split_config=SPLIT_CONFIG,
+    )
+    split_repo.add_splits(
+        "tenant-a", run_a.id, [_make_split(run_a.id, "tenant-a", i) for i in range(3)]
+    )
+    split_repo.add_splits("tenant-b", run_b.id, [_make_split(run_b.id, "tenant-b", 0)])
+
+    assert split_repo.count_splits("tenant-a", run_a.id) == 3
+    assert split_repo.count_splits("tenant-b", run_a.id) == 0
+    assert split_repo.count_splits("tenant-b", run_b.id) == 1
+
+
 def test_list_runs_tenant_isolation_never_leaks_across_tenants(run_repo) -> None:
     run_a = run_repo.create_run(
         tenant_id="tenant-a", dataset_id="dataset-a", horizon=1, purge_gap_hours=4.0, split_config=SPLIT_CONFIG

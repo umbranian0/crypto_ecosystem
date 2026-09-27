@@ -198,3 +198,116 @@ def test_splits_nonexistent_run_returns_404(tmp_path, monkeypatch):
 
     assert response.status_code == 404
     assert response.status_code != 500
+
+
+def test_splits_with_limit_and_offset_returns_bounded_page(tmp_path, monkeypatch):
+    """DBOPT-011: route test for `GET /runs/{run_id}/splits?limit=&offset=`.
+    train_window=10, test_window=5, step=5 over 100 points produces 17
+    splits, plenty to page through."""
+    db_path = str(tmp_path / "test.db")
+    monkeypatch.setenv("VALIDATION_SERVICE_DB_PATH", db_path)
+    from app.main import app
+
+    client = TestClient(app)
+
+    payload = {
+        "dataset_id": "dataset-1",
+        "dataset_reference": _inline_dataset(n=100),
+        "horizon": 1,
+        "purge_gap_hours": 0,
+        "train_window": 10,
+        "test_window": 5,
+        "step": 5,
+    }
+    response = client.post("/runs", json=payload, headers={"X-Tenant-Id": "tenant-1"})
+    assert response.status_code == 201, response.text
+    run_id = response.json()["id"]
+
+    full_response = client.get(f"/runs/{run_id}/splits", headers={"X-Tenant-Id": "tenant-1"})
+    assert full_response.status_code == 200
+    full_body = full_response.json()
+    assert len(full_body) >= 10  # sanity: enough splits to page through
+
+    bounded_response = client.get(
+        f"/runs/{run_id}/splits",
+        params={"limit": 3, "offset": 6},
+        headers={"X-Tenant-Id": "tenant-1"},
+    )
+    assert bounded_response.status_code == 200, bounded_response.text
+    bounded_body = bounded_response.json()
+
+    assert [row["split_index"] for row in bounded_body] == [6, 7, 8]
+    assert bounded_body == full_body[6:9]
+
+
+def test_splits_count_returns_correct_total(tmp_path, monkeypatch):
+    db_path = str(tmp_path / "test.db")
+    monkeypatch.setenv("VALIDATION_SERVICE_DB_PATH", db_path)
+    from app.main import app
+
+    client = TestClient(app)
+
+    run_id = _make_run(client, "tenant-1")
+
+    full_response = client.get(f"/runs/{run_id}/splits", headers={"X-Tenant-Id": "tenant-1"})
+    assert full_response.status_code == 200
+    expected_total = len(full_response.json())
+
+    count_response = client.get(f"/runs/{run_id}/splits/count", headers={"X-Tenant-Id": "tenant-1"})
+
+    assert count_response.status_code == 200, count_response.text
+    assert count_response.json() == {"total": expected_total}
+
+
+def test_splits_count_nonexistent_run_returns_404(tmp_path, monkeypatch):
+    db_path = str(tmp_path / "test.db")
+    monkeypatch.setenv("VALIDATION_SERVICE_DB_PATH", db_path)
+    from app.main import app
+
+    client = TestClient(app)
+
+    response = client.get(
+        "/runs/does-not-exist/splits/count", headers={"X-Tenant-Id": "tenant-1"}
+    )
+
+    assert response.status_code == 404
+    assert response.status_code != 500
+
+
+def test_splits_count_cross_tenant_returns_404_with_no_leaked_data(tmp_path, monkeypatch):
+    db_path = str(tmp_path / "test.db")
+    monkeypatch.setenv("VALIDATION_SERVICE_DB_PATH", db_path)
+    from app.main import app
+
+    client = TestClient(app)
+
+    run_id = _make_run(client, "tenant-a", dataset_id="dataset-secret")
+
+    response = client.get(f"/runs/{run_id}/splits/count", headers={"X-Tenant-Id": "tenant-b"})
+
+    assert response.status_code == 404
+    body = response.json()
+    assert set(body.keys()) == {"detail"}
+    assert "total" not in response.text
+
+
+def test_splits_count_route_is_not_swallowed_by_split_index_points_route(tmp_path, monkeypatch):
+    """DBOPT-011 regression: `/runs/{run_id}/splits/count` (4 segments) must
+    resolve to `get_splits_count`, not be misrouted to
+    `/runs/{run_id}/splits/{split_index}/points` (5 segments) or any other
+    existing route -- a `{"total": ...}` shape (no `items`/`limit`/`offset`
+    envelope) is proof it hit the right handler."""
+    db_path = str(tmp_path / "test.db")
+    monkeypatch.setenv("VALIDATION_SERVICE_DB_PATH", db_path)
+    from app.main import app
+
+    client = TestClient(app)
+
+    run_id = _make_run(client, "tenant-1")
+
+    response = client.get(f"/runs/{run_id}/splits/count", headers={"X-Tenant-Id": "tenant-1"})
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert set(body.keys()) == {"total"}
+    assert isinstance(body["total"], int)

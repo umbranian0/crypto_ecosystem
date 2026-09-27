@@ -3290,3 +3290,39 @@ housekeeping; (2) the standing QA convention's assumption that `dashboard-web` r
 process (not Dockerized) is stale for this environment -- unrelated to this ticket's correctness, worth a
 note to whoever maintains that convention. See the QA agent's full report (delivered to the Tech Lead)
 for detail.
+
+## Sprint 61 (docs/sprints/sprint-61.md, backlog: docs/product/backlog-run-analysis-visualization.md's RAV-016, docs/product/backlog-db-optimization.md's DBOPT-011/012)
+
+Epic D closure (`RAV-016`) plus `validation.split_results` read-path hardening (`DBOPT-011`/`012`).
+Three tickets, strictly sequenced (not parallel dev tracks) per the sprint plan's own file-overlap
+call: `DBOPT-012` (isolated schema migration, zero app-code risk) -> `DBOPT-011` (bounds
+`get_splits`, touches the same two validation-service files `RAV-016` also touches) -> `RAV-016`
+(new batched points endpoint, closes Sprint 60 QA's disclosed ~20s `run_detail` latency gap).
+
+| Ticket | Story | Module | Depends on | Status |
+|---|---|---|---|---|
+| [DBOPT-012](DBOPT-012.md) | Widen `ix_split_results_tenant_run` to `(tenant_id, run_id, split_index)` -- migration `0013`, DDL-only, no app code | validation-service | none | done |
+| [DBOPT-011](DBOPT-011.md) | Bound `get_splits`/`GET /runs/{run_id}/splits` with `limit`/`offset` + new `count_splits`/`GET .../splits/count`; `run_detail`/`runs_trend` fetch a bounded page via new `_fetch_bounded_run_splits` helper, preserving "most recent N, accurate N of M" | validation-service, gateway-api, dashboard-web | DBOPT-012 (perf, not correctness) | done |
+| [RAV-016](RAV-016.md) | New batched `GET /runs/{run_id}/splits/points` endpoint (`SplitPoints`/`RunSplitPointsResponse`/`get_points_for_splits`, mirroring RAV-012's precedent); `run_detail`'s per-split points loop replaced by one call; <2s latency budget for a 550-split run | validation-service, gateway-api, dashboard-web, libs/common | RAV-015, RAV-012 (both already shipped); sequenced after DBOPT-011 (file overlap only) | done |
+
+**Sprint 61 status: all three tickets done, QA gate cleared (GO).** All three dev agents dispatched
+sequentially (not parallel — per the sprint plan's own file-overlap sequencing call). Tech Lead
+personally read every diff and independently re-ran each touched service's full test suite after
+each ticket. QA independently re-verified against the real, rebuilt `naive-first-*` Docker stack
+using a real 550-split fixture run it constructed directly in `naive-first-postgres` (disclosed in
+full, cleaned up after review): measured `run_detail` at 0.85-0.97s end-to-end (well under the 2s
+budget, down from Sprint 60's ~20s baseline), confirmed exactly one batched points call per page
+load, confirmed `DBOPT-011`'s bounded fetch and accurate "most recent N of M" notice, and confirmed
+no new positioning violation on the real rendered page. **One real, disclosed, non-blocking QA
+finding**: `DBOPT-012`'s widened index does not, on its own, eliminate the `Sort` node on
+`get_splits`' query end to end — a live EXPLAIN against the fixture run (landing in the newer,
+post-`0007` chunks) still showed a top-level `Sort`, because the query has no `test_start`
+predicate, so TimescaleDB's constraint exclusion can't prune chunks regardless of index shape,
+forcing a mix of ordered/unordered per-chunk scans that blocks Postgres's `MergeAppend` optimization.
+The index still correctly serves the dominant chunk's own in-order scan; the ticket and both backlog
+entries (`docs/product/backlog-db-optimization.md`) have been corrected to state this precisely
+rather than an unqualified "Sort eliminated," with a recommended DBA follow-up (bound the query by
+`test_start`, or consolidate old chunks) left for a future `DBOPT-*` item, not implemented in this
+sprint. Absolute cost is trivial (single-digit ms) and does not affect any Must-tier acceptance
+criterion this sprint. See `docs/tickets/DBOPT-012.md`'s Status line for the full evidence, and
+`docs/sprints/sprint-61.md`'s Tech Lead close-out section for the complete sign-off record.

@@ -116,8 +116,14 @@ class _FakeSplitResultRepository:
     def add_splits(self, tenant_id, run_id, splits) -> None:
         self._splits.setdefault((tenant_id, run_id), []).extend(splits)
 
-    def get_splits(self, tenant_id, run_id) -> list[SplitResultRecord]:
-        return sorted(self._splits.get((tenant_id, run_id), []), key=lambda s: s.split_index)
+    def get_splits(self, tenant_id, run_id, limit=None, offset=0) -> list[SplitResultRecord]:
+        ordered = sorted(self._splits.get((tenant_id, run_id), []), key=lambda s: s.split_index)
+        if limit is None:
+            return ordered
+        return ordered[offset : offset + limit]
+
+    def count_splits(self, tenant_id, run_id) -> int:
+        return len(self._splits.get((tenant_id, run_id), []))
 
     def get_splits_for_runs(self, tenant_id, run_ids) -> dict[str, list[SplitResultRecord]]:
         result = {}
@@ -192,3 +198,9 @@ def test_fake_split_result_repository_satisfies_protocol_and_orders_by_split_ind
 
     assert [s.split_index for s in splits] == [0, 1, 2]
     assert repo.get_splits("other-tenant", "run-1") == []
+
+    # DBOPT-011: the Protocol's new limit/offset params and count_splits
+    # method are also structurally satisfied by this fake.
+    assert [s.split_index for s in repo.get_splits("tenant-1", "run-1", limit=1, offset=1)] == [1]
+    assert repo.count_splits("tenant-1", "run-1") == 3
+    assert repo.count_splits("other-tenant", "run-1") == 0

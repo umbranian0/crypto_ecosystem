@@ -200,3 +200,43 @@ def test_alembic_upgrade_head_creates_matching_schema(tmp_path) -> None:
     assert split_columns == expected_split_columns
     assert split_point_columns == expected_split_point_columns
     engine.dispose()
+
+
+def test_alembic_downgrade_then_upgrade_round_trips_cleanly(tmp_path) -> None:
+    """DBOPT-012: `0013`'s downgrade() must no-op cleanly against sqlite, same
+    as its upgrade() -- exercised generically (`downgrade -1` then `upgrade
+    head` again) rather than pinned to one revision, so any future
+    Postgres-only-guarded migration added the same way stays covered without
+    another test being added here.
+    """
+    db_path = tmp_path / "alembic_downgrade_scratch.db"
+    import os
+
+    full_env = {**os.environ, "DATABASE_URL": f"sqlite:///{db_path}"}
+
+    upgrade_result = subprocess.run(
+        [sys.executable, "-m", "alembic", "upgrade", "head"],
+        cwd=SERVICE_ROOT,
+        env=full_env,
+        capture_output=True,
+        text=True,
+    )
+    assert upgrade_result.returncode == 0, upgrade_result.stderr
+
+    downgrade_result = subprocess.run(
+        [sys.executable, "-m", "alembic", "downgrade", "-1"],
+        cwd=SERVICE_ROOT,
+        env=full_env,
+        capture_output=True,
+        text=True,
+    )
+    assert downgrade_result.returncode == 0, downgrade_result.stderr
+
+    reupgrade_result = subprocess.run(
+        [sys.executable, "-m", "alembic", "upgrade", "head"],
+        cwd=SERVICE_ROOT,
+        env=full_env,
+        capture_output=True,
+        text=True,
+    )
+    assert reupgrade_result.returncode == 0, reupgrade_result.stderr

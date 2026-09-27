@@ -56,6 +56,7 @@ from naive_first_common.contracts import (
     ClientBaselineResult,
     RunSplitSummary,
     SplitPointResponse,
+    SplitPoints,
     SplitResultResponse,
 )
 
@@ -65,7 +66,7 @@ from app.dependencies.repositories import (
     SplitResultRepositoryDep,
     ValidationRunRepositoryDep,
 )
-from app.repositories.interfaces import SplitResultRecord
+from app.repositories.interfaces import SplitPointRecord, SplitResultRecord
 
 router = APIRouter()
 
@@ -164,6 +165,8 @@ def get_splits(
     run_repository: ValidationRunRepositoryDep,
     split_repository: SplitResultRepositoryDep,
     tenant: TenantContext = Depends(get_tenant_context),
+    limit: int | None = Query(default=None, ge=1),
+    offset: int = Query(default=0, ge=0),
 ) -> list[SplitResultResponse]:
     # Run-ownership check first, same 404-collapses-both-cases stance as
     # `GET /runs/{id}` (VS-007) -- see module docstring.
@@ -171,9 +174,47 @@ def get_splits(
     if run is None:
         raise HTTPException(status_code=404, detail="run not found")
 
-    splits = split_repository.get_splits(tenant.tenant_id, run_id)
+    # DBOPT-011: omitting limit/offset is byte-identical to pre-ticket
+    # behavior -- the full, unbounded, ordered list (binding AC). Response
+    # shape (bare list) never changes, bounded or not.
+    splits = split_repository.get_splits(tenant.tenant_id, run_id, limit=limit, offset=offset)
 
     return [_split_result_to_response(split) for split in splits]
+
+
+class SplitCountResponse(BaseModel):
+    """DBOPT-011: local envelope for GET /runs/{run_id}/splits/count -- a
+    single scalar wrapped in an object (not a bare int), matching this
+    router's existing "local envelope" convention (SplitPointsResponse,
+    RunSplitsSummaryResponse) rather than a bare top-level int body.
+    """
+
+    total: int
+
+
+@router.get("/runs/{run_id}/splits/count", response_model=SplitCountResponse)
+def get_splits_count(
+    run_id: str,
+    run_repository: ValidationRunRepositoryDep,
+    split_repository: SplitResultRepositoryDep,
+    tenant: TenantContext = Depends(get_tenant_context),
+) -> SplitCountResponse:
+    """DBOPT-011: companion count endpoint mirroring VS-022's
+    `list_runs`/`count_runs` pair. Route collision check (done before writing
+    this route, not assumed): `/runs/{run_id}/splits/count` is 4 path
+    segments (`runs`/`{run_id}`/`splits`/`count`) -- distinct from
+    `/runs/{run_id}/splits` (3 segments) and
+    `/runs/{run_id}/splits/{split_index}/points` (5 segments) by segment
+    count alone. RAV-016 (sequenced after this ticket) will add
+    `/runs/{run_id}/splits/points`, also 4 segments -- no collision with this
+    route regardless of registration order since the literal 4th segment
+    differs (`"count"` vs `"points"`), the same reasoning RAV-012's
+    `"summary"` vs `"splits"` collision check already used.
+    """
+    run = run_repository.get_run(tenant.tenant_id, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    return SplitCountResponse(total=split_repository.count_splits(tenant.tenant_id, run_id))
 
 
 @router.get("/runs/splits/summary", response_model=RunSplitsSummaryResponse)
@@ -207,6 +248,27 @@ def get_splits_summary(
             for rid, splits in splits_by_run.items()
         ]
     )
+
+
+def _split_point_to_response(point: SplitPointRecord) -> SplitPointResponse:
+    """Extracted from `get_split_points` (RAV-016) so the 4-field mapping
+    has exactly one copy -- reused by both `get_split_points` and
+    `get_splits_points` below."""
+    return SplitPointResponse(
+        timestamp=point.timestamp,
+        predicted=point.predicted,
+        actual=point.actual,
+        baseline_key=point.baseline_key,
+    )
+
+
+class RunSplitPointsResponse(BaseModel):
+    """RAV-016 response envelope for GET /runs/{run_id}/splits/points:
+    `items` is `SplitPoints` (imported from naive_first_common.contracts,
+    never redefined here) -- same "local envelope, shared item shape"
+    precedent RunSplitsSummaryResponse above already established."""
+
+    items: list[SplitPoints]
 
 
 @router.get("/runs/{run_id}/splits/{split_index}/points", response_model=SplitPointsResponse)
@@ -247,16 +309,57 @@ def get_split_points(
     points = split_point_repository.get_points(tenant.tenant_id, run_id, split_index)
 
     return SplitPointsResponse(
-        items=[
-            SplitPointResponse(
-                timestamp=point.timestamp,
-                predicted=point.predicted,
-                actual=point.actual,
-                baseline_key=point.baseline_key,
-            )
-            for point in points[offset : offset + limit]
-        ],
+        items=[_split_point_to_response(point) for point in points[offset : offset + limit]],
         limit=limit,
         offset=offset,
         total=len(points),
+    )
+
+
+@router.get("/runs/{run_id}/splits/points", response_model=RunSplitPointsResponse)
+def get_splits_points(
+    run_id: str,
+    run_repository: ValidationRunRepositoryDep,
+    split_point_repository: SplitPointRepositoryDep,
+    tenant: TenantContext = Depends(get_tenant_context),
+    split_index: list[int] = Query(default=[]),
+) -> RunSplitPointsResponse:
+    """RAV-016: batched form of get_split_points above, for every
+    rendered split of one run in a single round trip. Run-ownership
+    check first (same collapsed-404 stance as get_splits/
+    get_split_points) since a request is always scoped to exactly one
+    run -- but, unlike get_split_points, does NOT additionally validate
+    each requested split_index against split_results: the indices
+    always come from run_detail's own already-validated
+    rendered_splits, so a per-index 404 would only ever fire on an
+    internal bug and would fail the whole batch over one bad index.
+    Every requested split_index gets exactly one entry in `items`, in
+    request order, with `points: []` for any index absent from the
+    repository's result dict (pruned, never persisted -- degrades the
+    same way the single-split endpoint's empty-items response already
+    does, never an error).
+
+    4-path-segment route (runs/{run_id}/splits/points), distinct in
+    segment count from /runs/{run_id}/splits (3 segments) and
+    /runs/{run_id}/splits/{split_index}/points (5 segments); shares a
+    segment count with DBOPT-011's /runs/{run_id}/splits/count but
+    differs in its literal 4th segment ("points" vs "count"), so
+    neither collides regardless of registration order.
+    """
+    run = run_repository.get_run(tenant.tenant_id, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    if not split_index:
+        return RunSplitPointsResponse(items=[])
+    points_by_split = split_point_repository.get_points_for_splits(
+        tenant.tenant_id, run_id, split_index
+    )
+    return RunSplitPointsResponse(
+        items=[
+            SplitPoints(
+                split_index=idx,
+                points=[_split_point_to_response(p) for p in points_by_split.get(idx, [])],
+            )
+            for idx in split_index
+        ]
     )

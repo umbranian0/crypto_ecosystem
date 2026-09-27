@@ -376,3 +376,14 @@ class RunSplitSummary(BaseModel):
 
     run_id: str
     splits: list[SplitResultResponse]
+
+
+class SplitPoints(BaseModel):
+    """RAV-016: one split's entry within the batched
+    `GET /runs/{run_id}/splits/points` response. Reuses `SplitPointResponse`
+    verbatim for the per-point shape -- never a fourth hand-duplicated field
+    list (ARCH-003). Mirrors `RunSplitSummary`'s own `{run_id, splits}` shape
+    one level down (per-split instead of per-run)."""
+
+    split_index: int
+    points: list[SplitPointResponse]

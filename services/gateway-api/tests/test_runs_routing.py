@@ -228,12 +228,33 @@ class FakeValidationService:
                 },
             )
 
+        if request.method == "GET" and path.endswith("/splits/count"):
+            # DBOPT-011: path shape /runs/{run_id}/splits/count -- 4 segments,
+            # checked before the plain "/splits" branch below so it is never
+            # swallowed by that endswith("/splits") check (it wouldn't match
+            # anyway, but this branch's own position documents the same
+            # collision-avoidance reasoning validation-service's own route
+            # uses).
+            run_id = path.removeprefix("/runs/").removesuffix("/splits/count")
+            run = _SEED_RUNS.get(run_id) or self.created_runs.get(run_id)
+            if run is None or run["tenant_id"] != tenant_id:
+                return httpx.Response(404, json={"detail": "run not found"})
+            return httpx.Response(200, json={"total": len(_SEED_SPLITS.get(run_id, []))})
+
         if request.method == "GET" and path.endswith("/splits"):
             run_id = path.removeprefix("/runs/").removesuffix("/splits")
             run = _SEED_RUNS.get(run_id) or self.created_runs.get(run_id)
             if run is None or run["tenant_id"] != tenant_id:
                 return httpx.Response(404, json={"detail": "run not found"})
-            return httpx.Response(200, json=_SEED_SPLITS.get(run_id, []))
+            # DBOPT-011: honors limit/offset the same way validation-service's
+            # real GET /runs/{run_id}/splits does, so the pass-through test
+            # below can assert on an actually-bounded response, not just that
+            # the params were echoed back on the request.
+            all_splits = _SEED_SPLITS.get(run_id, [])
+            raw_limit = request.url.params.get("limit")
+            offset = int(request.url.params.get("offset", 0))
+            page = all_splits[offset : offset + int(raw_limit)] if raw_limit is not None else all_splits
+            return httpx.Response(200, json=page)
 
         if request.method == "GET":
             run_id = path.removeprefix("/runs/")
@@ -564,6 +585,59 @@ def test_get_runs_downstream_422_passes_through_unmodified(client: TestClient) -
     )
 
     assert response.status_code == 422
+
+
+# --- DBOPT-011: GET /runs/{run_id}/splits?limit=&offset=, GET /runs/{run_id}/splits/count ---
+
+
+def test_get_splits_forwards_limit_and_offset_unmodified(
+    client: TestClient, fake_validation_service: FakeValidationService
+) -> None:
+    response = client.get(
+        f"/runs/{RUN_OWNED_BY_A}/splits?limit=1&offset=0",
+        headers={"Authorization": f"Bearer {RAW_KEY_A}"},
+    )
+
+    assert response.status_code == 200
+    assert len(response.json()) == 1
+
+    seen = fake_validation_service.seen_requests[-1]
+    assert seen.url.params["limit"] == "1"
+    assert seen.url.params["offset"] == "0"
+
+
+def test_get_splits_omitting_limit_offset_does_not_forward_limit_param(
+    client: TestClient, fake_validation_service: FakeValidationService
+) -> None:
+    """DBOPT-011 regression: omitting limit/offset on the inbound request
+    must not synthesize a `limit` on the outbound call -- only `offset`
+    (defaulting to 0) is always forwarded, matching validation-service's own
+    unbounded-by-default behavior exactly."""
+    response = client.get(
+        f"/runs/{RUN_OWNED_BY_A}/splits", headers={"Authorization": f"Bearer {RAW_KEY_A}"}
+    )
+
+    assert response.status_code == 200
+    seen = fake_validation_service.seen_requests[-1]
+    assert "limit" not in seen.url.params
+    assert seen.url.params["offset"] == "0"
+
+
+def test_get_splits_count_forwards_and_returns_total(client: TestClient) -> None:
+    response = client.get(
+        f"/runs/{RUN_OWNED_BY_A}/splits/count", headers={"Authorization": f"Bearer {RAW_KEY_A}"}
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"total": len(_SEED_SPLITS[RUN_OWNED_BY_A])}
+
+
+def test_cross_tenant_get_splits_count_returns_404(client: TestClient) -> None:
+    response = client.get(
+        f"/runs/{RUN_OWNED_BY_B}/splits/count", headers={"Authorization": f"Bearer {RAW_KEY_A}"}
+    )
+
+    assert response.status_code == 404
 
 
 def test_correlation_id_on_inbound_request_is_forwarded_downstream(

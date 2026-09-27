@@ -52,7 +52,17 @@ TimescaleDB's own sizing guidance targets chunks holding roughly 25% of availabl
 **Migration shape**: `SELECT set_chunk_time_interval('ingestion.price_ohlcv', INTERVAL '90 days');` (and similarly for `onchain_metric`, `sentiment_score`, `split_results` — interval chosen per table's actual event density; `price_ohlcv` at 1h candles is ~2,160 rows/90-day chunk per tenant/source, a much healthier chunk size than the current ~258/week). `set_chunk_time_interval` only affects **chunks created after** the call — existing undersized chunks are not automatically merged (see DBOPT-008's compression discussion for one way to reduce their count/footprint after the fact). This is schema-tuning only; no query surface or repository code changes.
 
 ### DBOPT-011 — `validation.split_results`: `get_splits` fetches every row of a run unconditionally, with no DB-level pagination, even though only 500 are ever rendered
-**Status: New (Sprint 31), Must.**
+**Status: Done (Sprint 61, ticket `docs/tickets/DBOPT-011.md`).** Optional `limit`/`offset` added to
+`get_splits`/`GET /runs/{run_id}/splits` end to end (validation-service → gateway-api pass-through),
+unbounded-by-default (zero contract break); a new companion `count_splits`/`GET
+/runs/{run_id}/splits/count` endpoint (mirroring `list_runs`/`count_runs`'s established pair) lets
+`dashboard-web`'s `run_detail`/`runs_trend` request a real total once and then a bounded page,
+instead of fetching every row and truncating client-side. Live-verified by QA against a real
+550-split fixture run: `GET /runs/{id}/splits?limit=3&offset=6` returns exactly the requested page;
+`run_detail`'s "Showing the most recent 500 of 550 splits" notice is accurate and the rendered table
+genuinely shows the most-recent 500 (`split_index` 50-549), not the first 500. Full
+`validation-service`/`gateway-api`/`dashboard-web` test suites pass (see the ticket file for exact
+counts and one disclosed, pre-existing, unrelated flaky test).
 **Table/schema**: `validation.split_results` (validation-service).
 **Query pattern**: `PostgresSplitResultRepository.get_splits` (`services/validation-service/src/app/repositories/postgres_repository.py`) — `SELECT * FROM split_results WHERE run_id = :run_id AND tenant_id = :tenant_id ORDER BY split_index`, **no `LIMIT`/`OFFSET` anywhere in the call chain**: `services/validation-service/src/app/routers/splits.py`'s `GET /runs/{run_id}/splits` handler takes no pagination query params and passes none through; `services/gateway-api/src/app/routers/runs.py`'s `get_splits` proxy forwards the call as-is; `services/dashboard-web/src/app/routers/runs.py`'s `run_detail` handler (DASH-119) fetches the **full** response and only then caps what it hands to `build_error_chart`/`build_dm_verdict_chart`/the per-split table/`build_shareable_summary_text` at `MAX_RENDERED_SPLITS = 500` — the truncation is render-time only, confirmed by DASH-119's own docstring: "The full split list remains fetchable via the unbounded, already-existing `GET /runs/{run_id}/splits` API this handler already calls; this fix touches only what gets rendered." The cross-run trend view (`runs_trend`, RAV-009) compounds this: for every completed run in a selected `(dataset_id, horizon)` group it issues its own full, unbounded `GET /runs/{id}/splits` call.
 **Evidence**: code-inferred from DASH-119's incident (a real production run persisted 38,597 splits, confirmed in that ticket's own root-cause writeup) plus a direct read of the full call chain above showing no pagination parameter exists at any layer. Not currently live-EXPLAIN-reproducible at that exact scale — the real UAT database today has no run over 75 splits (largest live run: `tenant 2e78966e105441c497da3fa8ffd2ff3c` / `run 19f5ba1dc7794d0db32c6a0e50900dd4`, 75 rows) — so this item's magnitude claim rests on the documented incident, not a live measurement at 38.6k rows; DBOPT-012 below is the live-EXPLAIN-backed companion showing the same query's current, smaller-scale cost shape.
@@ -60,7 +70,22 @@ TimescaleDB's own sizing guidance targets chunks holding roughly 25% of availabl
 **Depends on**: DBOPT-012 (index) for the DB side to actually pay off once pagination is added.
 
 ### DBOPT-012 — `validation.split_results`: `ix_split_results_tenant_run (tenant_id, run_id)` doesn't cover `get_splits`' `ORDER BY split_index`, forcing a separate sort on every call
-**Status: New (Sprint 31), Should. Evidence-backed by a live `EXPLAIN (ANALYZE, BUFFERS)`.**
+**Status: Done, with a disclosed scope correction (Sprint 61, ticket `docs/tickets/DBOPT-012.md`).**
+`ix_split_results_tenant_run` widened in-place from `(tenant_id, run_id)` to `(tenant_id, run_id,
+split_index)` (migration `0013`, DDL-only, no RLS change), live-verified: the widened index correctly
+serves a matching chunk's own scan in `split_index` order (`Index Scan
+using ..._ix_split_results_tenant_run`, confirmed live against a real 550-split fixture run). **QA's
+independent live `EXPLAIN` against that same fixture found the top-level `Sort` node is *not* fully
+eliminated end-to-end**, correcting this entry's original "Sort node" framing: `get_splits`' query has
+no `test_start` (the hypertable's partitioning column) predicate, so TimescaleDB's constraint
+exclusion cannot prune any chunk regardless of index shape or run size — the query always `Append`s
+every chunk, and `MergeAppend` (the only way Postgres skips the `Sort`) requires every child chunk
+scan to already be ordered, which fails once even one low-row chunk gets a cost-based `Seq Scan`
+instead. Absolute cost remains trivial (single-digit ms) and does not affect any Sprint 61 Must-tier
+acceptance criterion. **Recommended follow-up, not implemented here** (out of this ticket's scope):
+bound `get_splits`' query by `test_start` (or another chunk-pruning predicate) to let constraint
+exclusion actually skip irrelevant chunks, or consolidate old undersized chunks — either would let a
+future `MergeAppend` apply. See `docs/tickets/DBOPT-012.md`'s Status line for the full evidence.
 **Table/schema**: `validation.split_results` (validation-service, TimescaleDB hypertable).
 **Query pattern**: same `get_splits` query as DBOPT-011 above — `WHERE tenant_id = :tenant_id AND run_id = :run_id ORDER BY split_index`. `ix_split_results_tenant_run` (shipped in DBOPT-003/`0006_add_split_results_tenant_run_index.py`) is `(tenant_id, run_id)` only; it narrows each chunk's scan to the matching rows but cannot satisfy the `ORDER BY` for free, so the planner adds an explicit `Sort` node on top.
 **Evidence — live**, against the real 75-row run cited above (`tenant 2e78966e...`, `run 19f5ba1d...`):

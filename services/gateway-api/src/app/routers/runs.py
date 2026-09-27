@@ -78,6 +78,7 @@ from naive_first_common.contracts import (
     RunSplitSummary,
     RunSummaryResponse,
     SplitPointResponse,
+    SplitPoints,
     SplitResultResponse,
 )
 from naive_first_common.tenant_context import TenantContext
@@ -219,11 +220,40 @@ def get_splits(
     run_id: str,
     client: ValidationServiceClientDep,
     tenant: TenantContext = Depends(get_authenticated_tenant),
+    limit: int | None = Query(default=None, ge=1),
+    offset: int = Query(default=0, ge=0),
 ) -> list[SplitResultResponse]:
     headers = build_downstream_headers(tenant)
-    response = _call_downstream(client.get, f"/runs/{run_id}/splits", headers=headers)
+    params = {"offset": offset}
+    if limit is not None:
+        params["limit"] = limit
+    response = _call_downstream(
+        client.get, f"/runs/{run_id}/splits", params=params, headers=headers
+    )
     _raise_for_error(response)
     return [SplitResultResponse(**item) for item in response.json()]
+
+
+class SplitCountResponse(BaseModel):
+    """DBOPT-011: response envelope for `GET /runs/{run_id}/splits/count`,
+    mirroring `validation-service`'s own `SplitCountResponse` envelope
+    field-for-field since this is a pass-through proxy, not a
+    reimplementation -- same precedent as `RunListResponse` above.
+    """
+
+    total: int
+
+
+@router.get("/runs/{run_id}/splits/count", response_model=SplitCountResponse)
+def get_splits_count(
+    run_id: str,
+    client: ValidationServiceClientDep,
+    tenant: TenantContext = Depends(get_authenticated_tenant),
+) -> SplitCountResponse:
+    headers = build_downstream_headers(tenant)
+    response = _call_downstream(client.get, f"/runs/{run_id}/splits/count", headers=headers)
+    _raise_for_error(response)
+    return SplitCountResponse(**response.json())
 
 
 @router.get("/runs/splits/summary", response_model=RunSplitsSummaryResponse)
@@ -268,3 +298,39 @@ def get_split_points(
     )
     _raise_for_error(response)
     return SplitPointsResponse(**response.json())
+
+
+class RunSplitPointsResponse(BaseModel):
+    """RAV-016: response envelope for `GET /runs/{run_id}/splits/points`,
+    mirroring `validation-service`'s own `RunSplitPointsResponse` envelope
+    field-for-field (`services/validation-service/src/app/routers/
+    splits.py`) since this is a pass-through proxy, not a reimplementation.
+    `items` uses `SplitPoints`, imported from `naive_first_common.contracts`
+    (ARCH-003) -- never redefined here. This envelope shape itself is local
+    to this router, same precedent as `RunSplitsSummaryResponse` above.
+    """
+
+    items: list[SplitPoints]
+
+
+@router.get("/runs/{run_id}/splits/points", response_model=RunSplitPointsResponse)
+def get_splits_points(
+    run_id: str,
+    client: ValidationServiceClientDep,
+    tenant: TenantContext = Depends(get_authenticated_tenant),
+    split_index: list[int] = Query(default=[]),
+) -> RunSplitPointsResponse:
+    """RAV-016: batched pass-through of `validation-service`'s own
+    `GET /runs/{run_id}/splits/points` -- same shape as `get_splits_summary`
+    above. `split_index` is forwarded as a repeated query param unmodified --
+    no business logic reimplemented here.
+    """
+    headers = build_downstream_headers(tenant)
+    response = _call_downstream(
+        client.get,
+        f"/runs/{run_id}/splits/points",
+        params={"split_index": split_index},
+        headers=headers,
+    )
+    _raise_for_error(response)
+    return RunSplitPointsResponse(**response.json())
