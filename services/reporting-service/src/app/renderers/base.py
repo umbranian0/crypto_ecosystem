@@ -15,7 +15,11 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from naive_first_common.contracts import RunDetailResponse, SplitResultResponse
+from naive_first_common.contracts import (
+    RunDetailResponse,
+    RunSummaryResponse,
+    SplitResultResponse,
+)
 
 
 class ReportRenderer(ABC):
@@ -40,4 +44,20 @@ class ReportRenderer(ABC):
         AI-002 -- no narrative block appears. Never generated here; this
         interface only renders whatever it's handed.
         """
+        raise NotImplementedError
+
+
+class TrendReportRenderer(ABC):
+    """Sibling of `ReportRenderer` for report kinds scoped to a (dataset_id,
+    horizon) group of runs rather than one run (RPT-002-02). Same rule:
+    render what is handed in, recompute nothing.
+    """
+
+    @abstractmethod
+    def render(
+        self,
+        dataset_id: str,
+        horizon: int,
+        runs_with_splits: list[tuple[RunSummaryResponse, list[SplitResultResponse]]],
+    ) -> str:
         raise NotImplementedError

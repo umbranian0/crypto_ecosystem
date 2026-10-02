@@ -25,15 +25,28 @@ from __future__ import annotations
 from typing import Callable
 
 import httpx
-from naive_first_common.contracts import RunDetailResponse, SplitResultResponse
+from naive_first_common.contracts import (
+    RunDetailResponse,
+    RunSummaryResponse,
+    SplitResultResponse,
+)
 
 from app.narrative.client import NarrativeClient
 from app.narrative.generation import generate_narrative_html
-from app.renderers.base import ReportRenderer
+from app.renderers.base import ReportRenderer, TrendReportRenderer
 from app.renderers.factory import get_report_renderer
 from app.repositories.interfaces import ReportRecord, ReportRepository
 
 _VALIDATION_AUDIT_KIND = "validation_audit"
+_CONSISTENCY_TREND_KIND = "consistency_trend"
+
+# validation-service's GET /runs hard ceiling (`le=100`).
+_RUNS_LIST_PAGE_SIZE = 100
+
+# Must equal dashboard-web's MAX_RENDERED_SPLITS (services/dashboard-web/src/
+# app/routers/runs.py) so this snapshot's N-of-M matches /runs/trend. Not
+# imported: no service imports another service's code.
+MAX_RENDERED_SPLITS = 500
 
 
 class GenerationError(Exception):
@@ -128,6 +141,87 @@ def generate_validation_audit_report(
         tenant_id=tenant_id,
         run_id=run_id,
         report_kind=_VALIDATION_AUDIT_KIND,
+        content=content,
+        status="generated",
+    )
+
+
+def _fetch_completed_runs(
+    client: httpx.Client, headers: dict[str, str], dataset_id: str, horizon: int
+) -> list[RunSummaryResponse]:
+    runs: list[RunSummaryResponse] = []
+    offset = 0
+    while True:
+        response = _call_downstream(
+            client.get,
+            "/runs",
+            headers=headers,
+            params={"limit": _RUNS_LIST_PAGE_SIZE, "offset": offset},
+        )
+        if response.status_code >= 400:
+            raise DownstreamResponseError()
+        body = response.json()
+        page = [RunSummaryResponse(**item) for item in body["items"]]
+        runs.extend(page)
+        offset += _RUNS_LIST_PAGE_SIZE
+        if len(page) < _RUNS_LIST_PAGE_SIZE or offset >= body["total"]:
+            break
+    return [
+        run
+        for run in runs
+        if run.dataset_id == dataset_id and run.horizon == horizon and run.status == "completed"
+    ]
+
+
+def _fetch_bounded_splits(
+    client: httpx.Client, headers: dict[str, str], run_id: str
+) -> list[SplitResultResponse]:
+    """Most recent `MAX_RENDERED_SPLITS` splits: count first, then offset =
+    max(0, total - cap), same tail rule as dashboard-web.
+    """
+    count_response = _call_downstream(client.get, f"/runs/{run_id}/splits/count", headers=headers)
+    if count_response.status_code >= 400:
+        raise DownstreamResponseError()
+    total = count_response.json()["total"]
+
+    splits_response = _call_downstream(
+        client.get,
+        f"/runs/{run_id}/splits",
+        headers=headers,
+        params={"limit": MAX_RENDERED_SPLITS, "offset": max(0, total - MAX_RENDERED_SPLITS)},
+    )
+    if splits_response.status_code >= 400:
+        raise DownstreamResponseError()
+    return [SplitResultResponse(**item) for item in splits_response.json()]
+
+
+def consistency_trend_scope_key(dataset_id: str, horizon: int) -> str:
+    return f"{_CONSISTENCY_TREND_KIND}:{dataset_id}:{horizon}"
+
+
+def generate_consistency_trend_report(
+    tenant_id: str,
+    dataset_id: str,
+    horizon: int,
+    client: httpx.Client,
+    repository: ReportRepository,
+    renderer_factory: Callable[[str], TrendReportRenderer] = get_report_renderer,
+) -> ReportRecord:
+    """RPT-002-02: snapshot of "beat Naive0 in N of M completed runs" for one
+    (dataset_id, horizon) group, read from validation-service's `GET /runs`
+    and splits endpoints with `X-Tenant-Id`. A group with no completed runs
+    still persists a report (the renderer's no-data state).
+    """
+    headers = {"X-Tenant-Id": tenant_id}
+    runs = _fetch_completed_runs(client, headers, dataset_id, horizon)
+    runs_with_splits = [(run, _fetch_bounded_splits(client, headers, run.id)) for run in runs]
+
+    content = renderer_factory(_CONSISTENCY_TREND_KIND).render(dataset_id, horizon, runs_with_splits)
+
+    return repository.create_report(
+        tenant_id=tenant_id,
+        run_id=consistency_trend_scope_key(dataset_id, horizon),
+        report_kind=_CONSISTENCY_TREND_KIND,
         content=content,
         status="generated",
     )

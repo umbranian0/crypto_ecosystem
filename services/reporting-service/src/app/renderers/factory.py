@@ -8,7 +8,8 @@ here, not a rewrite of any caller.
 
 from __future__ import annotations
 
-from app.renderers.base import ReportRenderer
+from app.renderers.base import ReportRenderer, TrendReportRenderer
+from app.renderers.consistency_trend import ConsistencyTrendRenderer
 from app.renderers.validation_audit import ValidationAuditRenderer
 
 
@@ -22,7 +23,9 @@ class UnknownReportKindError(ValueError):
         self.kind = kind
 
 
-def get_report_renderer(kind: str) -> ReportRenderer:
+def get_report_renderer(kind: str) -> ReportRenderer | TrendReportRenderer:
     if kind == "validation_audit":
         return ValidationAuditRenderer()
+    if kind == "consistency_trend":
+        return ConsistencyTrendRenderer()
     raise UnknownReportKindError(kind)

@@ -163,7 +163,7 @@ outcomes above.
 
 <h2>5. Statistical accuracy vs. economic value</h2>
 {% endif %}
-<p>This audit evaluates statistical forecast accuracy only. No transaction costs, slippage, execution, or position sizing were modeled unless the client separately commissioned the economic module (Subsystem 5). A model that beats naive statistically may still be unprofitable after costs, and vice versa is not implied either.</p>
+{% include "_accuracy_vs_economic_disclaimer.html.jinja" %}
 
 {% if run.status == "completed" %}
 <h2>6. Recommendations</h2>

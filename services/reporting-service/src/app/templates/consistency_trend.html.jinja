@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Naive-First Consistency Snapshot -- dataset {{ dataset_id }}, horizon {{ horizon }}</title>
+</head>
+<body>
+<h1>Naive-First Consistency Snapshot -- dataset {{ dataset_id }}, horizon {{ horizon }}</h1>
+
+<h2>1. Scope</h2>
+<table>
+    <tbody>
+        <tr><th>Dataset</th><td>{{ dataset_id }}</td></tr>
+        <tr><th>Horizon</th><td>{{ horizon }}</td></tr>
+        <tr><th>Runs considered</th><td>completed runs only</td></tr>
+    </tbody>
+</table>
+
+<h2>2. Methodology</h2>
+<p>{{ methodology_intro }}</p>
+<ul>
+    {% for fact in methodology_facts %}
+    <li>{{ fact }}</li>
+    {% endfor %}
+</ul>
+<p>A run counts as having beaten Naive0 when strictly more of its splits have a "better" Diebold-Mariano verdict than "worse" and "no significant difference" combined. Splits whose test statistic is undefined are excluded from that count. Runs with no evaluable split are not counted. This snapshot counts verdicts already computed by the validation protocol; no statistic is recomputed here.</p>
+
+<h2>3. Consistency</h2>
+{% if indicator.has_data %}
+<p>Beat Naive0 in {{ indicator.beat_count }} of {{ indicator.total_count }} completed runs.</p>
+{% if indicator.beat_count == 0 %}
+<p>{{ not_beating_naive_note }}</p>
+{% endif %}
+{% else %}
+<p>No completed runs matched this selection.</p>
+{% endif %}
+
+<h2>4. Runs</h2>
+{% if rows %}
+<table>
+    <thead>
+        <tr><th>Run id</th><th>Created at</th><th>Completed at</th><th>Outcome</th><th>Better splits</th><th>Worse splits</th><th>No significant difference splits</th><th>Undefined splits</th></tr>
+    </thead>
+    <tbody>
+        {% for row in rows %}
+        <tr><td>{{ row.run.id }}</td><td>{{ row.run.created_at }}</td><td>{{ row.run.completed_at if row.run.completed_at else "--" }}</td><td>{{ row.outcome }}</td><td>{{ row.counts.better }}</td><td>{{ row.counts.worse }}</td><td>{{ row.counts.no_significant }}</td><td>{{ row.counts.undefined }}</td></tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p>No runs to list.</p>
+{% endif %}
+
+<h2>5. Statistical accuracy vs. economic value</h2>
+{% include "_accuracy_vs_economic_disclaimer.html.jinja" %}
+</body>
+</html>

@@ -23,9 +23,6 @@ template unchanged (ticket RS-003 Design section, extra-scrutiny flag).
 
 from __future__ import annotations
 
-from pathlib import Path
-
-from jinja2 import Environment, FileSystemLoader, select_autoescape
 from naive_first_common.contracts import RunDetailResponse, SplitResultResponse
 from naive_first_common.disclosures import (
     METHODOLOGY_FACTS,
@@ -34,14 +31,10 @@ from naive_first_common.disclosures import (
 )
 
 from app.renderers.base import ReportRenderer
+from app.renderers.jinja_env import env as shared_env
 
 
-_TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
-
-_env = Environment(
-    loader=FileSystemLoader(str(_TEMPLATES_DIR)),
-    autoescape=select_autoescape(["html", "jinja"]),
-)
+_env = shared_env
 
 
 class ValidationAuditRenderer(ReportRenderer):

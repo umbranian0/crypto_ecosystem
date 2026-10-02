@@ -16,6 +16,11 @@ object storage is a documented future contract, not this sprint's scope).
 `validation-service`'s own `validation` schema, and per CLAUDE.md no service
 reaches into another service's DB schema directly (only through that
 service's HTTP API), so a cross-schema FK here is not valid.
+
+RPT-002-02: a `report_kind="consistency_trend"` report has no single run, and
+`run_id` is NOT NULL, so its scope is stored in this column by convention as
+`consistency_trend:{dataset_id}:{horizon}` (no migration; revisit if a second
+scoped kind appears).
 """
 
 from __future__ import annotations
