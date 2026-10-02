@@ -561,4 +561,6 @@ is the in-memory equivalent used by `tests/test_base.py`'s crawl-run/cross-tenan
 read-only bind mount from the host (the archive is untracked and not in the image); this is what lets
 `POST /internal/seed-platform-history` find its CSVs on the local stack. See `infra/README.md`.
 
+**Platform CSV archive is untracked (`CHORE-66-04`)**: the CSVs under `data/raw/_platform/{price,onchain,sentiment}/.../{seed,incremental}/*.csv` (~103 MB) are gitignored by design and not distributed in the repo; only `data/raw/_platform/PROVENANCE.md` is tracked, and it documents the sources and how the archive was produced. On a checkout without the archive, `POST /internal/seed-platform-history` returns a generic `503`, new tenants get no sample data, and the dashboard `/demo-run` shows the empty-data message. The cause is logged at ERROR by `routers/internal.py`: for a missing archive, the missing directory and a pointer to `PROVENANCE.md`; for any other exception, the exception class name only (never the message, which may carry a connection string). The response body never carries a path.
+
 **Test database**: Postgres-backed tests target the isolated `naive_first_test` DB, never the live `naive_first`; override with `INGESTION_SERVICE_TEST_DATABASE_URL`.

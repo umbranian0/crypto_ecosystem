@@ -1,6 +1,6 @@
 # CHORE-66-04 -- ingestion-service: log seed failures at the point of failure + README statements
 
-**Status: todo.** Sprint 66 item 2. Module: services/ingestion-service (+ the one `infra/README.md` sentence).
+**Status: done.** Sprint 66 item 2. Module: services/ingestion-service (+ the one `infra/README.md` sentence).
 
 ## Analysis
 `src/app/routers/internal.py` (platform-history seed endpoint) catches every exception and returns a fixed 503 with no log line. `_load_platform_csvs` raises `FileNotFoundError("no CSV files found under <dir>/(seed|incremental)")`. CSVs under `data/raw/**` are gitignored, so a fresh checkout seeds nothing, silently.

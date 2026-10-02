@@ -811,5 +811,6 @@ personally by the Tech Lead, passing (`1 passed`, real container).
 `ingestion-service` has one read-only bind mount: `../services/ingestion-service/data/raw/_platform` ->
 `/repo/services/ingestion-service/data/raw/_platform:ro`. The platform CSV archive is untracked and not baked
 into the image, so without this mount `POST /internal/seed-platform-history` (INGEST-030, called by
-gateway-api's GW-030 `provision()`) returned 503 and new tenants got no sample data. A checkout without the
-host archive still seeds empty. Recreate with `docker compose up -d --no-deps --force-recreate ingestion-service`.
+gateway-api's GW-030 `provision()`) returned 503 and new tenants got no sample data. The archive is untracked by design
+and not distributed in the repo (see `data/raw/_platform/PROVENANCE.md`); on a checkout without it, new tenants get no
+sample data, `/demo-run` shows the empty-data message, and ingestion-service logs the missing directory at ERROR. Recreate with `docker compose up -d --no-deps --force-recreate ingestion-service`.

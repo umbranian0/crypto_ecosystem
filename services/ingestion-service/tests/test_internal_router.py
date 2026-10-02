@@ -170,3 +170,44 @@ def test_repository_exception_mid_write_is_caught_and_returned_as_5xx(client, mo
     body_text = response.text
     assert "postgres://" not in body_text
     assert "connection to" not in body_text
+
+
+def test_missing_csv_archive_logs_directory_and_returns_generic_503(client, monkeypatch, tmp_path, caplog):
+    test_client, _repository = client
+    empty_root = tmp_path / "empty_platform"
+    import app.seed_platform_history as seed_platform_history_module
+
+    monkeypatch.setattr(seed_platform_history_module, "_PLATFORM_ROOT", empty_root)
+
+    with caplog.at_level("ERROR"):
+        response = test_client.post(
+            "/internal/seed-platform-history",
+            json={"tenant_id": "tenant-a"},
+            headers={"X-Internal-Token": "internal-secret"},
+        )
+
+    assert response.status_code == 503
+    assert response.json() == {"status": "error", "detail": "platform-history seed failed"}
+    assert str(empty_root) not in response.text
+    assert str(empty_root) in caplog.text
+    assert "PROVENANCE.md" in caplog.text
+
+
+def test_generic_seed_failure_logs_class_name_only(client, monkeypatch, caplog):
+    test_client, repository = client
+
+    def _boom(self, tenant_id, source, records):
+        raise RuntimeError("connection to postgres://user:pass@host/db failed")
+
+    monkeypatch.setattr(type(repository), "add_price_records", _boom)
+
+    with caplog.at_level("ERROR"):
+        response = test_client.post(
+            "/internal/seed-platform-history",
+            json={"tenant_id": "tenant-a"},
+            headers={"X-Internal-Token": "internal-secret"},
+        )
+
+    assert response.status_code == 503
+    assert "RuntimeError" in caplog.text
+    assert "postgres://" not in caplog.text

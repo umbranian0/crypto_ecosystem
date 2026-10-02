@@ -50,3 +50,7 @@ Action needed before any client-facing report includes data derived from these s
 ## Running the connectors
 
 Each connector module is runnable standalone for now (`python -m connectors.binance_price` etc. from `services/ingestion-service/`) — this predates the service's own trigger (#6, per implementation-plan.md) having fully fired for a REST API wrapper, so there's no `ingestion-service` HTTP endpoint yet. Scheduling (cron, or a Prefect flow per solution-design.md section 3.3) is a follow-up once `infra/` exists.
+
+## Obtaining the archive
+
+The CSV archive described above is gitignored and is not distributed in this repository; only this file is tracked. A fresh checkout therefore has no seed data, and `POST /internal/seed-platform-history` fails (logged at ERROR, generic `503` to the caller) until the archive is placed under this directory. This file does not record a download location.
