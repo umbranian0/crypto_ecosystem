@@ -111,6 +111,44 @@ def test_post_setup_success_shows_the_raw_key_once() -> None:
     assert 'href="/login"' in response.text
 
 
+def _whats_next_section() -> str:
+    transport = _RoutedTransport(
+        {
+            "POST /setup/initialize": httpx.Response(
+                201,
+                json={"tenant_id": "t-1", "tenant_name": "Acme Corp", "api_key": RAW_KEY},
+            )
+        }
+    )
+    response = _make_client(transport).post("/setup", data={"tenant_name": "Acme Corp"})
+    assert response.status_code == 201
+    text = response.text
+    assert "What's next" in text or "What&#39;s next" in text
+    assert 'id="whats-next"' in text
+    # raw key must not leak into any href
+    import re
+
+    assert not any(RAW_KEY in h for h in re.findall(r'href="([^"]*)"', text))
+    assert "seed_tenant" not in text
+    return text[text.index('id="whats-next"') :].split("</section>")[0]
+
+
+def test_post_setup_success_shows_whats_next_links() -> None:
+    section = _whats_next_section()
+    for href in ("/login", "/runs/new", "/demo-run"):
+        assert f'href="{href}"' in section
+    assert section.index('href="/login"') < section.index('href="/runs/new"')
+    assert section.index('href="/runs/new"') < section.index('href="/demo-run"')
+
+
+def test_whats_next_section_has_no_banned_positioning_words() -> None:
+    import re
+
+    text = re.sub(r"<[^>]+>", " ", _whats_next_section()).lower()
+    for banned in ("prediction", "forecast", "signal", "recommend", "trading"):
+        assert banned not in text
+
+
 def test_post_setup_when_already_initialized_redirects_gracefully() -> None:
     """SETUP-002's 409, reachable only via a direct POST (not the normal UI
     flow, since GET already redirects once initialized), must never surface

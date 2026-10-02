@@ -2053,6 +2053,11 @@ dependency).
   reuse this exact fragment rather than duplicate a second near-identical page. `templates/
   setup_key_reveal.html` is the full-page wrapper (`extends base.html`) that includes it for `POST
   /setup`'s own response; `templates/setup.html` is the tenant-name form itself.
+- **"What's next" section (ONB-001)**: `setup_key_reveal.html` (only -- not the shared
+  `_one_time_reveal.html`, so SETUP-012's Settings reveal is unchanged) adds an ordered list below the
+  key reveal: log in (`/login`), submit a validation run (`/runs/new`), try a demo run with sample data
+  (`/demo-run`, ONB-002; needs login first), plus a line stating new tenants are loaded with sample data
+  automatically. Tests in `tests/test_setup_wizard.py` / `tests/test_settings_tenants.py`.
 - **Raw key handling**: never logged, never placed in a URL/redirect `Location` header, never echoed
   back into an error-redisplay path -- same discipline `DASH-002`'s login flow already holds itself to.
   `gateway-api`'s own `409` (a stray direct `POST /setup` after initialization, not reachable through

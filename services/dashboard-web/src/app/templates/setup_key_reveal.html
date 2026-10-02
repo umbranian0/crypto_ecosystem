@@ -3,4 +3,13 @@
 {% block content %}
 <h2>Setup complete</h2>
 {% include "_setup_key_reveal.html" %}
+<section id="whats-next">
+  <h3>What's next</h3>
+  <ol>
+    <li><a href="/login">Log in</a> with the API key shown above.</li>
+    <li><a href="/runs/new">Submit a validation run</a> (available once you are logged in).</li>
+    <li><a href="/demo-run">Try a demo run with sample data</a> (available once you are logged in).</li>
+  </ol>
+  <p>New tenants are loaded with sample data automatically, and the demo run covers the rest.</p>
+</section>
 {% endblock %}

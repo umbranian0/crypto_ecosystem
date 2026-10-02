@@ -162,6 +162,8 @@ def test_create_tenant_shows_raw_key_once_then_absent_on_followup_get(monkeypatc
     assert create_response.status_code == 200
     assert raw_key in create_response.text
     assert "NewCo" in create_response.text
+    assert "whats-next" not in create_response.text
+    assert "/demo-run" not in create_response.text
 
     followup_response = client.get("/settings/tenants")
 
