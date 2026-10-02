@@ -1824,6 +1824,12 @@ this ticket's own Analysis section, no new backend endpoint was introduced: the 
 a plain, descriptive count of already-computed DM-test outcomes for the selected `(dataset_id,
 horizon)` group's completed runs, never a probability of future performance or a recommendation.
 
+**RPT-002-01**: the rule's single implementation now lives in `naive_first_common.consistency`
+(`libs/common`) -- `verdict_category`, `run_beats_naive0`, `compute_consistency_indicator`,
+`ConsistencyIndicator`, `UNDEFINED_VERDICT_CATEGORY` -- and is imported by `app.charting`, which keeps
+`_verdict_category`/`_run_beats_naive0` as aliases so existing call sites are unchanged. Behavior is
+identical; the bullets below describe the same rule under its old `app.charting` names.
+
 - **`app.charting.compute_consistency_indicator`** (pure function, no I/O): takes the exact same
   `list[(RunSummaryResponse, list[SplitResultResponse])]` pairs `build_trend_chart` already consumes
   -- no second `GET /runs/{id}/splits` call. Returns a `ConsistencyIndicator(beat_count, total_count,

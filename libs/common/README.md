@@ -4,7 +4,7 @@
 
 Shared library for cross-cutting concerns used by more than one service. See [../../docs/implementation-plan.md](../../docs/implementation-plan.md) sections 2, 7, 9.
 
-**Owns (shipped)**: tenant context -- `TenantContext` (frozen, validated Pydantic value object) and `get_tenant_context` (FastAPI `Depends()` resolver), dependency-injected in every service (LC-002/LC-003); `naive_first_common.db.build_engine` -- shared SQLAlchemy engine-building helper, generic over `url`/`base` (ARCH-001); `naive_first_common.db.tenant_scope` -- shared per-transaction Postgres RLS-scoping helper (`SELECT set_config('app.tenant_id', :tenant_id, true)`), extracted from `gateway-api`'s and `validation-service`'s independently-duplicated implementations (LC-010); `naive_first_common.contracts` -- shared Pydantic schemas passed across service boundaries (`RunRequest`/`RunResponse`/`RunDetailResponse`/`RunSummaryResponse`/`DatasetSummaryResponse`/`ClientBaselineResult`/`SplitResultResponse`, the run/split/dataset wire contract shared by `gateway-api` and `validation-service`/`ingestion-service`, ARCH-003, extended VS-017/GW-020); `naive_first_common.testing` -- test-utility fixtures shared across services (e.g. the `sqlite_db_path` pytest fixture, imported via each service's `tests/conftest.py`, ARCH-004); `naive_first_common.logging` -- structured JSON logging + request/tenant-correlation id convention shared by both FastAPI services (OPS-006, see its own section below).
+**Owns (shipped)**: tenant context -- `TenantContext` (frozen, validated Pydantic value object) and `get_tenant_context` (FastAPI `Depends()` resolver), dependency-injected in every service (LC-002/LC-003); `naive_first_common.db.build_engine` -- shared SQLAlchemy engine-building helper, generic over `url`/`base` (ARCH-001); `naive_first_common.db.tenant_scope` -- shared per-transaction Postgres RLS-scoping helper (`SELECT set_config('app.tenant_id', :tenant_id, true)`), extracted from `gateway-api`'s and `validation-service`'s independently-duplicated implementations (LC-010); `naive_first_common.contracts` -- shared Pydantic schemas passed across service boundaries (`RunRequest`/`RunResponse`/`RunDetailResponse`/`RunSummaryResponse`/`DatasetSummaryResponse`/`ClientBaselineResult`/`SplitResultResponse`, the run/split/dataset wire contract shared by `gateway-api` and `validation-service`/`ingestion-service`, ARCH-003, extended VS-017/GW-020); `naive_first_common.testing` -- test-utility fixtures shared across services (e.g. the `sqlite_db_path` pytest fixture, imported via each service's `tests/conftest.py`, ARCH-004); `naive_first_common.logging` -- structured JSON logging + request/tenant-correlation id convention shared by both FastAPI services (OPS-006, see its own section below); `naive_first_common.consistency` -- the pure "beat Naive0 in N of M" majority rule (`verdict_category`/`run_beats_naive0`/`compute_consistency_indicator`/`ConsistencyIndicator`/`UNDEFINED_VERDICT_CATEGORY`), extracted from `dashboard-web`'s `charting.py` so `reporting-service` can reuse it (RPT-002-01).
 
 **Not yet owned (forward-looking, not current content)**: shared cross-service Pydantic schemas *beyond* `contracts.py`'s already-shipped run/split/dataset wire contract (e.g. any future non-run/split/dataset cross-service shape), and common formatting logic (e.g. metrics-table rendering) that `dashboard-web`/`reporting-service` will likely need to share once either exists (implementation-plan.md trigger #7/#8) -- no such module exists in this package yet; noted here only so a future second consumer knows where it would land, per this library's own "extract on second duplication" rule.
 
@@ -49,6 +49,15 @@ Implementation-plan.md section 8: "for libs, the public function signatures in t
 
 ### `diagnostics.py`
 - `RecentErrorsHandler` (class)
+
+### `consistency.py`
+The "beat Naive0 in N of M" consistency rule (RAV-010, extracted by RPT-002-01), the single implementation
+shared by `dashboard-web` and `reporting-service`. Also exports the module-level constant
+`UNDEFINED_VERDICT_CATEGORY`. Counts only already-computed `dm_verdict` values; no DM statistic is recomputed.
+- `verdict_category(split)`
+- `ConsistencyIndicator` (class)
+- `run_beats_naive0(splits)`
+- `compute_consistency_indicator(runs)`
 
 ### `disclosures.py`
 Shared user-facing disclosure text rendered by more than one service. Exports
