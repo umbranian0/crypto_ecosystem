@@ -3335,8 +3335,15 @@ Option A for ONB-002 (no new endpoint); both stories' backlog ACs were amended i
 
 | Ticket | Story | Module | Depends on | Status |
 |---|---|---|---|---|
-| [ONB-001](ONB-001.md) | "What's next" section on `setup_key_reveal.html` only (not the shared reveal partial) | dashboard-web | none | done |
-| [ONB-002](ONB-002.md) | `GET`/`POST /demo-run`: checks `GET /ingestion/datasets`, submits a fixed disclosed demo run (label carries the disclosure), empty-data message otherwise; nav link | dashboard-web | ONB-001 | in-review (QA pending) |
+| [ONB-001](ONB-001.md) | "What's next" section on `setup_key_reveal.html` only (not the shared reveal partial) | dashboard-web | none | in-review (live QA incomplete) |
+| [ONB-002](ONB-002.md) | `GET`/`POST /demo-run`: checks `GET /ingestion/datasets`, submits a fixed disclosed demo run (label carries the disclosure), empty-data message otherwise; nav link | dashboard-web | ONB-001 | in-review (live QA incomplete) |
+
+QA status (2026-10-02): code/diff review and unit suite (469 passed) GO; live-stack checks NOT completed -- the
+permission system blocked QA's fixture-cleanup/DB writes, and two fixture tenants (QA62 fixture A/B) remain in
+the real DB because their rows in `identity.operator_audit_log` (FK) may not be deleted without explicit user
+authorization. Separate infra finding: tenant auto-seed (GW-030) fails on this stack (ingestion-service image
+lacks `data/raw/_platform`, `/internal/seed-platform-history` returns 503), so every new tenant hits the
+empty-data path. Sprint NOT signed off.
 
 Tech Lead finding: stored price `close` is rejected by validation-service's MR-001 price-level guardrail
 (no returns field is stored), so the demo targets hourly traded volume of `binance_price_btcusdt_1h`
