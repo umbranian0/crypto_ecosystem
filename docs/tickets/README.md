@@ -3368,3 +3368,11 @@ PDF export of stored audit reports (`GET /reports/{id}?format=pdf`), WeasyPrint,
 | [RPT-001-01](RPT-001-01.md) | WeasyPrint dependency + Dockerfile native libs + lockfile | reporting-service | none | done |
 | [RPT-001-02](RPT-001-02.md) | `render_pdf` + `?format=pdf` on `GET /reports/{id}`, tests, README | reporting-service | 01 | done |
 | [RPT-001-03](RPT-001-03.md) | Gateway `?format=pdf` pass-through | gateway-api | 02 | done |
+
+Sprint 63 sign-off (2026-10-02): QA GO on the live rebuilt containers after one re-gate. First QA run found the PDF
+results table clipped at the A4 portrait edge (Naive0 columns/DM verdict invisible); fixed with a PDF-only landscape
+stylesheet and re-verified. Fixtures (additive, left in place): tenants "QA63 Tenant A"/"QA63 Tenant B", runs on datasets
+"QA63 synthetic returns"/"QA63 failing run" and their two reports. Also fixed a stale gateway test key set
+(`test_runs_routing`, TRUST-003 fields). Known cosmetic follow-ups (not fixed): a table row may split across a page
+break (`tr { page-break-inside: avoid }`), dense unrounded floats wrap in narrow cells; inert QA scratch files remain in
+the reporting-service container's /tmp. dashboard-web PDF link deferred.
