@@ -3352,7 +3352,7 @@ Tech Lead finding: stored price `close` is rejected by validation-service's MR-0
 
 Sprint 62 sign-off (QA re-run on the live stack, GO): seed fix verified (brand-new tenant got 78,523 price rows,
 GW-030 seed call 200), /demo-run happy/empty/repeat/unauth paths, /runs/new default-free, positioning grep all pass.
-Known follow-up (not fixed, non-blocking): `GET /ingestion/datasets` reads materialized views refreshed every 5 min,
+Known follow-up (RESOLVED by disclosure in Sprint 66, CHORE-66-05: copy now says data may still be loading, no refresh-on-seed; seed-failure logging in CHORE-66-04): `GET /ingestion/datasets` reads materialized views refreshed every 5 min,
 so a just-created tenant can see the "ask your operator to seed it" empty message for up to ~5 minutes despite being
 seeded; suggested copy softening or refresh-on-seed. Gateway's seed-failure log text is "tenant platform-history
 seed failed" (not `tenant_seed_degraded`). The ONB-001 what's-next section is covered by unit tests only (stack already
@@ -3415,4 +3415,4 @@ Orchestrator decisions: honest wording instead of refresh-on-seed; log at the po
 | [CHORE-66-02](CHORE-66-02.md) | Trend `horizon` >= 1 (422 otherwise) | reporting-service | none | done |
 | [CHORE-66-03](CHORE-66-03.md) | PDF `tr` no page-break-inside | reporting-service | none | done |
 | [CHORE-66-04](CHORE-66-04.md) | Seed-failure log line + README statements | ingestion-service, infra README | none | done |
-| [CHORE-66-05](CHORE-66-05.md) | Honest "sample data" wording | dashboard-web | 04 | todo |
+| [CHORE-66-05](CHORE-66-05.md) | Honest "sample data" wording | dashboard-web | 04 | done |

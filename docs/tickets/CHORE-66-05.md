@@ -1,6 +1,6 @@
 # CHORE-66-05 -- dashboard-web: honest "sample data" wording
 
-**Status: todo.** Sprint 66 item 1. Module: services/dashboard-web. After CHORE-66-04.
+**Status: done.** Sprint 66 item 1. Module: services/dashboard-web. After CHORE-66-04.
 
 ## Analysis
 `POST /demo-run` (`src/app/routers/demo.py`) shows "Sample data is not loaded for this tenant. Ask your operator to seed it." when `binance_price_btcusdt_1h` is absent; the dataset list comes from materialized views refreshed every ~5 min, so a just-seeded tenant sees it falsely, and a genuine seed failure shows it too. `setup_key_reveal.html` line ~13 says "New tenants are loaded with sample data automatically", false on a checkout without the archive. Decision (orchestrator): honest wording, NOT refresh-on-seed.

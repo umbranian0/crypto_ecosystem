@@ -48,7 +48,7 @@ DEMO_RUN_REQUEST = RunRequest(
 )
 
 _SAMPLE_DATA_MISSING_MESSAGE = (
-    "Sample data is not loaded for this tenant. Ask your operator to seed it."
+    "Sample data for your tenant may still be loading (it can take up to about 5 minutes after tenant creation). Try again shortly; if it still does not appear, ask your operator."
 )
 
 

@@ -126,7 +126,7 @@ def test_post_without_sample_data_shows_message_and_makes_no_run_call(monkeypatc
     response = client.post("/demo-run", follow_redirects=False)
 
     assert response.status_code == 200
-    assert "Sample data is not loaded for this tenant. Ask your operator to seed it." in response.text
+    assert "Sample data for your tenant may still be loading (it can take up to about 5 minutes after tenant creation). Try again shortly; if it still does not appear, ask your operator." in response.text
     assert "Run demo validation" not in response.text
 
 

@@ -2063,7 +2063,7 @@ dependency).
   `_one_time_reveal.html`, so SETUP-012's Settings reveal is unchanged) adds an ordered list below the
   key reveal: log in (`/login`), submit a validation run (`/runs/new`), try a demo run with sample data
   (`/demo-run`, ONB-002; needs login first), plus a line stating new tenants are loaded with sample data
-  automatically. Tests in `tests/test_setup_wizard.py` / `tests/test_settings_tenants.py`.
+  automatically and that it can take a few minutes to appear (CHORE-66-05). Tests in `tests/test_setup_wizard.py` / `tests/test_settings_tenants.py`.
 - **Raw key handling**: never logged, never placed in a URL/redirect `Location` header, never echoed
   back into an error-redisplay path -- same discipline `DASH-002`'s login flow already holds itself to.
   `gateway-api`'s own `409` (a stray direct `POST /setup` after initialization, not reachable through
@@ -2841,7 +2841,7 @@ similarly-sized packaging fix.
 `GET /demo-run` (session-gated) explains and `POST /demo-run` submits one fixed, illustrative validation
 run (`src/app/routers/demo.py`, template `demo_run.html`, "Demo run" tenant nav link). The POST calls
 `GET /ingestion/datasets`; if source `binance_price_btcusdt_1h` is absent it re-renders the page (200) with
-"Sample data is not loaded for this tenant. Ask your operator to seed it." and no button (seeding itself is
+"Sample data for your tenant may still be loading (it can take up to about 5 minutes after tenant creation). Try again shortly; if it still does not appear, ask your operator." (CHORE-66-05: honest wording, no refresh-on-seed) and no button (seeding itself is
 GW-030's tenant-creation auto-seed; no seeding call is made here). Otherwise it POSTs `/runs` and 303s to
 `/runs/{id}`; transport failure / non-2xx go through `_render_error_for_status`. Each click submits a new run.
 
