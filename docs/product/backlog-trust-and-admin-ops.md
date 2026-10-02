@@ -589,10 +589,10 @@ Depends on: none (all backend building blocks -- `provision()`, `ApiKeyRepositor
 
 ## Epic D — Onboarding (`ONB-*`)
 
-### ONB-001 — Guided first-run wizard: next-step orientation beyond key reveal [Should]
+### ONB-001 — Guided first-run wizard: next-step orientation beyond key reveal [Should -- DONE Sprint 62]
 
 As a fresh operator who just completed `SETUP-003`'s wizard, I want the key-reveal confirmation page to
-point me to a concrete next step (seed sample data, submit a first run), so that "guided" covers getting
+point me to a concrete next step (log in, submit a run, try a demo run), so that "guided" covers getting
 to a first real result, not only getting a tenant and a key.
 
 Scope check against `SETUP-003`, stated honestly: `SETUP-003` (done) covers exactly tenant-name-in,
@@ -601,21 +601,21 @@ literal next-step gap: after `/login`, a fresh tenant with zero data and zero ru
 guidance toward "seed some data" or "submit a run," despite both being possible today.
 
 Acceptance criteria:
-- [ ] `SETUP-003`'s existing key-reveal confirmation page gains a short "what's next" section with two
-  links: one to `/runs/new` (submit a run — already exists) and one explaining, in plain operator-facing
-  language, that sample data can be seeded via `seed_tenant.py` (`INGEST-010`, already exists,
-  CLI/operator-only — this story documents/links to it, it does not rebuild it; see `ONB-002` for making
-  this reachable without a CLI).
-- [ ] No change to `SETUP-002`/`SETUP-003`'s actual tenant/key-creation logic — this is copy/navigation
+- [x] `SETUP-003`'s existing key-reveal confirmation page gains a short "what's next" section linking to
+  `/login`, `/runs/new` and the demo entry (`/demo-run`, `ONB-002`), and stating that new tenants are loaded
+  with sample data automatically. **AC amendment (Sprint 62, orchestrator decision, disclosed):** the original
+  wording ("sample data can be seeded via `seed_tenant.py`, CLI/operator-only") was stale -- `INGEST-030` +
+  `GW-030` now auto-seed every tenant created through `POST /setup/initialize`/`POST /tenants`.
+- [x] No change to `SETUP-002`/`SETUP-003`'s actual tenant/key-creation logic — this is copy/navigation
   only, added to the existing confirmation page.
-- [ ] Positioning check: "next step" language describes submitting a validation run / seeding ingested data
+- [x] Positioning check: "next step" language describes submitting a validation run / seeding ingested data
   only — never "get your first prediction" or similar (CLAUDE.md).
 
 Rationale for priority: Should — small, additive, closes a real "then what?" gap in an otherwise-working
 wizard.
 Depends on: SETUP-003 (already shipped)
 
-### ONB-002 — A reachable "try a demo run" action, distinct from the real submission form's no-defaults rule [Should]
+### ONB-002 — A reachable "try a demo run" action, distinct from the real submission form's no-defaults rule [Should -- DONE Sprint 62]
 
 As a fresh operator or evaluator with no data of their own yet, I want a clearly-labeled "try a demo
 validation run" action that seeds a small sample dataset and submits one pre-configured run against it, so
@@ -630,17 +630,21 @@ distinct button/page, e.g. "Try a demo run with sample data" on the onboarding/n
 adds), never a change to `run_new.html`'s own defaults.
 
 Acceptance criteria:
-- [ ] A new, clearly-labeled demo action (e.g. `POST /demo-run`, `dashboard-web`) that (a) triggers
-  `INGEST-010`'s existing `seed_tenant_platform_history` seeding for the caller's own tenant if it has no
-  ingested data yet (reusing that existing mechanism, not a new seeding implementation), then (b) submits
-  one run against the seeded dataset using a fixed, disclosed, illustrative configuration.
-- [ ] The resulting run detail page and any copy referencing this action states explicitly "demo
+- [x] A new, clearly-labeled demo action (`GET`/`POST /demo-run`, `dashboard-web`) that (a) checks
+  `GET /ingestion/datasets` and, if the tenant's sample price dataset is present, (b) submits one run
+  against it using a fixed, disclosed, illustrative configuration; if the dataset is absent it shows
+  "sample data not loaded, ask your operator to seed it". **AC amendment (Sprint 62, orchestrator Option A,
+  disclosed):** the original (a) "trigger `seed_tenant_platform_history` if no data" is dropped -- seeding is
+  already done at tenant creation (`INGEST-030`/`GW-030`), and `dashboard-web` cannot reach the internal
+  seed endpoint. **Disclosed demo target:** stored price levels are rejected by the MR-001 returns guardrail,
+  so the demo targets hourly traded volume of the sample BTCUSDT 1h dataset, stated on the demo page.
+- [x] The resulting run detail page and any copy referencing this action states explicitly "demo
   configuration -- not a recommended default for your own data," so it cannot be mistaken for
   `run_new.html`'s own (deliberately default-free) real submission path.
-- [ ] This action is idempotent-safe: calling it again for a tenant that already has seeded data does not
+- [x] This action is idempotent-safe: calling it again for a tenant that already has seeded data does not
   duplicate rows (relies on `INGEST-010`'s own already-established upsert/idempotency guarantee) and simply
   submits another demo run.
-- [ ] Positioning check: the demo run's results are presented with the same honest "did not beat naive"
+- [x] Positioning check: the demo run's results are presented with the same honest "did not beat naive"
   framing (`TRUST-005`) as any real run — never a curated "impressive" example.
 
 Rationale for priority: Should — directly serves the stated onboarding ask (sample dataset + pre-canned

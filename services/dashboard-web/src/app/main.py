@@ -81,6 +81,7 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 from app.routers import (  # noqa: E402
     assistant,
     auth,
+    demo,
     help,
     operator,
     runs,
@@ -93,6 +94,7 @@ from app.routers import (  # noqa: E402
 
 app.include_router(auth.router)
 app.include_router(runs.router)
+app.include_router(demo.router)
 app.include_router(operator.router)
 app.include_router(settings.router)
 app.include_router(settings_environment.router)

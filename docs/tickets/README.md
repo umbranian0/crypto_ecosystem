@@ -3326,3 +3326,18 @@ rather than an unqualified "Sort eliminated," with a recommended DBA follow-up (
 sprint. Absolute cost is trivial (single-digit ms) and does not affect any Must-tier acceptance
 criterion this sprint. See `docs/tickets/DBOPT-012.md`'s Status line for the full evidence, and
 `docs/sprints/sprint-61.md`'s Tech Lead close-out section for the complete sign-off record.
+
+## Sprint 62 (docs/sprints/sprint-62.md, backlog: docs/product/backlog-trust-and-admin-ops.md Epic D)
+
+Onboarding stories ONB-001/ONB-002, `services/dashboard-web` only, strictly sequenced. Orchestrator chose
+Option A for ONB-002 (no new endpoint); both stories' backlog ACs were amended in place (stale
+`seed_tenant.py` wording; GW-030 auto-seeds), disclosed in the backlog file.
+
+| Ticket | Story | Module | Depends on | Status |
+|---|---|---|---|---|
+| [ONB-001](ONB-001.md) | "What's next" section on `setup_key_reveal.html` only (not the shared reveal partial) | dashboard-web | none | done |
+| [ONB-002](ONB-002.md) | `GET`/`POST /demo-run`: checks `GET /ingestion/datasets`, submits a fixed disclosed demo run (label carries the disclosure), empty-data message otherwise; nav link | dashboard-web | ONB-001 | in-review (QA pending) |
+
+Tech Lead finding: stored price `close` is rejected by validation-service's MR-001 price-level guardrail
+(no returns field is stored), so the demo targets hourly traded volume of `binance_price_btcusdt_1h`
+(validated on the real stack: 9 splits, completed), disclosed on the demo page.

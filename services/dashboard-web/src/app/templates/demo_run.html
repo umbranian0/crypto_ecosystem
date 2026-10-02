@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Demo run -- dashboard-web{% endblock %}
+{% block content %}
+<h2>Try a demo run</h2>
+
+{% if message %}
+<p role="alert">{{ message }}</p>
+{% endif %}
+
+<p>This submits one validation run on the sample BTCUSDT 1h dataset, using the fixed settings
+listed below, so you can see the platform's walk-forward protocol and naive-first comparison
+end to end.</p>
+
+<p>The sample target is the <strong>hourly traded volume</strong> of that dataset, not a return
+series: stored price levels are rejected by the platform's returns guardrail. The run only
+illustrates how the protocol works; its numbers are the usual naive-first comparison, not a
+finding about any market.</p>
+
+<p><strong>This is a demo configuration -- not a recommended default for your own data.</strong>
+In short: demo configuration -- not a recommended default for your own data.</p>
+
+<h3>Settings used</h3>
+<dl>
+    <dt>Source</dt><dd>{{ demo.dataset_reference.source }}</dd>
+    <dt>Field</dt><dd>{{ demo.dataset_reference.field }}</dd>
+    <dt>Start</dt><dd>{{ demo.dataset_reference.start }}</dd>
+    <dt>End</dt><dd>{{ demo.dataset_reference.end }}</dd>
+    <dt>Horizon</dt><dd>{{ demo.horizon }}</dd>
+    <dt>Purge gap (hours)</dt><dd>{{ demo.purge_gap_hours }}</dd>
+    <dt>Train window</dt><dd>{{ demo.train_window }}</dd>
+    <dt>Test window</dt><dd>{{ demo.test_window }}</dd>
+    <dt>Step</dt><dd>{{ demo.step }}</dd>
+</dl>
+
+{% if available %}
+<form method="post" action="/demo-run">
+    <button type="submit">Run demo validation</button>
+</form>
+{% endif %}
+{% endblock %}

@@ -2829,3 +2829,20 @@ Recorded here per this repo's standing "docs updated as part of the work" rule; 
 No dedicated ticket files were written for the four bug fixes above (small, self-contained fixes, each
 fully described in its own commit message) — same no-ticket-file precedent `INF-020` set for a
 similarly-sized packaging fix.
+
+## "Try a demo run" (ONB-002)
+
+`GET /demo-run` (session-gated) explains and `POST /demo-run` submits one fixed, illustrative validation
+run (`src/app/routers/demo.py`, template `demo_run.html`, "Demo run" tenant nav link). The POST calls
+`GET /ingestion/datasets`; if source `binance_price_btcusdt_1h` is absent it re-renders the page (200) with
+"Sample data is not loaded for this tenant. Ask your operator to seed it." and no button (seeding itself is
+GW-030's tenant-creation auto-seed; no seeding call is made here). Otherwise it POSTs `/runs` and 303s to
+`/runs/{id}`; transport failure / non-2xx go through `_render_error_for_status`. Each click submits a new run.
+
+Demo config (module constant in `demo.py`, never form defaults; `run_new.html` is unchanged):
+source `binance_price_btcusdt_1h`, field `volume`, 2024-01-01 to 2024-03-01, horizon 1, purge gap 24,
+train 500, test 100, step 100. **Disclosure:** the target is hourly traded volume, not a return series --
+stored price levels are rejected by the platform's returns guardrail. The page states "demo configuration --
+not a recommended default for your own data" and that the result is the usual naive-first comparison, not a
+finding; the run's `label` carries the same disclosure and run detail already renders it. Tests:
+`tests/test_demo_run.py`.
