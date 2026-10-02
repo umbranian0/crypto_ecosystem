@@ -1,0 +1,18 @@
+{# ADMIN-005-03: one API key's metadata row, shared by `api_keys.html` and the
+   revoke route's HTMX fragment. Never renders a raw key value. #}
+<tr id="api-key-row-{{ key.id }}"{% if key.revoked_at %} class="revoked" style="opacity: 0.5"{% endif %}>
+    <td>{{ key.id }}</td>
+    <td>{{ key.created_at }}</td>
+    <td>{{ key.revoked_at | default("active", true) }}</td>
+    <td>
+        {% if key.revoked_at %}
+        {% elif key.current %}
+        <button type="button" disabled>Revoke</button> <span>key in use by this session</span>
+        {% else %}
+        <form hx-post="/api-keys/{{ key.id }}/revoke"
+              hx-target="#api-key-row-{{ key.id }}" hx-swap="outerHTML">
+            <button type="submit">Revoke</button>
+        </form>
+        {% endif %}
+    </td>
+</tr>

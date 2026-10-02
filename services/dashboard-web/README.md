@@ -2846,3 +2846,19 @@ stored price levels are rejected by the platform's returns guardrail. The page s
 not a recommended default for your own data" and that the result is the usual naive-first comparison, not a
 finding; the run's `label` carries the same disclosure and run detail already renders it. Tests:
 `tests/test_demo_run.py`.
+
+## ADMIN-005-03: My API Keys (`/api-keys`)
+
+Tenant-session-gated (`DownstreamHeadersDep`, redirects to `/login`; an operator session alone cannot satisfy it, and a
+downstream `401` also redirects to `/login`). Calls gateway-api's `/me/api-keys` endpoints (ADMIN-005-02):
+
+- **`GET /api-keys`** lists key metadata (`api_keys.html` + `_api_key_row.html`); revoked rows are greyed, the current
+  session's key has a disabled revoke button labelled "key in use by this session".
+- **`POST /api-keys`** mints a key and renders the shared `_one_time_reveal.html` partial (via `_api_key_created.html`)
+  directly from the POST response with `Cache-Control: no-store`. The raw key is never redirected, put in a URL, logged or
+  stored in the `SessionStore`.
+- **`POST /api-keys/{key_id}/revoke`** returns the `_api_key_row.html` HTMX fragment; gateway `404`/`409` render an inline
+  message row instead of an error page.
+
+Rotation flow described on the page: mint a new key, copy it, log out, log in with it, revoke the old one. Keys are
+validation-run credentials only. `base.html`'s tenant nav gains an "API Keys" link.

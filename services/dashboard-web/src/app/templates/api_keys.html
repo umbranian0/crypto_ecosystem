@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}My API Keys -- dashboard-web{% endblock %}
+{% block content %}
+<h2>My API Keys</h2>
+<p>API keys are the credentials used to submit validation runs. Key values are shown only once, at
+creation -- only metadata (id, created, revoked) is listed here.</p>
+<p>To rotate a key: mint a new key, copy it, log out, log in with the new key, then revoke the old one.</p>
+<div class="table-scroll">
+<table>
+    <thead>
+        <tr><th>Key id</th><th>Created</th><th>Revoked</th><th></th></tr>
+    </thead>
+    <tbody>
+        {% for key in items %}
+        {% include "_api_key_row.html" %}
+        {% endfor %}
+    </tbody>
+</table>
+</div>
+<form method="post" action="/api-keys">
+    <button type="submit">Mint new API key</button>
+</form>
+{% endblock %}

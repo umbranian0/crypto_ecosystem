@@ -79,6 +79,7 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 # imported alongside `settings`/`setup`/`settings_tenants` for the same
 # reason.
 from app.routers import (  # noqa: E402
+    api_keys,
     assistant,
     auth,
     demo,
@@ -100,6 +101,7 @@ app.include_router(settings.router)
 app.include_router(settings_environment.router)
 app.include_router(settings_tenants.router)
 app.include_router(settings_audit_log.router)
+app.include_router(api_keys.router)
 app.include_router(setup.router)
 app.include_router(help.router)
 app.include_router(assistant.router)

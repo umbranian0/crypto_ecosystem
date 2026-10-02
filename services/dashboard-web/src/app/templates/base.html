@@ -22,6 +22,7 @@
                 <a href="/datasets" class="{{ 'active' if request.url.path == '/datasets' else '' }}">Datasets</a>
                 <a href="/assistant" class="{{ 'active' if request.url.path == '/assistant' else '' }}">Assistant</a>
                 <a href="/help/concepts" class="{{ 'active' if request.url.path == '/help/concepts' else '' }}">Concepts</a>
+                <a href="/api-keys" class="{{ 'active' if request.url.path == '/api-keys' else '' }}">API Keys</a>
                 {# UAT finding (2026-09-22): with both a tenant and an operator session
                    active, these two navs each rendered a button labelled exactly "Log out",
                    stacked and indistinguishable, ending different sessions. Each now names
