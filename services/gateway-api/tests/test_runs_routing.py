@@ -398,6 +398,8 @@ def test_get_run_forwards_and_returns_full_detail_shape(client: TestClient) -> N
         "feature_lineage",
         "has_multimodal_features",
         "label",
+        "config_fingerprint",
+        "engine_version",
     }
     assert body["id"] == RUN_OWNED_BY_A
     assert body["tenant_id"] == TENANT_A

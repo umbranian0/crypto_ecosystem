@@ -52,7 +52,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response
 from naive_first_common.tenant_context import TenantContext
 from pydantic import BaseModel
 
@@ -101,8 +101,27 @@ def get_report(
     report_id: str,
     client: ReportingServiceClientDep,
     tenant: TenantContext = Depends(get_authenticated_tenant),
-) -> ReportDetailResponse:
+    format: str | None = None,
+) -> ReportDetailResponse | Response:
+    """JSON by default. `?format=pdf` (RPT-001-03) is a byte pass-through:
+    the format value is validated downstream (a bad value surfaces as
+    reporting-service's own 422) and the body is never inspected here.
+    """
     headers = build_downstream_headers(tenant)
-    response = _call_downstream(client.get, f"/reports/{report_id}", headers=headers)
+    if format is None:
+        response = _call_downstream(client.get, f"/reports/{report_id}", headers=headers)
+        _raise_for_error(response)
+        return ReportDetailResponse(**response.json())
+
+    response = _call_downstream(
+        client.get, f"/reports/{report_id}", headers=headers, params={"format": format}
+    )
     _raise_for_error(response)
-    return ReportDetailResponse(**response.json())
+    passthrough_headers = {}
+    if "content-disposition" in response.headers:
+        passthrough_headers["Content-Disposition"] = response.headers["content-disposition"]
+    return Response(
+        content=response.content,
+        media_type="application/pdf",
+        headers=passthrough_headers,
+    )

@@ -37,6 +37,8 @@ TENANT_B = "tenant-b"
 REPORT_OWNED_BY_A = "report-owned-by-a"
 REPORT_OWNED_BY_B = "report-owned-by-b"
 
+PDF_BYTES = b"%PDF-1.7\n\x00\xff binary payload\n%%EOF"
+
 _SEED_REPORTS: dict[str, dict] = {
     REPORT_OWNED_BY_A: {
         "id": REPORT_OWNED_BY_A,
@@ -103,6 +105,18 @@ class FakeReportingService:
             report = _SEED_REPORTS.get(report_id) or self.created_reports.get(report_id)
             if report is None or report["tenant_id"] != tenant_id:
                 return httpx.Response(404, json={"detail": "report not found"})
+            fmt = request.url.params.get("format")
+            if fmt is not None:
+                if fmt != "pdf":
+                    return httpx.Response(422, json={"detail": "unsupported format"})
+                return httpx.Response(
+                    200,
+                    content=PDF_BYTES,
+                    headers={
+                        "content-type": "application/pdf",
+                        "content-disposition": f'attachment; filename="report-{report_id}.pdf"',
+                    },
+                )
             return httpx.Response(200, json=report)
 
         raise AssertionError(f"unexpected request: {request.method} {path}")  # pragma: no cover
@@ -269,3 +283,58 @@ def test_timeout_returns_504() -> None:
 
     assert response.status_code == 504
     assert response.json()["detail"] == "downstream service timed out"
+
+
+def test_get_report_pdf_forwards_param_and_returns_bytes_headers(
+    client: TestClient, fake_reporting_service: FakeReportingService
+) -> None:
+    response = client.get(
+        f"/reports/{REPORT_OWNED_BY_A}?format=pdf",
+        headers={"Authorization": f"Bearer {RAW_KEY_A}"},
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/pdf"
+    assert response.headers["content-disposition"] == (
+        f'attachment; filename="report-{REPORT_OWNED_BY_A}.pdf"'
+    )
+    assert response.content == PDF_BYTES
+    sent = fake_reporting_service.seen_requests[0]
+    assert sent.url.params["format"] == "pdf"
+    assert sent.headers["x-tenant-id"] == TENANT_A
+
+
+def test_get_report_pdf_bad_format_forwards_422(client: TestClient) -> None:
+    response = client.get(
+        f"/reports/{REPORT_OWNED_BY_A}?format=docx",
+        headers={"Authorization": f"Bearer {RAW_KEY_A}"},
+    )
+
+    assert response.status_code == 422
+
+
+def test_get_report_pdf_cross_tenant_and_missing_forward_404(client: TestClient) -> None:
+    headers = {"Authorization": f"Bearer {RAW_KEY_A}"}
+
+    assert client.get(f"/reports/{REPORT_OWNED_BY_B}?format=pdf", headers=headers).status_code == 404
+    assert client.get("/reports/does-not-exist?format=pdf", headers=headers).status_code == 404
+
+
+def test_get_report_pdf_missing_auth_returns_401_before_downstream(
+    client: TestClient, fake_reporting_service: FakeReportingService
+) -> None:
+    response = client.get(f"/reports/{REPORT_OWNED_BY_A}?format=pdf")
+
+    assert response.status_code == 401
+    assert fake_reporting_service.seen_requests == []
+
+
+def test_get_report_default_path_sends_no_params_and_returns_json(
+    client: TestClient, fake_reporting_service: FakeReportingService
+) -> None:
+    response = client.get(
+        f"/reports/{REPORT_OWNED_BY_A}", headers={"Authorization": f"Bearer {RAW_KEY_A}"}
+    )
+
+    assert response.headers["content-type"] == "application/json"
+    assert dict(fake_reporting_service.seen_requests[0].url.params) == {}
