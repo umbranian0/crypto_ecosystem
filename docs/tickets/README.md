@@ -3404,3 +3404,15 @@ Test-DB safety chore, then an archivable `consistency_trend` report kind and a n
 
 RPT-004 AC3 (dashboard-web "compare with a previous report" action) is NOT built: it needs a report viewer that does not exist. 
 Sprint 65 sign-off (2026-10-02): QA GO on the live rebuilt containers (gateway-api, reporting-service, dashboard-web). Suites: libs/common 56 passed; dashboard-web 481 passed / 8 deselected; reporting-service 130 passed / 4 skipped (WeasyPrint native libs unavailable on host); gateway-api 289 passed; validation-service 261 passed and ingestion-service 165 passed / 2 skipped (run only after the CHORE-65-01 repoint, against `naive_first_test`). All Postgres-backed tests now target `naive_first_test`; `identity.operator_audit_log` verified unchanged (34 rows) across the sprint. Live parity: trend report N-of-M equals dashboard-web `/runs/trend` for every QA group (all 0 of M live; the nonzero case is covered by unit tests only). Known gaps, disclosed: RPT-004 AC3 (dashboard compare action) not built; PDF not extended to `consistency_trend`; `horizon` on the trend request is not constrained to >= 1 (QA minor, harmless: persists a no-data report); gateway `ReportDetailResponse.run_id` carries the scope key for trend reports. QA fixtures (additive, left in place): tenants "QA65 Tenant A" (a5a56cf48d9c4b7a9ebd7b7731d41d33) and "QA65 Tenant B" (b8a0217fd7374659b97661d15c72aa7a), with "QA65 dataset one/two/three", "QA65 empty group", "QA65 failed-only group" runs and reports.
+
+## Sprint 66 (docs/sprints/sprint-66.md, cleanup of Sprint 62-65 follow-ups; no backlog stories)
+
+Orchestrator decisions: honest wording instead of refresh-on-seed; log at the point of failure plus README statements, no CSVs committed; RPT-005 stays proposed, not built.
+
+| Ticket | Story | Module | Depends on | Status |
+|---|---|---|---|---|
+| [CHORE-66-01](CHORE-66-01.md) | Read-only test-DB audit, audit-log baseline | all (read-only) | none | done |
+| [CHORE-66-02](CHORE-66-02.md) | Trend `horizon` >= 1 (422 otherwise) | reporting-service | none | todo |
+| [CHORE-66-03](CHORE-66-03.md) | PDF `tr` no page-break-inside | reporting-service | none | todo |
+| [CHORE-66-04](CHORE-66-04.md) | Seed-failure log line + README statements | ingestion-service, infra README | none | todo |
+| [CHORE-66-05](CHORE-66-05.md) | Honest "sample data" wording | dashboard-web | 04 | todo |

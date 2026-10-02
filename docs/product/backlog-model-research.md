@@ -25,19 +25,19 @@ MoSCoW, one-line rationale per story tied to the thesis's own stated gaps (secti
 
 ## Stories
 
-### MR-001 — Returns-vs-levels methodology audit [Must]
+### MR-001 — Returns-vs-levels methodology audit [Must] — **done (Sprint 33, `docs/tickets/MR-001.md`; detect-and-block in `services/validation-service/src/app/level_detection.py`, no auto-transform, no `naive_first_engine` change)**
 **As a** validation engine user (internal: `validation-service`/`dashboard-web` operators), **I want** a documented, tested rule that a dataset submitted as raw price levels is either rejected or auto-transformed to returns before any Naive0 comparison runs, **so that** the "misleading Naive0 comparison on levels" risk (currently only a UI tooltip caveat) becomes an enforced methodology guarantee, not an easily-missed hint.
 
-Acceptance criteria:
-- [ ] A documented decision (ADR or ticket) states whether this check lives in `validation-service` (input validation, before calling `naive_first_engine`) or as a new, explicit precondition check inside `naive_first_engine` itself — respecting the "owns/does not own" boundary in `libs/naive_first_engine/README.md`.
-- [ ] A stationarity/level-detection check (e.g. ADF test or a simpler heuristic) exists with a unit test proving it flags a synthetic non-stationary (price-level-like) series and passes a synthetic returns series.
-- [ ] The existing UI tooltip in `run_new.html` is not removed but is now backed by an enforced check, not just advisory text.
-- [ ] No change to `naive_first_engine`'s public `Baseline`/`generate_splits`/`dm_test` signatures.
+Acceptance criteria (see `docs/tickets/MR-001.md` — done; the AC boxes were previously left unticked, corrected in a Sprint-66-era status review):
+- [x] A documented decision (ADR or ticket) states whether this check lives in `validation-service` (input validation, before calling `naive_first_engine`) or as a new, explicit precondition check inside `naive_first_engine` itself — respecting the "owns/does not own" boundary in `libs/naive_first_engine/README.md`. (Decision: `validation-service`.)
+- [x] A stationarity/level-detection check (e.g. ADF test or a simpler heuristic) exists with a unit test proving it flags a synthetic non-stationary (price-level-like) series and passes a synthetic returns series. (Heuristic, no `statsmodels`.)
+- [x] The existing UI tooltip in `run_new.html` is not removed but is now backed by an enforced check, not just advisory text.
+- [x] No change to `naive_first_engine`'s public `Baseline`/`generate_splits`/`dm_test` signatures.
 
 Rationale for priority: this is a methodology correctness fix flagged by the thesis's own target-choice ("retorno direto, não preço em nível," section 1.2) and by the platform's own existing UI caveat — fixing it is cheap, has no uncertain research outcome, and protects every downstream research story from a false "beat naive" result caused by comparing on levels.
 Depends on: none
 
-### MR-002 — Engineered feature set: rolling volatility and rolling-return statistics [Should]
+### MR-002 — Engineered feature set: rolling volatility and rolling-return statistics [Should] — **done (Sprint 40, `docs/tickets/MR-002.md`; `research/features.py`)**
 **As a** research candidate model, **I want** a documented, leakage-safe feature-engineering function (rolling volatility, rolling mean/std of returns, lagged returns) computable per training fold only, **so that** candidate models in MR-004/MR-005 have engineered inputs beyond raw returns to test against naive, matching the thesis's explicit future-work gap ("dados exógenos... features engenheiradas," section 1.6).
 
 Acceptance criteria (see `docs/tickets/MR-002.md` — done):
@@ -59,7 +59,7 @@ Acceptance criteria:
 Rationale for priority: "Should" not "Must" because it is explicitly gated on MDF-003 landing first (a separate, already-scoped backlog item) — sequencing dependency, not lower research value; this is the most direct link between the ADR-approved fusion work and genuine model improvement.
 Depends on: MDF-003 (external, tracked in `docs/product/backlog-multimodal-dataset-fusion.md`)
 
-### MR-004 — Gradient boosting candidate as a `Baseline` implementation [Should]
+### MR-004 — Gradient boosting candidate as a `Baseline` implementation [Should] — **done (Sprint 41, `docs/tickets/MR-004.md`; `research/models/gradient_boosting.py`)**
 **As a** research candidate model, **I want** a gradient-boosting model (e.g. LightGBM/XGBoost) wrapped as a `Baseline` implementation (`.predict(train, test) -> pd.Series`, `.name` attribute) registered via `config.extra_baselines`, **so that** it runs through the exact same purge-gap, train-fold-only-fit, DM-vs-Naive0 protocol as OLS/RF/ARIMA did in the thesis, on a model class the thesis's own section 1.6 names as untested ("Boosting, GRU, Transformer ainda não testados").
 
 Acceptance criteria:

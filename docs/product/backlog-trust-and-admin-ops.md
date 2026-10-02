@@ -405,7 +405,25 @@ existing-capability-exposure fix; defer until a real re-audit use case is report
 Depends on: none, but practically blocked on a `dashboard-web` report viewer existing (not currently
 scoped anywhere)
 
-**Status (Sprint 65): AC1 and AC2 done (tickets RPT-004-01/02, API-only); AC3 NOT built.** Built because the requester asked, as the narrowest slice: `GET /reports/{id}/diff/{other_id}` (reporting-service, gateway pass-through) re-fetches each report's run and splits (reports store rendered HTML only) and returns neutral per-split `model_*`/`naive0_*`/`dm_*` deltas plus the count of splits whose Naive0 verdict category changed. Comparability rule (422 with a plain reason): both `validation_audit`, same dataset, horizon, purge gap and split config, at most 500 splits, identical split indices and test windows. AC3 (dashboard-web "compare with a previous report" action) is unmet: no report viewer exists in dashboard-web and none is scoped; it stays deferred until one does.
+**Status (Sprint 65): AC1 and AC2 done (tickets RPT-004-01/02, API-only); AC3 NOT built.** Built because the requester asked, as the narrowest slice: `GET /reports/{id}/diff/{other_id}` (reporting-service, gateway pass-through) re-fetches each report's run and splits (reports store rendered HTML only) and returns neutral per-split `model_*`/`naive0_*`/`dm_*` deltas plus the count of splits whose Naive0 verdict category changed. Comparability rule (422 with a plain reason): both `validation_audit`, same dataset, horizon, purge gap and split config, at most 500 splits, identical split indices and test windows. AC3 (dashboard-web "compare with a previous report" action) is unmet: no report viewer exists in dashboard-web and none is scoped; it stays deferred until one does. **Follow-up: AC3 is now carried by RPT-005 (proposed, below).**
+
+### RPT-005 — Minimal tenant report viewer in `dashboard-web` (list, open, compare) [Could] — PROPOSED (not approved, not scheduled)
+
+**As a** tenant who has generated audit or consistency-trend reports, **I want** a page in `dashboard-web` listing my reports, opening one (rendered HTML, with a PDF download link for audit reports), and picking a previous report to compare against, **so that** the already-built report, PDF and diff capabilities (RPT-001/002/004) are reachable without raw API calls, and RPT-004 AC3 can finally be met.
+
+Scope decision (YAGNI): read-only, three views, no editing, no filtering beyond newest-first, no charts, no pagination UI beyond a simple limit/offset. Nothing here generates reports from the viewer; generation stays where it is today.
+
+Acceptance criteria:
+- [ ] `reporting-service` exposes a tenant-scoped list route (id, report type, created-at, dataset/run reference, newest first, bounded page size) and `gateway-api` proxies it with the same auth/tenant pattern as `GET /reports/{id}`. Cross-tenant ids never appear (test with two tenants). Metadata only, no stored HTML in the list payload.
+- [ ] `dashboard-web` has a reports page (server-rendered, same Jinja2/HTMX conventions and tenant-session handling as existing pages) that lists the tenant's reports via the gateway only (no direct service or DB access), with an empty state.
+- [ ] Opening a report shows the stored HTML for `validation_audit` and `consistency_trend` types, and an explicit "Download PDF" link for audit reports only (uses `GET /reports/{id}?format=pdf`).
+- [ ] On an audit report, a "Compare with a previous report" selector offers only reports of the same type and calls `GET /reports/{id}/diff/{other_id}`; a 422 from the comparability rule is shown to the user as the plain reason returned, not swallowed or reworded as a generic error. Per-split deltas are shown neutrally (no "improved/winning" framing, no colour judgement implying a good or bad outcome).
+- [ ] Copy on all three views states that reports describe validation results versus a naive benchmark; nothing implies price prediction, trading signals or profitability, and a "no model beat Naive0" report is rendered with the same prominence as any other (consistent with TRUST-005).
+- [ ] Completing this story ticks RPT-004 AC3 and updates the RPT-004 status note, `services/dashboard-web/README.md` and the gateway/reporting READMEs' route lists (doc-sync check passes).
+- [ ] No change to `libs/naive_first_engine`; no report content is computed in `dashboard-web`.
+
+Rationale for priority: Could, not Should. The capability exists and is reachable by API; this is exposure work with no proven demand yet. It follows the same "defer until a real re-audit use case is reported" logic as RPT-004. It becomes Should if a pilot tenant asks to review or compare reports without API use.
+Depends on: RPT-001, RPT-002, RPT-004 (API half) all done; NEW prerequisite: a report list endpoint (reporting-service + gateway-api), which is the first AC of this story and should be its own first ticket/slice because it is a backend change that is useful on its own.
 
 ---
 
