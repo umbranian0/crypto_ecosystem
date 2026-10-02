@@ -14,7 +14,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from app.dependencies.repositories import HealthCheckEngineDep
-from app.routers import report_generation, report_retrieval
+from app.routers import report_diff, report_generation, report_retrieval
 
 app = FastAPI(title="reporting-service")
 
@@ -23,6 +23,7 @@ app = FastAPI(title="reporting-service")
 # appends its own include_router call rather than removing the other's.
 app.include_router(report_retrieval.router, prefix="/reports", tags=["reports"])
 app.include_router(report_generation.router, prefix="/reports", tags=["reports"])
+app.include_router(report_diff.router, prefix="/reports", tags=["reports"])
 
 
 @app.get("/health", response_model=None)

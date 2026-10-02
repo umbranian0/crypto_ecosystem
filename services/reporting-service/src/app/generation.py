@@ -99,6 +99,38 @@ def _raise_for_error(response: httpx.Response, run_id: str) -> None:
         raise DownstreamResponseError()
 
 
+def fetch_run(tenant_id: str, run_id: str, client: httpx.Client) -> RunDetailResponse:
+    run_response = _call_downstream(
+        client.get, f"/runs/{run_id}", headers={"X-Tenant-Id": tenant_id}
+    )
+    _raise_for_error(run_response, run_id)
+    return RunDetailResponse(**run_response.json())
+
+
+def fetch_all_splits(
+    tenant_id: str, run_id: str, client: httpx.Client
+) -> list[SplitResultResponse]:
+    splits_response = _call_downstream(
+        client.get, f"/runs/{run_id}/splits", headers={"X-Tenant-Id": tenant_id}
+    )
+    _raise_for_error(splits_response, run_id)
+    return [SplitResultResponse(**item) for item in splits_response.json()]
+
+
+def fetch_split_count(tenant_id: str, run_id: str, client: httpx.Client) -> int:
+    count_response = _call_downstream(
+        client.get, f"/runs/{run_id}/splits/count", headers={"X-Tenant-Id": tenant_id}
+    )
+    _raise_for_error(count_response, run_id)
+    return count_response.json()["total"]
+
+
+def fetch_run_and_splits(
+    tenant_id: str, run_id: str, client: httpx.Client
+) -> tuple[RunDetailResponse, list[SplitResultResponse]]:
+    return fetch_run(tenant_id, run_id, client), fetch_all_splits(tenant_id, run_id, client)
+
+
 def generate_validation_audit_report(
     tenant_id: str,
     run_id: str,
@@ -120,15 +152,7 @@ def generate_validation_audit_report(
     behavior; only `app.subscriber`'s `run.completed` event handler passes a
     real client.
     """
-    headers = {"X-Tenant-Id": tenant_id}
-
-    run_response = _call_downstream(client.get, f"/runs/{run_id}", headers=headers)
-    _raise_for_error(run_response, run_id)
-    run = RunDetailResponse(**run_response.json())
-
-    splits_response = _call_downstream(client.get, f"/runs/{run_id}/splits", headers=headers)
-    _raise_for_error(splits_response, run_id)
-    splits = [SplitResultResponse(**item) for item in splits_response.json()]
+    run, splits = fetch_run_and_splits(tenant_id, run_id, client)
 
     narrative_html = None
     if narrative_client is not None:
