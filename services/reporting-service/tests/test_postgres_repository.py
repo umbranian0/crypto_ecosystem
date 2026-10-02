@@ -37,6 +37,7 @@ but does not silently skip when it *is* reachable.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from datetime import datetime
@@ -67,7 +68,12 @@ SERVICE_ROOT = Path(__file__).resolve().parent.parent
 # imports it, including plain `--collect-only`) with zero output. A literal
 # IPv4 address sidesteps address-family resolution/ordering entirely and
 # connects immediately, verified independently before this change.
-POSTGRES_URL = "postgresql+psycopg://naive_first:naive_first_dev_password@127.0.0.1:5432/naive_first"
+# Targets the isolated `naive_first_test` DB, never the live `naive_first`
+# (a prior suite wiped live data). Override with REPORTING_SERVICE_TEST_DATABASE_URL.
+POSTGRES_URL = os.environ.get(
+    "REPORTING_SERVICE_TEST_DATABASE_URL",
+    "postgresql+psycopg://naive_first:naive_first_dev_password@127.0.0.1:5432/naive_first_test",
+)
 SEARCH_PATH_OPTION = "options=-csearch_path%3Dreporting"
 ENGINE_URL = f"{POSTGRES_URL}?{SEARCH_PATH_OPTION}"
 
@@ -155,8 +161,8 @@ def test_get_report_returns_none_for_a_different_tenants_report(report_repo) -> 
 
 
 APP_ROLE_ENGINE_URL = (
-    f"postgresql+psycopg://naive_first_app:naive_first_app_dev_password"
-    f"@127.0.0.1:5432/naive_first?{SEARCH_PATH_OPTION}"
+    POSTGRES_URL.replace("naive_first:naive_first_dev_password@", "naive_first_app:naive_first_app_dev_password@")
+    + f"?{SEARCH_PATH_OPTION}"
 )
 
 
@@ -240,7 +246,7 @@ def test_alembic_upgrade_head_lands_alembic_version_in_reporting_schema() -> Non
     result = subprocess.run(
         [sys.executable, "-m", "alembic", "upgrade", "head"],
         cwd=SERVICE_ROOT,
-        env={**__import__("os").environ, "DATABASE_URL": POSTGRES_URL},
+        env={**os.environ, "DATABASE_URL": POSTGRES_URL},
         capture_output=True,
         text=True,
     )

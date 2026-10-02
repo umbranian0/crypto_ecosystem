@@ -560,3 +560,5 @@ is the in-memory equivalent used by `tests/test_base.py`'s crawl-run/cross-tenan
 **Compose mount (`ONB-003`)**: in `infra/docker-compose.yml` the container gets `data/raw/_platform` as a
 read-only bind mount from the host (the archive is untracked and not in the image); this is what lets
 `POST /internal/seed-platform-history` find its CSVs on the local stack. See `infra/README.md`.
+
+**Test database**: Postgres-backed tests target the isolated `naive_first_test` DB, never the live `naive_first`; override with `INGESTION_SERVICE_TEST_DATABASE_URL`.

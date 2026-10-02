@@ -32,7 +32,12 @@ SERVICE_ROOT = Path(__file__).resolve().parent.parent
 # test_hypertable_chunk_interval_migration.py / test_crawl_runs_index_migration.py
 # -- "localhost" can hang here on an IPv6-first resolution that Docker
 # Desktop's 127.0.0.1-only port forwarding never answers.
-POSTGRES_URL = "postgresql+psycopg://naive_first:naive_first_dev_password@127.0.0.1:5432/naive_first"
+# Targets the isolated `naive_first_test` DB, never the live `naive_first`
+# (a prior suite wiped live data). Override with INGESTION_SERVICE_TEST_DATABASE_URL.
+POSTGRES_URL = os.environ.get(
+    "INGESTION_SERVICE_TEST_DATABASE_URL",
+    "postgresql+psycopg://naive_first:naive_first_dev_password@127.0.0.1:5432/naive_first_test",
+)
 
 # Same three-table order as _TABLE_SPECS (postgres_repository.py) /
 # _HYPERTABLES (0003/0004) / _INDEXES (0006) -- not a fourth ad hoc list.

@@ -246,3 +246,5 @@ connectivity (RS-006's subscriber) is explicitly out of scope for this check. Se
 **Coverage**: run tests with coverage locally via `uv run pytest -q --cov=app --cov-report=term-missing` (no coverage threshold is enforced — CI prints the report, it never fails the build on a percentage).
 
 **Dependency upgrades**: see [../../docs/dependency-upgrade-policy.md](../../docs/dependency-upgrade-policy.md) for this platform's cadence.
+
+**Test database**: Postgres-backed tests target the isolated `naive_first_test` DB, never the live `naive_first`; override with `REPORTING_SERVICE_TEST_DATABASE_URL`.

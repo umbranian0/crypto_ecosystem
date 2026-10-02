@@ -310,3 +310,5 @@ descriptive (not merely non-crashing) message under the new wrapping. `gateway-a
 only forwards `failure_reason` as-is, per its own README.
 
 **Dependency upgrades**: see [../../docs/dependency-upgrade-policy.md](../../docs/dependency-upgrade-policy.md) for this platform's cadence.
+
+**Test database**: Postgres-backed tests target the isolated `naive_first_test` DB, never the live `naive_first`; override with `VALIDATION_SERVICE_TEST_DATABASE_URL`.

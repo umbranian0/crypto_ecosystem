@@ -21,6 +21,7 @@ but does not silently skip when it *is* reachable.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from datetime import datetime
@@ -54,7 +55,12 @@ SERVICE_ROOT = Path(__file__).resolve().parent.parent
 # literal IPv4 address sidesteps address-family resolution/ordering
 # entirely and connects immediately, verified independently before this
 # change.
-POSTGRES_URL = "postgresql+psycopg://naive_first:naive_first_dev_password@127.0.0.1:5432/naive_first"
+# Targets the isolated `naive_first_test` DB, never the live `naive_first`
+# (a prior suite wiped live data). Override with VALIDATION_SERVICE_TEST_DATABASE_URL.
+POSTGRES_URL = os.environ.get(
+    "VALIDATION_SERVICE_TEST_DATABASE_URL",
+    "postgresql+psycopg://naive_first:naive_first_dev_password@127.0.0.1:5432/naive_first_test",
+)
 SEARCH_PATH_OPTION = "options=-csearch_path%3Dvalidation"
 ENGINE_URL = f"{POSTGRES_URL}?{SEARCH_PATH_OPTION}"
 
@@ -391,7 +397,7 @@ RLS_TEST_ROLE = "validation_rls_test_role"
 RLS_TEST_PASSWORD = "validation_rls_test_pw"
 RLS_TEST_ENGINE_URL = (
     f"postgresql+psycopg://{RLS_TEST_ROLE}:{RLS_TEST_PASSWORD}"
-    f"@127.0.0.1:5432/naive_first?{SEARCH_PATH_OPTION}"
+    f"@127.0.0.1:5432/naive_first_test?{SEARCH_PATH_OPTION}"
 )
 
 
@@ -485,7 +491,7 @@ def test_alembic_upgrade_head_lands_alembic_version_in_validation_schema() -> No
     result = subprocess.run(
         [sys.executable, "-m", "alembic", "upgrade", "head"],
         cwd=SERVICE_ROOT,
-        env={**__import__("os").environ, "DATABASE_URL": POSTGRES_URL},
+        env={**os.environ, "DATABASE_URL": POSTGRES_URL},
         capture_output=True,
         text=True,
     )
@@ -577,7 +583,7 @@ POOL_TEST_ROLE = "validation_rls_pool_test_role"
 POOL_TEST_PASSWORD = "validation_rls_pool_test_pw"
 POOL_TEST_ENGINE_URL = (
     f"postgresql+psycopg://{POOL_TEST_ROLE}:{POOL_TEST_PASSWORD}"
-    f"@127.0.0.1:5432/naive_first?{SEARCH_PATH_OPTION}"
+    f"@127.0.0.1:5432/naive_first_test?{SEARCH_PATH_OPTION}"
 )
 
 

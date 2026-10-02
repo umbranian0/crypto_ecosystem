@@ -35,7 +35,12 @@ SERVICE_ROOT = Path(__file__).resolve().parent.parent
 # can attempt an IPv6 (::1) connection first, which Docker Desktop's
 # port-forwarding (127.0.0.1 only) never answers, hanging this file
 # indefinitely instead of failing over to IPv4.
-POSTGRES_URL = "postgresql+psycopg://naive_first:naive_first_dev_password@127.0.0.1:5432/naive_first"
+# Targets the isolated `naive_first_test` DB, never the live `naive_first`
+# (a prior suite wiped live data). Override with INGESTION_SERVICE_TEST_DATABASE_URL.
+POSTGRES_URL = os.environ.get(
+    "INGESTION_SERVICE_TEST_DATABASE_URL",
+    "postgresql+psycopg://naive_first:naive_first_dev_password@127.0.0.1:5432/naive_first_test",
+)
 
 _HYPERTABLES = ("price_ohlcv", "onchain_metric", "sentiment_score")
 
