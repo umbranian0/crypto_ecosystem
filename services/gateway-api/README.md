@@ -399,6 +399,8 @@ it, including the `POST /runs`-is-synchronous-and-not-comparable-to-the-GETs cav
 
 **CI**: `.github/workflows/ci.yml` runs this module's test suite on every push/PR.
 
+**Postgres-backed tests use a separate database (Sprint 64 fix)**: `tests/test_migrations.py` and `tests/test_postgres_repository.py` default to `.../naive_first_test` (override with `GATEWAY_API_TEST_DATABASE_URL`), not the live `naive_first` database. They run `alembic downgrade`/`upgrade` and previously, when pointed at the live stack's database, dropped and recreated `identity.operator_audit_log`, wiping its rows. One-time setup on a fresh stack: `CREATE DATABASE naive_first_test;` then `CREATE SCHEMA identity;` inside it.
+
 **Coverage**: run tests with coverage locally via `uv run pytest -q --cov=app --cov-report=term-missing` (no coverage threshold is enforced — CI prints the report, it never fails the build on a percentage).
 
 **Dependency upgrades**: see [../../docs/dependency-upgrade-policy.md](../../docs/dependency-upgrade-policy.md) for this platform's cadence.

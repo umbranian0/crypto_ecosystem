@@ -45,7 +45,7 @@ SERVICE_ROOT = Path(__file__).resolve().parent.parent
 # this platform's Windows/Docker Desktop dev setup.
 POSTGRES_TEST_URL = os.environ.get(
     "GATEWAY_API_TEST_DATABASE_URL",
-    "postgresql+psycopg://naive_first:naive_first_dev_password@127.0.0.1:5432/naive_first",
+    "postgresql+psycopg://naive_first:naive_first_dev_password@127.0.0.1:5432/naive_first_test",
 )
 
 

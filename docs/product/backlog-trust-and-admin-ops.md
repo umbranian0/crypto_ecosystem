@@ -547,6 +547,8 @@ Depends on: none
 
 ### ADMIN-005 — Self-serve API key rotation for tenants [Should]
 
+**Status: done (Sprint 64).** `GET/POST /me/api-keys`, `POST /me/api-keys/{id}/revoke` on gateway-api; "My API Keys" page (`/api-keys`) on dashboard-web. See `docs/tickets/ADMIN-005-01..03.md`. Disclosed amendments to the AC below: (1) the "warning before revoking the in-use key" is replaced by a stricter hard server block (409 if the key authenticating the request is the target) plus a disabled UI control, and a second server-side guard (409 if the revoke would leave zero active keys, atomic via `SELECT ... FOR UPDATE`; revoke uses a new `ApiKeyRepository.revoke_key_if_not_last_active`, operator `revoke_key` unchanged); (2) "reuse the same key-generation code" required extracting `mint_api_key` from `provision()` (one implementation, `provision()` behavior unchanged). Self-service actions are audited as `api_key.self_create`/`api_key.self_revoke` in `operator_audit_log` (no migration).
+
 As a tenant, I want to mint a new API key for myself and revoke an old one from my own logged-in session,
 so that routine credential hygiene (e.g. after a suspected leak, or periodic rotation) does not require
 contacting an operator or having host/container access to a CLI script.
