@@ -23,7 +23,12 @@ contract dependency on `naive_first_common.contracts` for its report models
 to hang off of, unlike `validation-service`'s `RunRequest`/etc (ARCH-003).
 This is a version-sync point, not an independent contract: if
 `reporting-service`'s models change, these must be updated to match, same
-caveat GW-008's original pre-ARCH-003 approach carried.
+caveat GW-008's original pre-ARCH-003 approach carried. RPT-002-03: the
+request model now mirrors reporting-service's `kind`/`run_id`/`dataset_id`/
+`horizon` shape (types only; the per-kind field-combination validation stays
+downstream and its 422 passes through `_raise_for_error`). Only fields the
+caller actually sent are forwarded, so a legacy `{run_id}` body still
+forwards exactly `{"run_id": ...}`.
 
 Handler flow (fixed, mirrors GW-008/GW-016 exactly): resolve
 `tenant: TenantContext = Depends(get_authenticated_tenant)` (GW-006) ->
@@ -51,6 +56,7 @@ behavior (RS-002/RS-005), forwarded as-is via `_raise_for_error`.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from fastapi import APIRouter, Depends, Response
 from naive_first_common.tenant_context import TenantContext
@@ -65,7 +71,10 @@ router = APIRouter()
 
 
 class GenerateReportRequest(BaseModel):
-    run_id: str
+    kind: Literal["validation_audit", "consistency_trend"] = "validation_audit"
+    run_id: str | None = None
+    dataset_id: str | None = None
+    horizon: int | None = None
 
 
 class GenerateReportResponse(BaseModel):
@@ -90,7 +99,7 @@ def generate_report(
 ) -> GenerateReportResponse:
     headers = build_downstream_headers(tenant)
     response = _call_downstream(
-        client.post, "/reports/generate", json=request.model_dump(), headers=headers
+        client.post, "/reports/generate", json=request.model_dump(exclude_unset=True), headers=headers
     )
     _raise_for_error(response)
     return GenerateReportResponse(**response.json())
