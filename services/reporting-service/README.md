@@ -62,8 +62,8 @@ API; this service only renders and stores what it's given. Also does not own obj
 sprint — `reporting.reports.content` stores the rendered HTML inline in Postgres (a `text` column),
 not a `reports/{tenant_id}/...` object-storage-prefix reference; that remains a documented future
 contract (implementation-plan.md section 5), revisited only once `INF-008` (MinIO, still deferred)
-ships or inline storage becomes impractical at real report volume (backlog decision 2). PDF export is
-also out of scope this sprint (HTML only, backlog decision 3).
+ships or inline storage becomes impractical at real report volume (backlog decision 2). PDF export
+(RPT-001-02) is a conversion of the stored HTML `content` at retrieval time -- nothing is cached or stored.
 
 **Design notes**:
 - Subscribes to the `run.completed` event (Redis Streams) — Observer pattern, implementation-plan.md section 7 — rather than being polled or called synchronously by `validation-service`.
@@ -212,6 +212,7 @@ method), not request/response shape -- see this running service's `/openapi.json
 - `GET /health`
 - `POST /reports/generate`
 - `GET /reports/{report_id}`
+  - optional `?format=pdf` (RPT-001-02) returns `application/pdf` with `Content-Disposition: attachment; filename="audit-report-<id>.pdf"`; any other `format` value is `422`; default is the JSON body
 
 **Contract**: FastAPI service. `POST /reports/generate` (RS-004 — done) resolves tenant via
 `Depends(naive_first_common.get_tenant_context)`, calls `validation-service`'s real
@@ -237,6 +238,8 @@ validation-service's OPS-005-01 established): `200 {"status": "ok"}` on success,
 a fixed generic detail string only — never the raw exception, connection string, or credential. Redis
 connectivity (RS-006's subscriber) is explicitly out of scope for this check. See
 `docs/tickets/RS-*.md` for live ticket status.
+
+**PDF export (RPT-001-02)**: `src/app/renderers/pdf.py`'s `render_pdf(html) -> bytes` converts the stored HTML with WeasyPrint (imported lazily; needs Pango/fonts, installed in this service's Dockerfile per RPT-001-01) using a `url_fetcher` that refuses every URL. A status-only stored report yields a status-only PDF. Tests that need the native libs are marked `@pytest.mark.pdf_render` and auto-skip on hosts without them; run them inside the built image (copy `src`/`tests` into a throwaway container, tests are not baked into the image).
 
 **CI**: `.github/workflows/ci.yml` runs this module's test suite on every push/PR.
 

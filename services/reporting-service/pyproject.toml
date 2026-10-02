@@ -32,6 +32,9 @@ packages = ["src/app"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "pdf_render: real WeasyPrint render; auto-skips when its native libs are unavailable (run in the service image)",
+]
 
 [dependency-groups]
 dev = [

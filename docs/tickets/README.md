@@ -3366,5 +3366,5 @@ PDF export of stored audit reports (`GET /reports/{id}?format=pdf`), WeasyPrint,
 | Ticket | Story | Module | Depends on | Status |
 |---|---|---|---|---|
 | [RPT-001-01](RPT-001-01.md) | WeasyPrint dependency + Dockerfile native libs + lockfile | reporting-service | none | done |
-| [RPT-001-02](RPT-001-02.md) | `render_pdf` + `?format=pdf` on `GET /reports/{id}`, tests, README | reporting-service | 01 | todo |
+| [RPT-001-02](RPT-001-02.md) | `render_pdf` + `?format=pdf` on `GET /reports/{id}`, tests, README | reporting-service | 01 | done |
 | [RPT-001-03](RPT-001-03.md) | Gateway `?format=pdf` pass-through | gateway-api | 02 | todo |

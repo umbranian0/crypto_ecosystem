@@ -21,13 +21,15 @@ routes here are declared relative (`/{report_id}`), not `/reports/{...}`.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 
 from naive_first_common import TenantContext, get_tenant_context
 
 from app.dependencies.repositories import ReportRepositoryDep
+from app.renderers import pdf
 
 router = APIRouter()
 
@@ -46,13 +48,23 @@ def get_report(
     report_id: str,
     report_repository: ReportRepositoryDep,
     tenant: TenantContext = Depends(get_tenant_context),
-) -> ReportDetailResponse:
+    format: Literal["pdf"] | None = None,
+) -> ReportDetailResponse | Response:
     # `get_report` already returns None for both "doesn't exist" and "wrong
     # tenant" (RS-002) -- both collapse into this single 404, no branch
     # distinguishes them (RS-005 Design section).
     report = report_repository.get_report(tenant.tenant_id, report_id)
     if report is None:
         raise HTTPException(status_code=404, detail="report not found")
+
+    if format == "pdf":
+        return Response(
+            content=pdf.render_pdf(report.content),
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f'attachment; filename="audit-report-{report.id}.pdf"'
+            },
+        )
 
     return ReportDetailResponse(
         id=report.id,
