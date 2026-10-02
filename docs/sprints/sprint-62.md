@@ -122,3 +122,16 @@ Standing candidate: ADMIN-005 (self-serve key rotation, lockout-guard risk, `/gr
   run targets `volume` of `binance_price_btcusdt_1h` (2024-01-01..2024-03-01, horizon 1, gap 24, train 500,
   test 100, step 100 -> 9 splits on the real stack), disclosed on the page.
 - Disclosure mechanism: `RunRequest.label` (no schema change); run detail already renders the label.
+
+## Tech Lead close-out (2026-10-02)
+
+- ONB-003 added (infra bug): read-only bind mount of `data/raw/_platform` into ingestion-service; fixed the GW-030
+  auto-seed 503 on the local stack. Verified live: a brand-new tenant received sample data. ONB-001 copy left as is.
+- QA re-run on the real stack: GO. dashboard-web suite: 469 passed, 8 deselected.
+- Known inert QA fixtures left in place by user decision (no deletion, no audit-log edits): tenants
+  'QA62 fixture A' (70f73c53ed7643f49b1ce5352624e515) and 'QA62 fixture B' (6adca609d6584d0fa9ff2d7e49b239c8);
+  plus 'QA62 fresh seeded A' (70eb6066bd9144339b73e922262dfe2f) with 3 demo runs
+  (5de6bb0e33bf4ef2a8c5117d0b754ac2, 937989b6f22543cba0d1d96db3bc3e75, d0f146a292044c3b8904c1fb93a9bebf).
+  The DoD line "fixture tenants must be cleaned up" is waived by the user for these.
+- Follow-up (non-blocking): materialized-view refresh lag (up to 5 min) can make a freshly seeded tenant see the
+  empty-data message; soften copy or refresh on seed. Candidate for a future sprint.
