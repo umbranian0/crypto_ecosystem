@@ -59,6 +59,7 @@ from datetime import datetime
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Response
+from fastapi.responses import JSONResponse
 from naive_first_common.tenant_context import TenantContext
 from pydantic import BaseModel
 
@@ -103,6 +104,23 @@ def generate_report(
     )
     _raise_for_error(response)
     return GenerateReportResponse(**response.json())
+
+
+@router.get("/reports/{report_id}/diff/{other_id}")
+def diff_reports(
+    report_id: str,
+    other_id: str,
+    client: ReportingServiceClientDep,
+    tenant: TenantContext = Depends(get_authenticated_tenant),
+) -> JSONResponse:
+    """RPT-004-02: pass-through of reporting-service's report diff. The diff
+    shape is owned by reporting-service, so the JSON body is returned as-is
+    rather than mirrored in a local model; 404/422 come via `_raise_for_error`.
+    """
+    headers = build_downstream_headers(tenant)
+    response = _call_downstream(client.get, f"/reports/{report_id}/diff/{other_id}", headers=headers)
+    _raise_for_error(response)
+    return JSONResponse(response.json())
 
 
 @router.get("/reports/{report_id}", response_model=ReportDetailResponse)
