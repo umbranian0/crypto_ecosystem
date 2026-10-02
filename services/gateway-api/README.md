@@ -156,7 +156,8 @@ unauthenticated path onto this surface.
 
 **Operator audit log (ADMIN-002)**: `identity.operator_audit_log` (`src/app/models.py`'s
 `OperatorAuditLog`, migration `migrations/versions/0006_create_operator_audit_log.py`) is a durable,
-queryable record of privileged operator actions, closing the "we audit rigorously but don't audit
+queryable record of privileged operator actions (and, since ADMIN-005, tenant self-service key
+changes, `api_key.self_*`), closing the "we audit rigorously but don't audit
 ourselves" gap `docs/product/backlog-trust-and-admin-ops.md`'s `ADMIN-002` story names. Covers the
 `gateway-api` half of that story (ticket `ADMIN-002-01`); the read-only `dashboard-web` Settings page
 that surfaces this data is `ADMIN-002-02`, a separate, parallel ticket against a contract fixed by this
@@ -200,6 +201,21 @@ one.
   -- no new branching logic invented, DRY reuse of the helper every other provider already shares.
 - Registered in `main.py` as `app.include_router(audit_log.router)`, no `tags=` -- same `ARCH-007`
   reasoning as `tenants.router` above (this router doesn't proxy to a single downstream service).
+
+**Tenant self-service API key rotation (ADMIN-005-02)** (`src/app/routers/me_api_keys.py`, no `tags=`,
+no downstream proxy). All routes authenticate with a tenant API key (`get_authenticated_key`); the tenant
+id comes only from that key. The operator token does not satisfy them.
+- `GET /me/api-keys` -> `{items: [{id, created_at, revoked_at, current}]}`, revoked keys included,
+  `current` true for the authenticating key. Never `key_hash`/raw key.
+- `POST /me/api-keys` -> `201 {id, created_at, api_key}`; the raw key appears only in this body, with
+  `Cache-Control: no-store`. Minting goes through `provisioning.mint_api_key`.
+- `POST /me/api-keys/{key_id}/revoke` -> `200 {key_id, revoked_at}`. Check order: `404 "not found"` (key
+  absent or another tenant's) -> `409` if `key_id` is the key authenticating the request (revoking a key
+  needs a request from a different working key) -> guarded revoke (`revoke_key_if_not_last_active`,
+  atomic): `409` if it would leave zero active keys; already-revoked is a `200` no-op.
+- Audit: `api_key.self_create` / `api_key.self_revoke` rows in `operator_audit_log` (target = caller
+  tenant, no key id/secret) on every 201/200 (including the no-op), never on 404/409. This table now
+  also records tenant-initiated actions, distinguished by the `self_` prefix (it has no actor column).
 
 **Fresh-install detection (SETUP-001) -- the one deliberate unauthenticated endpoint**: `GET
 /setup/status` (`src/app/routers/setup.py`) is the **only** route on this service with no auth

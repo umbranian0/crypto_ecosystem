@@ -3384,5 +3384,5 @@ Self-serve API key rotation with server-enforced lockout guards (cannot revoke t
 | Ticket | Story | Module | Depends on | Status |
 |---|---|---|---|---|
 | [ADMIN-005-01](ADMIN-005-01.md) | `mint_api_key` extraction, `get_authenticated_key`, atomic guarded revoke repo method | gateway-api | none | done |
-| [ADMIN-005-02](ADMIN-005-02.md) | `GET/POST /me/api-keys`, `POST /me/api-keys/{id}/revoke`, audit rows | gateway-api | 01 | todo |
+| [ADMIN-005-02](ADMIN-005-02.md) | `GET/POST /me/api-keys`, `POST /me/api-keys/{id}/revoke`, audit rows | gateway-api | 01 | done |
 | [ADMIN-005-03](ADMIN-005-03.md) | "My API Keys" page, reveal partial reuse, HTMX revoke row | dashboard-web | 02 | todo |

@@ -26,6 +26,7 @@ from app.routers import (
     audit_log,
     diagnostics,
     ingestion,
+    me_api_keys,
     operator,
     reports,
     runs,
@@ -97,6 +98,9 @@ app.include_router(setup.router)
 # reasoning as setup.router/system.router above -- this router doesn't proxy
 # to a single downstream service.
 app.include_router(tenants.router)
+# ADMIN-005-02: tenant self-service API key rotation, no tags= per ARCH-007
+# (no downstream proxy).
+app.include_router(me_api_keys.router)
 # ADMIN-002-01: operator-only audit-log read surface, no tags= per ARCH-007,
 # same reasoning as setup.router/system.router/tenants.router above -- this
 # router doesn't proxy to a single downstream service.
