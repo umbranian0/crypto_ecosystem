@@ -73,10 +73,12 @@ from app.models import ApiKey, OperatorAuditLog, Tenant, User
 from app.repositories.interfaces import (
     ApiKeyRecord,
     OperatorAuditLogRecord,
+    RevokeOutcome,
     TenantRecord,
     UserRecord,
 )
 from app.repositories.sqlite_repository import (
+    _guarded_revoke,
     _api_key_to_record,
     _operator_audit_log_to_record,
     _tenant_to_record,
@@ -235,6 +237,15 @@ class PostgresApiKeyRepository:
                 .values(revoked_at=datetime.utcnow())
             )
             session.commit()
+
+    def revoke_key_if_not_last_active(self, tenant_id: str, key_id: str) -> RevokeOutcome:
+        # FOR UPDATE over the tenant's key rows serializes concurrent
+        # guarded revokes: the second waits, then re-reads the first's result.
+        with Session(self._engine) as session:
+            _set_tenant_scope(session, tenant_id)
+            outcome = _guarded_revoke(session, tenant_id, key_id, lock=True)
+            session.commit()
+            return outcome
 
     def list_api_keys(self, tenant_id: str) -> list[ApiKeyRecord]:
         # SETUP-011: tenant_id-first, ordinary case -- scopes app.tenant_id

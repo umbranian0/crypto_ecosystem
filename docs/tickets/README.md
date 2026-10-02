@@ -3376,3 +3376,13 @@ stylesheet and re-verified. Fixtures (additive, left in place): tenants "QA63 Te
 (`test_runs_routing`, TRUST-003 fields). Known cosmetic follow-ups (not fixed): a table row may split across a page
 break (`tr { page-break-inside: avoid }`), dense unrounded floats wrap in narrow cells; inert QA scratch files remain in
 the reporting-service container's /tmp. dashboard-web PDF link deferred.
+
+## Sprint 64 (docs/sprints/sprint-64.md, backlog: docs/product/backlog-trust-and-admin-ops.md Epic C, ADMIN-005)
+
+Self-serve API key rotation with server-enforced lockout guards (cannot revoke the authenticating key; cannot revoke the last active key, atomically).
+
+| Ticket | Story | Module | Depends on | Status |
+|---|---|---|---|---|
+| [ADMIN-005-01](ADMIN-005-01.md) | `mint_api_key` extraction, `get_authenticated_key`, atomic guarded revoke repo method | gateway-api | none | done |
+| [ADMIN-005-02](ADMIN-005-02.md) | `GET/POST /me/api-keys`, `POST /me/api-keys/{id}/revoke`, audit rows | gateway-api | 01 | todo |
+| [ADMIN-005-03](ADMIN-005-03.md) | "My API Keys" page, reveal partial reuse, HTMX revoke row | dashboard-web | 02 | todo |

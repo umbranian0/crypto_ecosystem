@@ -36,11 +36,16 @@ from datetime import datetime
 from uuid import uuid4
 
 from naive_first_common.db import build_engine
-from sqlalchemy import Engine, func, select, update
+from sqlalchemy import Engine, func, select, text, update
 from sqlalchemy.orm import Session
 
 from app.models import ApiKey, Base, OperatorAuditLog, Tenant, User
 from app.repositories.interfaces import (
+    ALREADY_REVOKED,
+    LAST_ACTIVE,
+    NOT_FOUND,
+    REVOKED,
+    RevokeOutcome,
     ApiKeyRecord,
     OperatorAuditLogRecord,
     TenantRecord,
@@ -80,6 +85,26 @@ def _operator_audit_log_to_record(entry: OperatorAuditLog) -> OperatorAuditLogRe
         correlation_id=entry.correlation_id,
         at=entry.at,
     )
+
+
+def _guarded_revoke(session: Session, tenant_id: str, key_id: str, lock: bool) -> RevokeOutcome:
+    """Shared by both backends so the last-active rule exists once. `lock`
+    adds `FOR UPDATE` over the tenant's key rows (Postgres); SQLite instead
+    relies on the caller's `BEGIN IMMEDIATE`. Caller owns the transaction.
+    """
+    query = select(ApiKey).where(ApiKey.tenant_id == tenant_id)
+    if lock:
+        query = query.with_for_update()
+    keys = session.execute(query).scalars().all()
+    target = next((key for key in keys if key.id == key_id), None)
+    if target is None:
+        return NOT_FOUND
+    if target.revoked_at is not None:
+        return ALREADY_REVOKED
+    if not any(key.revoked_at is None for key in keys if key.id != key_id):
+        return LAST_ACTIVE
+    target.revoked_at = datetime.utcnow()
+    return REVOKED
 
 
 class SQLiteTenantRepository:
@@ -189,6 +214,15 @@ class SQLiteApiKeyRepository:
                 .values(revoked_at=datetime.utcnow())
             )
             session.commit()
+
+    def revoke_key_if_not_last_active(self, tenant_id: str, key_id: str) -> RevokeOutcome:
+        with Session(self._engine) as session:
+            # Takes SQLite's write lock before reading, so the check and the
+            # update are one atomic step (no FOR UPDATE in SQLite).
+            session.execute(text("BEGIN IMMEDIATE"))
+            outcome = _guarded_revoke(session, tenant_id, key_id, lock=False)
+            session.commit()
+            return outcome
 
     def list_api_keys(self, tenant_id: str) -> list[ApiKeyRecord]:
         # SETUP-011: tenant_id-first, ordinary case -- scoped in the SQL

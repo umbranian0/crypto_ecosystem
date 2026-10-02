@@ -58,6 +58,12 @@ import typing
 from dataclasses import dataclass
 from datetime import datetime
 
+RevokeOutcome = typing.Literal["revoked", "already_revoked", "not_found", "last_active"]
+REVOKED: RevokeOutcome = "revoked"
+ALREADY_REVOKED: RevokeOutcome = "already_revoked"
+NOT_FOUND: RevokeOutcome = "not_found"
+LAST_ACTIVE: RevokeOutcome = "last_active"
+
 
 @dataclass(frozen=True)
 class TenantRecord:
@@ -156,6 +162,17 @@ class ApiKeyRepository(typing.Protocol):
         ...
 
     def revoke_key(self, tenant_id: str, key_id: str) -> None: ...
+
+    def revoke_key_if_not_last_active(self, tenant_id: str, key_id: str) -> RevokeOutcome:
+        """`ADMIN-005`: tenant self-service revoke. Atomically (one
+        transaction, tenant's `api_keys` rows locked) refuses to revoke the
+        tenant's last active key, so two concurrent revokes can never both
+        pass the check and leave zero active keys. Returns `REVOKED`,
+        `ALREADY_REVOKED` (no re-stamp), `NOT_FOUND` (missing, or another
+        tenant's key), or `LAST_ACTIVE` (no update made). The operator path
+        keeps calling plain `revoke_key`, a deliberate privileged override.
+        """
+        ...
 
     def list_api_keys(self, tenant_id: str) -> list[ApiKeyRecord]:
         """`SETUP-011`: every key belonging to `tenant_id`, for the

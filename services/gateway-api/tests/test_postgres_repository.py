@@ -284,6 +284,70 @@ def test_revoke_key_does_not_affect_other_tenants_key(tenant_repo, key_repo, uni
     assert still_active.revoked_at is None
 
 
+def _mint(key_repo, tenant_id, unique, label):
+    return key_repo.create_key(tenant_id, f"pg-guarded-{label}-{unique}")
+
+
+def test_guarded_revoke_outcomes(tenant_repo, key_repo, unique) -> None:
+    """ADMIN-005-01: revoked / last_active / already_revoked / not_found
+    (unknown and another tenant's key), plus the excluding-target rule."""
+    tenant = tenant_repo.create_tenant("PG guarded revoke")
+    other = tenant_repo.create_tenant("PG guarded revoke other")
+    a = _mint(key_repo, tenant.id, unique, "a")
+    b = _mint(key_repo, tenant.id, unique, "b")
+    c = _mint(key_repo, tenant.id, unique, "c")
+    foreign = _mint(key_repo, other.id, unique, "foreign")
+
+    assert key_repo.revoke_key_if_not_last_active(tenant.id, "no-such-key") == "not_found"
+    assert key_repo.revoke_key_if_not_last_active(tenant.id, foreign.id) == "not_found"
+    assert key_repo.get_by_hash(foreign.key_hash).revoked_at is None
+
+    assert key_repo.revoke_key_if_not_last_active(tenant.id, a.id) == "revoked"
+    first_stamp = key_repo.get_by_hash(a.key_hash).revoked_at
+    assert key_repo.revoke_key_if_not_last_active(tenant.id, a.id) == "already_revoked"
+    assert key_repo.get_by_hash(a.key_hash).revoked_at == first_stamp
+
+    assert key_repo.revoke_key_if_not_last_active(tenant.id, b.id) == "revoked"
+    # a and b revoked: c is the last active key.
+    assert key_repo.revoke_key_if_not_last_active(tenant.id, c.id) == "last_active"
+    assert key_repo.get_by_hash(c.key_hash).revoked_at is None
+
+
+def test_guarded_revoke_mutual_race_is_atomic_under_real_concurrency(
+    migrated_engine, tenant_repo, unique
+) -> None:
+    """ADMIN-005-01 / sprint-64 Q5: keys A and B each revoke the other from
+    two real threads on separate connections (the shared `migrated_engine`
+    has pool_size=1, which would serialize them). Repeated, since a missing
+    FOR UPDATE only loses the race some of the time."""
+    import threading
+
+    engine = create_engine(
+        f"{POSTGRES_TEST_URL}?options={quote('-c search_path=identity')}", pool_size=4
+    )
+    repo = PostgresApiKeyRepository(engine=engine)
+    try:
+        for i in range(10):
+            tenant = tenant_repo.create_tenant(f"PG race {i}")
+            a = _mint(repo, tenant.id, unique, f"race{i}a")
+            b = _mint(repo, tenant.id, unique, f"race{i}b")
+            barrier = threading.Barrier(2)
+            outcomes: list[str] = []
+
+            def revoke(key_id: str) -> None:
+                barrier.wait()
+                outcomes.append(repo.revoke_key_if_not_last_active(tenant.id, key_id))
+
+            threads = [threading.Thread(target=revoke, args=(k.id,)) for k in (a, b)]
+            [t.start() for t in threads]
+            [t.join() for t in threads]
+
+            assert sorted(outcomes) == ["last_active", "revoked"]
+            assert sum(k.revoked_at is None for k in repo.list_api_keys(tenant.id)) == 1
+    finally:
+        engine.dispose()
+
+
 def test_rls_blocks_cross_tenant_reads_at_database_level(restricted_role_engine, unique) -> None:
     """Test AC: RLS blocks cross-tenant reads at the database level -- not
     an app-level `WHERE tenant_id = ...` check, a raw `SELECT ... WHERE

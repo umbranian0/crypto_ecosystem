@@ -53,12 +53,14 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from typing import Annotated
 
-from fastapi import HTTPException, Security
+from fastapi import Depends, HTTPException, Security
 from fastapi.security import APIKeyHeader
 from naive_first_common.tenant_context import TenantContext
 
 from app.dependencies.repositories import ApiKeyRepositoryDep
+from app.repositories.interfaces import ApiKeyRecord
 
 logger = logging.getLogger(__name__)
 
@@ -106,14 +108,14 @@ def _extract_raw_key(
     raise _UNAUTHORIZED
 
 
-def get_authenticated_tenant(
+def get_authenticated_key(
     api_key_repo: ApiKeyRepositoryDep,
     authorization: str | None = Security(_authorization_scheme),
     x_api_key: str | None = Security(_x_api_key_scheme),
-) -> TenantContext:
-    """FastAPI `Depends()` resolver for the current request's authenticated
-    tenant. Missing/malformed header, unknown key, or a revoked key all raise
-    `HTTPException(401)` before any downstream/routing code runs.
+) -> ApiKeyRecord:
+    """FastAPI `Depends()` resolver for the key that authenticated the
+    current request. Missing/malformed header, unknown key, or a revoked key
+    all raise `HTTPException(401)` before any downstream/routing code runs.
     """
     raw_key = _extract_raw_key(authorization, x_api_key)
     key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
@@ -126,4 +128,10 @@ def get_authenticated_tenant(
         _log_auth_failed(tenant_id=record.tenant_id)
         raise _UNAUTHORIZED
 
+    return record
+
+
+def get_authenticated_tenant(
+    record: Annotated[ApiKeyRecord, Depends(get_authenticated_key)],
+) -> TenantContext:
     return TenantContext(tenant_id=record.tenant_id)

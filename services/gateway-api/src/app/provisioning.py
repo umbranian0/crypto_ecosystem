@@ -43,11 +43,31 @@ import secrets
 import httpx
 
 from app.dependencies.http_client import get_ingestion_service_client
-from app.repositories.interfaces import ApiKeyRepository, TenantRecord, TenantRepository
+from app.repositories.interfaces import ApiKeyRecord, ApiKeyRepository, TenantRecord, TenantRepository
 
 logger = logging.getLogger(__name__)
 
 _INGESTION_INTERNAL_TOKEN_ENV_VAR = "INGESTION_INTERNAL_TOKEN"
+
+
+def mint_api_key(tenant_id: str, api_key_repo: ApiKeyRepository) -> tuple[ApiKeyRecord, str]:
+    """The one API-key minting implementation (provisioning, and tenant
+    self-service rotation, ADMIN-005). Persists only the sha256 hash; the raw
+    key exists solely in the return value.
+    """
+    raw_key = secrets.token_urlsafe(32)
+    key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
+    record = api_key_repo.create_key(tenant_id, key_hash)
+
+    logger.info(
+        "api key issued",
+        extra={
+            "event_type": "api_key_issued",
+            "outcome": "success",
+            "tenant_id": tenant_id,
+        },
+    )
+    return record, raw_key
 
 
 def provision(
@@ -68,18 +88,7 @@ def provision(
     """
     tenant = tenant_repo.create_tenant(name)
 
-    raw_key = secrets.token_urlsafe(32)
-    key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
-    api_key_repo.create_key(tenant.id, key_hash)
-
-    logger.info(
-        "api key issued",
-        extra={
-            "event_type": "api_key_issued",
-            "outcome": "success",
-            "tenant_id": tenant.id,
-        },
-    )
+    _, raw_key = mint_api_key(tenant.id, api_key_repo)
 
     _seed_platform_history(tenant.id, ingestion_client)
 

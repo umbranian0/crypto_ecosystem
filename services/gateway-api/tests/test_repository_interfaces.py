@@ -149,6 +149,9 @@ class _FakeApiKeyRepository:
                     revoked_at=datetime.now(timezone.utc).replace(tzinfo=None),
                 )
 
+    def revoke_key_if_not_last_active(self, tenant_id: str, key_id: str) -> str:  # pragma: no cover
+        raise NotImplementedError
+
     def list_api_keys(self, tenant_id: str) -> list[ApiKeyRecord]:
         return [record for record in self._keys_by_hash.values() if record.tenant_id == tenant_id]
 
