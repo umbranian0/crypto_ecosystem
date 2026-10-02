@@ -3413,6 +3413,6 @@ Orchestrator decisions: honest wording instead of refresh-on-seed; log at the po
 |---|---|---|---|---|
 | [CHORE-66-01](CHORE-66-01.md) | Read-only test-DB audit, audit-log baseline | all (read-only) | none | done |
 | [CHORE-66-02](CHORE-66-02.md) | Trend `horizon` >= 1 (422 otherwise) | reporting-service | none | done |
-| [CHORE-66-03](CHORE-66-03.md) | PDF `tr` no page-break-inside | reporting-service | none | todo |
+| [CHORE-66-03](CHORE-66-03.md) | PDF `tr` no page-break-inside | reporting-service | none | done |
 | [CHORE-66-04](CHORE-66-04.md) | Seed-failure log line + README statements | ingestion-service, infra README | none | todo |
 | [CHORE-66-05](CHORE-66-05.md) | Honest "sample data" wording | dashboard-web | 04 | todo |

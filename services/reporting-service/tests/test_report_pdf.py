@@ -167,3 +167,8 @@ def test_real_render_wide_results_table_fits_page(real_render) -> None:
     for page in document.pages:
         width = page._page_box.margin_width()
         assert max(right_edges(page._page_box)) <= width
+
+
+def test_pdf_stylesheet_avoids_splitting_table_rows() -> None:
+    css = " ".join(pdf._PDF_CSS.split())
+    assert "tr { page-break-inside: avoid; break-inside: avoid; }" in css

@@ -1,6 +1,6 @@
 # CHORE-66-03 -- reporting-service PDF: no table row split across pages
 
-**Status: todo.** Sprint 66 item 3. Module: services/reporting-service.
+**Status: done.** Sprint 66 item 3. Module: services/reporting-service.
 
 ## Analysis
 Sprint 63 QA follow-up: a table row may break across a page. `src/app/renderers/pdf.py` `_PDF_CSS` has no row-break rule.

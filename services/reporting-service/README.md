@@ -63,7 +63,7 @@ sprint — `reporting.reports.content` stores the rendered HTML inline in Postgr
 not a `reports/{tenant_id}/...` object-storage-prefix reference; that remains a documented future
 contract (implementation-plan.md section 5), revisited only once `INF-008` (MinIO, still deferred)
 ships or inline storage becomes impractical at real report volume (backlog decision 2). PDF export
-(RPT-001-02) is a conversion of the stored HTML `content` at retrieval time -- nothing is cached or stored.
+(RPT-001-02) is a conversion of the stored HTML `content` at retrieval time -- nothing is cached or stored. The PDF stylesheet avoids splitting a table row across pages (CHORE-66-03).
 
 **Design notes**:
 - Subscribes to the `run.completed` event (Redis Streams) — Observer pattern, implementation-plan.md section 7 — rather than being polled or called synchronously by `validation-service`.

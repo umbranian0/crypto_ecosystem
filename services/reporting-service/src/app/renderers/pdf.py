@@ -27,6 +27,7 @@ _PDF_CSS = """
 @page { size: A4 landscape; margin: 10mm; }
 table { width: 100%; table-layout: auto; }
 th, td { font-size: 6.5pt; padding: 1px 2px; overflow-wrap: anywhere; word-break: break-word; }
+tr { page-break-inside: avoid; break-inside: avoid; }
 """
 
 
