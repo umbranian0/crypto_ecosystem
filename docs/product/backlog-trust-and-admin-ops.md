@@ -325,6 +325,8 @@ Rationale for priority: Could — real value, but this is explicitly "docs secti
 no pilot client has asked for an archivable trend snapshot yet.
 Depends on: none (reuses `RS-003`'s existing Factory)
 
+**Status (Sprint 65): done (tickets RPT-002-01/02/03).** Disclosed interpretations: (1) the "same contract" AC is met by reporting-service reading validation-service's `GET /runs` + splits endpoints (the contract the gateway proxies) with `X-Tenant-Id`, not by calling the public gateway; (2) the consistency rule was extracted from `dashboard-web/charting.py` into `naive_first_common.consistency` so there is exactly one implementation, and dashboard-web now imports it; (3) no migration: the trend scope is stored by convention in `reports.run_id` as `consistency_trend:{dataset_id}:{horizon}`; (4) HTML only, no dashboard surface, PDF not extended to this kind.
+
 ### RPT-003 — Expose the already-built "audit my model's predictions" flow in `dashboard-web` [Must] — DONE (Sprint 55)
 
 **Status: done.** Implemented in `docs/sprints/sprint-55.md` / `docs/tickets/RPT-003.md` — `run_new.html`
@@ -402,6 +404,8 @@ a new endpoint, a UI surface that itself doesn't exist yet) and the lowest-lever
 existing-capability-exposure fix; defer until a real re-audit use case is reported.
 Depends on: none, but practically blocked on a `dashboard-web` report viewer existing (not currently
 scoped anywhere)
+
+**Status (Sprint 65): AC1 and AC2 done (tickets RPT-004-01/02, API-only); AC3 NOT built.** Built because the requester asked, as the narrowest slice: `GET /reports/{id}/diff/{other_id}` (reporting-service, gateway pass-through) re-fetches each report's run and splits (reports store rendered HTML only) and returns neutral per-split `model_*`/`naive0_*`/`dm_*` deltas plus the count of splits whose Naive0 verdict category changed. Comparability rule (422 with a plain reason): both `validation_audit`, same dataset, horizon, purge gap and split config, at most 500 splits, identical split indices and test windows. AC3 (dashboard-web "compare with a previous report" action) is unmet: no report viewer exists in dashboard-web and none is scoped; it stays deferred until one does.
 
 ---
 

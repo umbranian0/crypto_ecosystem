@@ -3388,3 +3388,18 @@ Self-serve API key rotation with server-enforced lockout guards (cannot revoke t
 | [ADMIN-005-03](ADMIN-005-03.md) | "My API Keys" page, reveal partial reuse, HTMX revoke row | dashboard-web | 02 | done |
 
 Sprint 64 sign-off (2026-10-02): QA GO on the live rebuilt containers. Suites: gateway-api 279 passed, dashboard-web 481 passed / 8 deselected. QA finding F1 (pre-existing, fixed in this sprint): gateway-api's two Postgres test modules defaulted to the live `naive_first` database and their migration round-trip tests dropped/recreated `identity.operator_audit_log`, wiping its rows on every suite run (including the dev, Tech Lead and QA runs this sprint); they now default to a separate `naive_first_test` database. Audit-log rows that existed before this sprint's runs are unrecoverable; rows written by the QA64 fixtures before the last wipe were also lost (QA Dash/Race2 tenants retain theirs). QA fixtures (additive, left in place): tenants "QA64 Tenant A", "QA64 Tenant B", "QA64 Dash Tenant", "QA64 Race 0-3", "QA64 Race2 0-9".
+
+## Sprint 65 (docs/sprints/sprint-65.md, backlog: docs/product/backlog-trust-and-admin-ops.md Epic D, RPT-002 + RPT-004)
+
+Test-DB safety chore, then an archivable `consistency_trend` report kind and a narrow API-only report diff. No new capability implies prediction or trading value.
+
+| Ticket | Story | Module | Depends on | Status |
+|---|---|---|---|---|
+| [CHORE-65-01](CHORE-65-01.md) | Repoint reporting/validation/ingestion Postgres tests to `naive_first_test` (env override) | reporting-service, validation-service, ingestion-service (tests only) | none | done |
+| [RPT-002-01](RPT-002-01.md) | Extract the "beat Naive0 in N of M" rule into `naive_first_common.consistency`; dashboard-web imports it | libs/common, dashboard-web | none | done |
+| [RPT-002-02](RPT-002-02.md) | `consistency_trend` renderer + Factory branch + optional `kind`/scope on `POST /reports/generate` (scope key stored in `run_id`, no migration) | reporting-service | 01 | done |
+| [RPT-002-03](RPT-002-03.md) | Gateway `POST /reports/generate` accepts optional `kind`/`dataset_id`/`horizon` | gateway-api | 02 | done |
+| [RPT-004-01](RPT-004-01.md) | `GET /reports/{id}/diff/{other_id}` field-level diff with stated comparability rule | reporting-service | none | done |
+| [RPT-004-02](RPT-004-02.md) | Gateway pass-through of the diff route | gateway-api | 01 | done |
+
+RPT-004 AC3 (dashboard-web "compare with a previous report" action) is NOT built: it needs a report viewer that does not exist. Sprint 65 sign-off section is appended after QA.
