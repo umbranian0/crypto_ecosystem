@@ -23,7 +23,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from naive_first_common import TenantContext, get_tenant_context
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 from app.dependencies.http_client import ValidationServiceClientDep
 from app.dependencies.repositories import ReportRepositoryDep
@@ -43,7 +43,7 @@ class GenerateReportRequest(BaseModel):
     kind: Literal["validation_audit", "consistency_trend"] = "validation_audit"
     run_id: str | None = None
     dataset_id: str | None = None
-    horizon: int | None = None
+    horizon: int | None = Field(default=None, ge=1)
 
     @model_validator(mode="after")
     def _check_fields_for_kind(self) -> "GenerateReportRequest":

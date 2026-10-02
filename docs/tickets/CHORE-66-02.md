@@ -1,6 +1,6 @@
 # CHORE-66-02 -- reporting-service: reject trend `horizon` < 1
 
-**Status: todo.** Sprint 66 item 4. Module: services/reporting-service (+ gateway-api only if no assertion proves 422 passthrough).
+**Status: done.** Sprint 66 item 4. Module: services/reporting-service (+ gateway-api only if no assertion proves 422 passthrough).
 
 ## Analysis
 `GenerateReportRequest.horizon` in `services/reporting-service/src/app/routers/report_generation.py` is a bare `int | None`; `RunRequest.horizon` in libs/common is `Field(ge=1)`. Sprint 65 QA minor: horizon 0/-1 persists a no-data report.

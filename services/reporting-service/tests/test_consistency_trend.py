@@ -257,6 +257,9 @@ def test_endpoint_generates_trend_report(endpoint):
         {"kind": "validation_audit"},
         {"run_id": "r0", "dataset_id": "ds-1"},
         {"run_id": "r0", "horizon": 24},
+        {"kind": "validation_audit", "run_id": "r0", "horizon": 24},
+        {"kind": "consistency_trend", "dataset_id": "ds-1", "horizon": 0},
+        {"kind": "consistency_trend", "dataset_id": "ds-1", "horizon": -1},
         {"kind": "bogus", "run_id": "r0"},
         {},
     ],
@@ -266,6 +269,17 @@ def test_endpoint_rejects_invalid_combinations(endpoint, body):
     response = client.post("/reports/generate", json=body, headers={"X-Tenant-Id": TENANT})
     assert response.status_code == 422
     assert repo.created == []
+
+
+def test_endpoint_accepts_minimum_horizon(endpoint):
+    client, _fake, repo = endpoint
+    response = client.post(
+        "/reports/generate",
+        json={"kind": "consistency_trend", "dataset_id": "ds-1", "horizon": 1},
+        headers={"X-Tenant-Id": TENANT},
+    )
+    assert response.status_code == 201
+    assert repo.created[0].run_id == "consistency_trend:ds-1:1"
 
 
 def test_endpoint_maps_downstream_error_as_before(endpoint):
