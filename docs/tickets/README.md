@@ -3357,3 +3357,14 @@ so a just-created tenant can see the "ask your operator to seed it" empty messag
 seeded; suggested copy softening or refresh-on-seed. Gateway's seed-failure log text is "tenant platform-history
 seed failed" (not `tenant_seed_degraded`). The ONB-001 what's-next section is covered by unit tests only (stack already
 initialized, `/setup` unreachable live).
+
+## Sprint 63 (docs/sprints/sprint-63.md, backlog: docs/product/backlog-trust-and-admin-ops.md Epic B, RPT-001)
+
+PDF export of stored audit reports (`GET /reports/{id}?format=pdf`), WeasyPrint, converted from the stored HTML
+(one rendering source). Gateway pass-through included (orchestrator decision; disclosed addition to the backlog AC).
+
+| Ticket | Story | Module | Depends on | Status |
+|---|---|---|---|---|
+| [RPT-001-01](RPT-001-01.md) | WeasyPrint dependency + Dockerfile native libs + lockfile | reporting-service | none | done |
+| [RPT-001-02](RPT-001-02.md) | `render_pdf` + `?format=pdf` on `GET /reports/{id}`, tests, README | reporting-service | 01 | todo |
+| [RPT-001-03](RPT-001-03.md) | Gateway `?format=pdf` pass-through | gateway-api | 02 | todo |

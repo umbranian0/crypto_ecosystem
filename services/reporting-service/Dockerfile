@@ -26,6 +26,18 @@
 # context.
 FROM python:3.11-slim
 
+# RPT-001-01: WeasyPrint (PDF rendering) needs Pango/HarfBuzz at runtime via
+# cffi; python:3.11-slim ships none of it. libpango-1.0-0 pulls in
+# harfbuzz/fontconfig/cairo-less text layout, libpangoft2-1.0-0 provides the
+# FreeType font backend, and fonts-dejavu-core supplies at least one font --
+# without a font, text renders blank with no error.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        libpango-1.0-0 \
+        libpangoft2-1.0-0 \
+        fonts-dejavu-core \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN pip install --no-cache-dir uv
 
 WORKDIR /repo
