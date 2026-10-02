@@ -279,17 +279,19 @@ export is also out of scope this sprint (HTML only, backlog decision 3)" -- this
 already-named, already-deferred follow-up, not a fresh discovery.
 
 Acceptance criteria:
-- [ ] `reporting-service` adds WeasyPrint (the tool `solution-design.md` section 3.5 already named as the
+- [x] `reporting-service` adds WeasyPrint (the tool `solution-design.md` section 3.5 already named as the
   intended PDF path) as a dependency, and a new code path renders the same `ValidationAuditRenderer` HTML
   output to PDF — one rendering source (the existing Jinja2 template), two output formats, not a second,
   divergent report-content implementation.
-- [ ] `GET /reports/{id}` gains an `?format=pdf` option (or an equivalent new route, Tech Lead's call at
+- [x] `GET /reports/{id}` gains an `?format=pdf` option (or an equivalent new route, Tech Lead's call at
   ticket time) returning `application/pdf`; the default (no `format`) stays byte-identical to today's HTML
   response — no breaking change to any existing caller.
-- [ ] A status-only report (run not yet `"completed"`) renders a status-only PDF, same content parity the
+- [x] A status-only report (run not yet `"completed"`) renders a status-only PDF, same content parity the
   HTML path already guarantees — no fabricated metrics table in either format.
-- [ ] `reporting-service`'s README's "PDF export is out of scope" line is updated to reflect this shipped,
+- [x] `reporting-service`'s README's "PDF export is out of scope" line is updated to reflect this shipped,
   per this repo's "docs stay current" convention.
+
+**Status: done (Sprint 63).** Shipped as `GET /reports/{id}?format=pdf` (stored HTML -> WeasyPrint, A4 landscape PDF-only stylesheet, URL fetching refused). Disclosed addition to the AC list: `gateway-api` `GET /reports/{id}?format=pdf` byte pass-through (without it no tenant could reach the PDF). Default JSON response unchanged. See `docs/tickets/RPT-001-01..03.md`.
 
 Rationale for priority: Should — real, named B2B revenue-line value (docs section 2.4's paid
 audit/certification line), but sequenced after Epic A/C per the requester's stated lean and because no

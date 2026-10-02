@@ -134,3 +134,36 @@ def test_real_render_does_not_fetch_external_resources(real_render) -> None:
     html = '<html><body><p>x</p><img src="file:///etc/hostname"><img src="http://127.0.0.1:1/a.png"></body></html>'
 
     assert real_render(html).startswith(b"%PDF-")
+
+
+def _wide_results_html() -> str:
+    cols = (
+        ["Split", "Train", "Purge", "Test"]
+        + [f"Model {m}" for m in ("MAE", "RMSE", "sMAPE", "MASE", "DA", "F1", "OOS R2")]
+        + [f"Naive0 {m}" for m in ("MAE", "RMSE", "sMAPE", "MASE", "DA", "F1", "OOS R2")]
+        + ["DM statistic", "DM p-value", "DM verdict"]
+    )
+    head = "".join(f"<th>{c}</th>" for c in cols)
+    span = "2024-01-01T00:00:00+00:00 -- 2024-02-01T00:00:00+00:00"
+    row = "<td>0</td>" + f"<td>{span}</td>" * 3 + "<td>0.0012345678901234</td>" * 17
+    return f"<html><body><h2>Results</h2><table><thead><tr>{head}</tr></thead><tbody><tr>{row}</tr></tbody></table></body></html>"
+
+
+@pytest.mark.pdf_render
+def test_real_render_wide_results_table_fits_page(real_render) -> None:
+    from weasyprint import CSS, HTML
+
+    def right_edges(box):
+        if type(box).__name__ == "TextBox":
+            yield box.position_x + box.width
+        for child in getattr(box, "children", ()):
+            yield from right_edges(child)
+
+    html = _wide_results_html()
+    document = HTML(string=html, url_fetcher=pdf._refuse_fetch).render(
+        stylesheets=[CSS(string=pdf._PDF_CSS)]
+    )
+    assert real_render(html).startswith(b"%PDF-")
+    for page in document.pages:
+        width = page._page_box.margin_width()
+        assert max(right_edges(page._page_box)) <= width

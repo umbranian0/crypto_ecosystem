@@ -22,8 +22,18 @@ def _refuse_fetch(url: str, *args: object, **kwargs: object) -> dict:
 _refuse_fetch._fail_on_errors = False  # type: ignore[attr-defined]
 
 
+# PDF-only: the per-split results table has ~21 columns and overflows portrait A4.
+_PDF_CSS = """
+@page { size: A4 landscape; margin: 10mm; }
+table { width: 100%; table-layout: auto; }
+th, td { font-size: 6.5pt; padding: 1px 2px; overflow-wrap: anywhere; word-break: break-word; }
+"""
+
+
 def render_pdf(html: str) -> bytes:
     # Lazy: the service must still import where WeasyPrint's native libs are absent.
-    from weasyprint import HTML
+    from weasyprint import CSS, HTML
 
-    return HTML(string=html, url_fetcher=_refuse_fetch).write_pdf()
+    return HTML(string=html, url_fetcher=_refuse_fetch).write_pdf(
+        stylesheets=[CSS(string=_PDF_CSS)]
+    )
