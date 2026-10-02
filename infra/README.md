@@ -805,3 +805,11 @@ index/primary key on a hypertable). `services/validation-service/tests/test_hype
 runs `alembic upgrade head` against the real Compose Postgres and queries
 `timescaledb_information.hypertables`/`.dimensions` directly to confirm the conversion -- re-run
 personally by the Tech Lead, passing (`1 passed`, real container).
+
+### ingestion-service platform-history mount (ONB-003, Sprint 62)
+
+`ingestion-service` has one read-only bind mount: `../services/ingestion-service/data/raw/_platform` ->
+`/repo/services/ingestion-service/data/raw/_platform:ro`. The platform CSV archive is untracked and not baked
+into the image, so without this mount `POST /internal/seed-platform-history` (INGEST-030, called by
+gateway-api's GW-030 `provision()`) returned 503 and new tenants got no sample data. A checkout without the
+host archive still seeds empty. Recreate with `docker compose up -d --no-deps --force-recreate ingestion-service`.

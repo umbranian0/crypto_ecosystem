@@ -230,6 +230,13 @@ services:
       # actually match between the two services for GW-030's caller to
       # authenticate successfully.
       INGESTION_INTERNAL_TOKEN: ${INGESTION_INTERNAL_TOKEN:-naive_first_ingestion_internal_dev_token}
+    volumes:
+      # ONB-003 (seed fix): the image has no data/raw/_platform (CSVs are
+      # untracked, not baked in), so POST /internal/seed-platform-history
+      # (INGEST-030) 503'd and every new tenant got no sample data. Read-only
+      # bind of the host archive to where seed_platform_history.py resolves
+      # _PLATFORM_ROOT. Single mount, no write access.
+      - ../services/ingestion-service/data/raw/_platform:/repo/services/ingestion-service/data/raw/_platform:ro
     depends_on:
       postgres:
         condition: service_healthy

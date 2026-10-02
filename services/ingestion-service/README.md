@@ -556,3 +556,7 @@ exception-propagation behavior is untouched). Same `_tenant_scoped_session`/`nai
 tenant_scope` mechanism as every other `PostgresConnectorRecordRepository` method — no second
 tenant-scoping implementation. `tests/fake_repository.py`'s `FakeConnectorRecordRepository.crawl_runs`
 is the in-memory equivalent used by `tests/test_base.py`'s crawl-run/cross-tenant-isolation tests.
+
+**Compose mount (`ONB-003`)**: in `infra/docker-compose.yml` the container gets `data/raw/_platform` as a
+read-only bind mount from the host (the archive is untracked and not in the image); this is what lets
+`POST /internal/seed-platform-history` find its CSVs on the local stack. See `infra/README.md`.

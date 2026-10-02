@@ -3337,6 +3337,7 @@ Option A for ONB-002 (no new endpoint); both stories' backlog ACs were amended i
 |---|---|---|---|---|
 | [ONB-001](ONB-001.md) | "What's next" section on `setup_key_reveal.html` only (not the shared reveal partial) | dashboard-web | none | in-review (live QA incomplete) |
 | [ONB-002](ONB-002.md) | `GET`/`POST /demo-run`: checks `GET /ingestion/datasets`, submits a fixed disclosed demo run (label carries the disclosure), empty-data message otherwise; nav link | dashboard-web | ONB-001 | in-review (live QA incomplete) |
+| [ONB-003](ONB-003.md) | Infra bug: read-only bind mount of `data/raw/_platform` into ingestion-service so GW-030 auto-seed works | infra | none | in-review (QA re-run pending) |
 
 QA status (2026-10-02): code/diff review and unit suite (469 passed) GO; live-stack checks NOT completed -- the
 permission system blocked QA's fixture-cleanup/DB writes, and two fixture tenants (QA62 fixture A/B) remain in
